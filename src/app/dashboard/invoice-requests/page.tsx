@@ -494,19 +494,10 @@ export default function InvoiceRequestsPage() {
         break;
       
       case 'Finance':
-        // Finance can see VERIFIED requests ready for invoicing, but exclude cancelled shipments
-        // Also show requests with verification data (likely ready for invoicing)
+        // Finance only sees VERIFIED requests (already filtered by backend query)
+        // Only exclude cancelled shipments from the already-filtered VERIFIED requests
         filtered = safeInvoiceRequests.filter(request => {
-          const status = request.status;
-          
-          // If request has verification data, it's likely ready for invoicing
-          const hasVerification = request.verification && Object.keys(request.verification).length > 0;
-          
-          // Include if VERIFIED status OR has verification data
-          if (status === 'VERIFIED' || (hasVerification && (!status || status === 'COMPLETED'))) {
-          // Exclude if invoice request itself is cancelled
-            if (status === 'CANCELLED') return false;
-          
+          // Backend already returns only VERIFIED status, so we just need to exclude cancelled
           // Exclude if delivery status is cancelled
           if (request.delivery_status === 'CANCELLED') return false;
           
@@ -515,12 +506,9 @@ export default function InvoiceRequestsPage() {
           if (request.request_id?.delivery_status === 'CANCELLED') return false;
           
           return true;
-          }
-          
-          return false;
         });
         console.log('📊 [Invoice Requests] Finance filtered:', filtered.length, 'requests');
-        console.log('📊 [Invoice Requests] Finance - Available statuses:', [...new Set(safeInvoiceRequests.map(r => r.status || 'NO_STATUS'))]);
+        console.log('📊 [Invoice Requests] Finance - Backend already filtered to VERIFIED status only');
         break;
       
       default:
@@ -586,8 +574,14 @@ export default function InvoiceRequestsPage() {
         'verification.volumetric_weight',
         'has_delivery', 'is_leviable', 'request_id'
       ];
+      
+      // For Finance department, only fetch VERIFIED status requests from backend for optimization
+      const filters = userProfile?.department?.name === 'Finance' 
+        ? { status: 'VERIFIED' } 
+        : undefined;
+      
       // Fetch all invoice requests across all pages to show complete list
-      const result = await apiClient.getAllInvoiceRequests(undefined, useCache, essentialFields);
+      const result = await apiClient.getAllInvoiceRequests(filters, useCache, essentialFields);
       if (result.success) {
         const data = (result.data as any[]) || [];
         console.log('📦 [Invoice Requests] API returned:', data.length, 'requests');
