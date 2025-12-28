@@ -29,6 +29,7 @@ interface DeliveryAssignment {
       address?: string;
       city?: string;
       country?: string;
+      phone?: string;
     };
   };
   driver_id?: {
