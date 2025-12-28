@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { UserProfile, DepartmentData } from '@/lib/types';
 import { apiClient } from '@/lib/api-client';
+import { secureLog } from '@/lib/secure-logger';
 
 interface AuthContextType {
   userProfile: UserProfile | null;
@@ -51,7 +52,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       }
     } catch (error) {
-      console.error("Failed to parse user from session storage", error);
+      secureLog.error("Failed to parse user from session storage", error);
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
     } finally {
         setLoading(false);
@@ -64,11 +65,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const result = await apiClient.login(email, password);
       
-      console.log('Login result:', result);
-      console.log('Login result.success:', result.success);
-      console.log('Login result.data:', result.data);
-      console.log('Login result.data type:', typeof result.data);
-      console.log('Login result.data keys:', result.data ? Object.keys(result.data) : 'no data');
+      secureLog.debug('Login attempt', { success: result.success, hasData: !!result.data });
       
       if (!result.success) {
         setLoading(false);
@@ -116,18 +113,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       }
       
-      console.log('Extracted userData:', userData);
-      console.log('Extracted token:', !!token, token ? `${token.substring(0, 20)}...` : 'none');
-      console.log('Requires password change:', needsPasswordChange);
+      secureLog.debug('Login data extracted', { hasUserData: !!userData, hasToken: !!token, needsPasswordChange });
       
       if (!userData) {
-        console.error('❌ No user data found in response. Response structure:', JSON.stringify(result.data, null, 2));
+        secureLog.error('No user data found in login response');
         setLoading(false);
         return { success: false, error: 'Login failed - user data not found in response' };
       }
       
       if (!token) {
-        console.error('❌ No token found in response. Response structure:', JSON.stringify(result.data, null, 2));
+        secureLog.error('No token found in login response');
         setLoading(false);
         return { success: false, error: 'Login failed - authentication token not found in response' };
       }
@@ -151,8 +146,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       setLoading(false);
       return { success: true, requiresPasswordChange: false };
-    } catch (error) {
-      console.error('Login error:', error);
+      } catch (error) {
+      secureLog.error('Login error', error);
       setLoading(false);
       return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }

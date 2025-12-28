@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import { Client } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { secureLog } from "@/lib/secure-logger";
 import { Loader2, Users, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -59,16 +60,9 @@ export default function ClientsPage() {
                     });
                 }
             } catch (error: any) {
-                console.error('Error loading clients:', error);
+                secureLog.error('Error loading clients', error);
                 const errorMessage = error.message || error.toString() || 'An error occurred while loading clients';
                 setError(errorMessage);
-                
-                // Log additional debugging info
-                console.error('Error details:', {
-                    message: error.message,
-                    name: error.name,
-                    stack: error.stack,
-                });
                 
                 toast({
                     variant: 'destructive',

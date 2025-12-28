@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useNotifications } from '@/contexts/NotificationContext';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
+import { secureLog } from '@/lib/secure-logger';
 
 // Dynamically import InternalRequestSystem to reduce initial bundle size
 const InternalRequestSystem = dynamic(() => import("@/components/internal-request-system"), {
@@ -28,17 +29,15 @@ export default function InternalRequestsPage() {
 
     const fetchTickets = async () => {
         try {
-            console.log('Fetching internal requests...');
+            secureLog.debug('Fetching internal requests');
             const result = await apiClient.getInternalRequests();
-            console.log('API Response:', result); // Debug log
             
             if (result.success) {
                 const data = result.data || [];
-                console.log('Data type:', typeof data, 'Is array:', Array.isArray(data)); // Debug log
-                console.log('Data length:', data.length); // Debug log
+                secureLog.debug('Internal requests loaded', { count: Array.isArray(data) ? data.length : 0 });
                 setTickets(Array.isArray(data) ? data : []);
             } else {
-                console.error('API returned success: false:', result);
+                secureLog.error('Failed to fetch internal requests', result.error);
                 setTickets([]); // Set empty array on error
                 toast({
                     variant: 'destructive',
@@ -47,7 +46,7 @@ export default function InternalRequestsPage() {
                 });
             }
         } catch (error) {
-            console.error('Error fetching internal requests:', error);
+            secureLog.error('Error fetching internal requests', error);
             setTickets([]); // Set empty array on error
             toast({
                 variant: 'destructive',

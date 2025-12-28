@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiClient } from '@/lib/api-client';
+import { secureLog } from '@/lib/secure-logger';
 
 interface NotificationCounts {
   invoices: number;
@@ -77,9 +78,9 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
     // Then call backend API to mark all notifications of this type as viewed
     try {
       await apiClient.markAllAsViewed(type);
-      console.log(`✅ Marked all ${type} notifications as viewed`);
+      secureLog.debug('Marked notifications as viewed', { type });
     } catch (error) {
-      console.error(`❌ Failed to mark ${type} notifications as viewed:`, error);
+      secureLog.error('Failed to mark notifications as viewed', error);
       // If the API call fails, we could optionally revert the local state
       // But for now, we'll keep the optimistic update
     }
@@ -89,7 +90,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
     // Prevent too frequent calls (minimum 30 seconds between calls)
     const now = Date.now();
     if (now - lastFetchTime < 30000) {
-      console.log('Skipping notification refresh - too frequent');
+      secureLog.debug('Skipping notification refresh - too frequent');
       return;
     }
 
@@ -98,16 +99,16 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
       setLastFetchTime(now);
       const response = await apiClient.getNotificationCounts();
       if (response.success && response.data) {
-        console.log('🔔 Notification counts received:', response.data);
+        secureLog.debug('Notification counts received', { counts: response.data });
         setCounts(response.data as NotificationCounts);
       } else {
-        console.log('❌ Failed to get notification counts:', response);
+        secureLog.warn('Failed to get notification counts');
       }
     } catch (error) {
-      console.error('Error fetching notification counts:', error);
+      secureLog.error('Error fetching notification counts', error);
       // If rate limited, don't show error to user, just silently fail
       if (error instanceof Error && error.message.includes('429')) {
-        console.log('Rate limited, skipping notification refresh');
+        secureLog.debug('Rate limited, skipping notification refresh');
         return;
       }
     } finally {

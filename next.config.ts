@@ -3,11 +3,16 @@ import type {NextConfig} from 'next';
 const nextConfig: NextConfig = {
   /* config options here */
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false, // Enable type checking for better code quality
   },
   eslint: {
-    ignoreDuringBuilds: true,
+    ignoreDuringBuilds: false, // Enable linting for better code quality
   },
+  // Production optimizations
+  compress: true,
+  poweredByHeader: false, // Remove X-Powered-By header for security
+  reactStrictMode: true, // Enable React strict mode
+  swcMinify: true, // Use SWC minifier for faster builds
   images: {
     remotePatterns: [
       {
@@ -29,6 +34,10 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
     ],
+  },
+  // Bundle optimization
+  experimental: {
+    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
   },
 };
 

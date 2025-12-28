@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
+import { secureLog } from '@/lib/secure-logger';
 import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Printer } from 'lucide-react';
 
 interface BookingReviewModalProps {
@@ -142,7 +143,7 @@ export default function BookingReviewModal({
         });
       }
     } catch (error) {
-      console.error('Error reviewing booking:', error);
+      secureLog.error('Error reviewing booking', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -198,7 +199,7 @@ export default function BookingReviewModal({
         });
       }
     } catch (error) {
-      console.error('Error rejecting booking:', error);
+      secureLog.error('Error rejecting booking', error);
       toast({
         variant: 'destructive',
         title: 'Error',

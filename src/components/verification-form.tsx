@@ -26,6 +26,7 @@ import { useToast } from '@/hooks/use-toast';
 import { CheckCircle, FileCheck, Package } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { secureLog } from '@/lib/secure-logger';
 
 interface VerificationFormProps {
   request: any;
@@ -66,7 +67,7 @@ const UAE_TO_PH_BRACKETS: WeightBracket[] = [
 // Function to get rate based on weight and route
 const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | string): { rate: number; bracket: WeightBracket | null } => {
   if (!weight || weight <= 0 || !route) {
-    console.log('getRateForWeight: Invalid input', { weight, route });
+    secureLog.warn('Invalid weight or route for rate calculation', { weight, route: route?.substring(0, 20) });
     return { rate: 0, bracket: null };
   }
 
@@ -76,7 +77,7 @@ const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | str
   const isUAETOPH = normalizedRoute.includes('UAE_TO_PH');
   
   if (!isPHToUAE && !isUAETOPH) {
-    console.log('getRateForWeight: Invalid route', { route, normalizedRoute });
+    secureLog.warn('Invalid route for rate calculation', { route: route?.substring(0, 20) });
     return { rate: 0, bracket: null };
   }
 
@@ -91,9 +92,7 @@ const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | str
   const closedBrackets = availableBrackets.filter(b => b.max !== null).sort((a, b) => a.min - b.min); // Sort by min ascending
   const openEndedBrackets = availableBrackets.filter(b => b.max === null).sort((a, b) => b.min - a.min); // Sort by min descending (higher first)
   
-  console.log('getRateForWeight: Route', normalizedRoute, 'Weight', weight);
-  console.log('Closed brackets:', closedBrackets.map(b => `${b.label} (${b.min}-${b.max}) = ${b.rate} AED/kg`));
-  console.log('Open-ended brackets:', openEndedBrackets.map(b => `${b.label} (${b.min}+) = ${b.rate} AED/kg`));
+  secureLog.debug('Calculating rate', { route: normalizedRoute, weight });
   
   // Find the matching bracket
   // Strategy: Check closed brackets first (more specific), then open-ended brackets
@@ -104,7 +103,7 @@ const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | str
     // bracket.max is guaranteed to be non-null for closed brackets
     if (bracket.max !== null && weight >= bracket.min && weight <= bracket.max) {
       matchingBracket = bracket;
-      console.log('getRateForWeight: ✅ Matched closed bracket', bracket.label, 'for weight', weight);
+      secureLog.debug('Matched weight bracket', { bracket: bracket.label, weight });
       break;
     }
   }
@@ -114,20 +113,20 @@ const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | str
     for (const bracket of openEndedBrackets) {
       if (weight >= bracket.min) {
         matchingBracket = bracket;
-        console.log('getRateForWeight: ✅ Matched open-ended bracket', bracket.label, 'for weight', weight);
+        secureLog.debug('Matched open-ended bracket', { bracket: bracket.label, weight });
         break;
       }
     }
   }
 
   if (matchingBracket) {
-    console.log('getRateForWeight: ✅ Returning rate', matchingBracket.rate, 'for bracket', matchingBracket.label);
+    secureLog.debug('Rate calculated', { rate: matchingBracket.rate, bracket: matchingBracket.label });
     return { rate: matchingBracket.rate, bracket: matchingBracket };
   }
 
   // If no bracket matches, find the best fallback bracket
   // This should rarely happen, but handle edge cases
-  console.warn('getRateForWeight: ⚠️ No bracket matched for weight', weight, 'route', normalizedRoute, '- finding fallback');
+  secureLog.warn('No bracket matched, using fallback', { weight, route: normalizedRoute });
   
   // Find the lowest min bracket (for weights below minimum, e.g., 0.5 kg)
   const lowestBracket = availableBrackets.reduce((lowest, current) => {
@@ -145,7 +144,7 @@ const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | str
     ? lowestBracket 
     : (highestOpenBracket || (closedBrackets.length > 0 ? closedBrackets[closedBrackets.length - 1] : null) || availableBrackets[0]);
   
-  console.warn('getRateForWeight: Using fallback bracket', fallbackBracket.label, 'with rate', fallbackBracket.rate);
+  secureLog.warn('Using fallback bracket', { bracket: fallbackBracket.label, rate: fallbackBracket.rate });
   return { rate: fallbackBracket.rate, bracket: fallbackBracket };
 };
 
@@ -208,7 +207,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     if (booking?.service) {
       const mappedService = normalizeAndMapService(booking.service);
       if (mappedService) {
-        console.log('✅ Mapped booking service:', booking.service, '→', mappedService);
+        secureLog.debug('Mapped booking service', { from: booking.service?.substring(0, 30), to: mappedService });
         return mappedService;
       }
     }
@@ -217,7 +216,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     if (request.service) {
       const mappedService = normalizeAndMapService(request.service);
       if (mappedService) {
-        console.log('✅ Mapped request service:', request.service, '→', mappedService);
+        secureLog.debug('Mapped request service', { from: request.service?.substring(0, 30), to: mappedService });
         return mappedService;
       }
     }
@@ -226,7 +225,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     if (request.request_id?.service) {
       const mappedService = normalizeAndMapService(request.request_id.service);
       if (mappedService) {
-        console.log('✅ Mapped request_id.service:', request.request_id.service, '→', mappedService);
+        secureLog.debug('Mapped request_id service', { from: request.request_id.service?.substring(0, 30), to: mappedService });
         return mappedService;
       }
     }
@@ -235,7 +234,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     if (request.request_id?.booking?.service) {
       const mappedService = normalizeAndMapService(request.request_id.booking.service);
       if (mappedService) {
-        console.log('✅ Mapped request_id.booking.service:', request.request_id.booking.service, '→', mappedService);
+        secureLog.debug('Mapped request_id.booking service', { from: request.request_id.booking.service?.substring(0, 30), to: mappedService });
         return mappedService;
       }
     }
@@ -248,7 +247,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
       // Try to normalize the fallback code as well
       const mappedFallback = normalizeAndMapService(fallbackCode);
       if (mappedFallback) {
-        console.log('✅ Mapped fallback service_code:', fallbackCode, '→', mappedFallback);
+        secureLog.debug('Mapped fallback service code', { from: fallbackCode?.substring(0, 30), to: mappedFallback });
         return mappedFallback;
       }
     }
@@ -258,7 +257,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
 
   // Get initial service code
   const initialServiceCode = getServiceCodeFromBooking();
-  console.log('🔍 Initial service code from booking:', initialServiceCode, {
+  secureLog.debug('Initial service code from booking', {
     requestService: request.service,
     requestServiceCode: request.service_code,
     bookingService: request.booking?.service || request.booking_id?.service,
@@ -269,13 +268,38 @@ export default function VerificationForm({ request, onVerificationComplete, curr
   const initialServiceCodeForRoute = initialServiceCode || request.service_code || request.verification?.service_code || '';
   const isInitialPhToUae = initialServiceCodeForRoute.toUpperCase().includes('PH_TO_UAE');
 
-  // Get insured and declared_value from request/booking
+  // Get insured and declared_value from request/booking/verification/sender
   const getInsuredValue = () => {
-    return request.insured || 
-           request.booking?.insured || 
-           request.request_id?.insured || 
-           request.request_id?.booking?.insured || 
-           false;
+    // Check multiple paths and handle both boolean and string values
+    const checkInsured = (value: any): boolean => {
+      return value === true || value === 'true' || value === 1 || value === '1';
+    };
+    
+    // Priority order based on collection structure:
+    // 1. Top-level insured (most common location)
+    if (checkInsured(request.insured)) return true;
+    // 2. booking_snapshot (as shown in collection structure)
+    if (checkInsured(request.booking_snapshot?.insured)) return true;
+    // 3. booking_data (as shown in collection structure)
+    if (checkInsured(request.booking_data?.insured)) return true;
+    // 4. booking object
+    if (checkInsured(request.booking?.insured)) return true;
+    // 5. verification
+    if (checkInsured(request.verification?.insured)) return true;
+    // 6. sender
+    if (checkInsured(request.sender?.insured)) return true;
+    // 7. request_id
+    if (checkInsured(request.request_id?.insured)) return true;
+    // 8. request_id.booking
+    if (checkInsured(request.request_id?.booking?.insured)) return true;
+    // 9. request_id.sender
+    if (checkInsured(request.request_id?.sender?.insured)) return true;
+    // 10. request_id.booking_id (if populated as object)
+    if (request.request_id?.booking_id && typeof request.request_id.booking_id === 'object' && checkInsured(request.request_id.booking_id.insured)) return true;
+    // 11. booking_id (if populated as object)
+    if (request.booking_id && typeof request.booking_id === 'object' && checkInsured(request.booking_id.insured)) return true;
+    
+    return false;
   };
 
   const getDeclaredValue = () => {
@@ -313,6 +337,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     sender_details_complete: request.verification?.sender_details_complete || false,
     receiver_details_complete: request.verification?.receiver_details_complete || false,
     number_of_boxes: request.verification?.number_of_boxes || '',
+    total_kg: request.verification?.total_kg?.toString() || '',
     verification_notes: request.verification?.verification_notes || '',
     declared_value: request.verification?.declared_value?.toString() || getDeclaredValue() || '',
     insured: getInsuredValue(),
@@ -354,7 +379,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
   useEffect(() => {
     const bookingServiceCode = getServiceCodeFromBooking();
     if (bookingServiceCode && bookingServiceCode !== verificationData.service_code) {
-      console.log('🔄 Updating service code:', verificationData.service_code, '→', bookingServiceCode);
+      secureLog.debug('Updating service code', { from: verificationData.service_code?.substring(0, 30), to: bookingServiceCode?.substring(0, 30) });
       setVerificationData(prev => ({
         ...prev,
         service_code: bookingServiceCode
@@ -374,27 +399,22 @@ export default function VerificationForm({ request, onVerificationComplete, curr
   // Determine route from service code (case-insensitive)
   const route = useMemo(() => {
     const serviceCode = (verificationData.service_code || request.service_code || '').toUpperCase().trim();
-    console.log('🔍 Route determination:', {
-      serviceCode,
-      verificationDataServiceCode: verificationData.service_code,
-      requestServiceCode: request.service_code,
-      isEmpty: !serviceCode
-    });
+    secureLog.debug('Determining route', { serviceCode: serviceCode?.substring(0, 30) });
     
     if (!serviceCode) {
-      console.log('⚠️ Route determination: serviceCode is empty');
+      secureLog.warn('Service code is empty, cannot determine route');
       return '';
     }
     
     if (serviceCode.includes('PH_TO_UAE')) {
-      console.log('✅ Route determined: PH_TO_UAE');
+      secureLog.debug('Route determined: PH_TO_UAE');
       return 'PH_TO_UAE';
     } else if (serviceCode.includes('UAE_TO_PH')) {
-      console.log('✅ Route determined: UAE_TO_PH');
+      secureLog.debug('Route determined: UAE_TO_PH');
       return 'UAE_TO_PH';
     }
     
-    console.log('❌ Route determination: No route found for serviceCode', serviceCode);
+    secureLog.warn('No route found for service code', { serviceCode: serviceCode?.substring(0, 30) });
     return '';
   }, [verificationData.service_code, request.service_code]);
 
@@ -416,31 +436,21 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     // Use the route from the useMemo above
     const currentRoute = route;
     
-    console.log('🔍 Rate Calculation useMemo triggered:', {
-      chargeableWeight,
-      route: currentRoute,
-      hasChargeableWeight: chargeableWeight > 0,
-      hasRoute: !!currentRoute
-    });
+    secureLog.debug('Calculating rate', { chargeableWeight, route: currentRoute?.substring(0, 20) });
     
     // Only calculate if we have both chargeable weight > 0 AND a valid route
     if (chargeableWeight > 0 && currentRoute) {
       const result = getRateForWeight(chargeableWeight, currentRoute);
       
       if (result.rate > 0 && result.bracket) {
-        console.log('✅ Rate calculated successfully:', {
-          rate: result.rate,
-          bracket: result.bracket.label,
-          weight: chargeableWeight.toFixed(2),
-          route: currentRoute
-        });
+        secureLog.debug('Rate calculated', { rate: result.rate, bracket: result.bracket.label, weight: chargeableWeight });
         return { calculatedRate: result.rate, rateBracket: result.bracket };
       } else {
-        console.warn('⚠️ Rate Calculation: getRateForWeight returned invalid result:', result);
+        secureLog.warn('Rate calculation returned invalid result', { rate: result.rate });
       }
     }
     
-    console.log('❌ Rate Calculation: Returning 0 - chargeableWeight:', chargeableWeight, 'route:', currentRoute);
+    secureLog.debug('Rate calculation returning 0', { chargeableWeight, route: currentRoute?.substring(0, 20) });
     return { calculatedRate: 0, rateBracket: null };
   }, [chargeableWeight, route]);
   
@@ -449,11 +459,11 @@ export default function VerificationForm({ request, onVerificationComplete, curr
   const inputValue = useMemo(() => {
     if (calculatedRate > 0) {
       const value = calculatedRate.toFixed(2);
-      console.log('💰 Input value computed from calculatedRate:', value);
+      secureLog.debug('Input value from calculated rate', { value });
       return value;
     }
     const value = verificationData.amount || '';
-    console.log('💰 Input value computed from verificationData:', value);
+    secureLog.debug('Input value from verification data', { value: value?.substring(0, 20) });
     return value;
   }, [calculatedRate, verificationData.amount]);
 
@@ -464,21 +474,12 @@ export default function VerificationForm({ request, onVerificationComplete, curr
       const rateString = calculatedRate.toFixed(2);
       setVerificationData(prev => {
         // Always update if calculatedRate is available, even if it matches
-        console.log('✅ Updating amount field:', {
-          oldAmount: prev.amount,
-          newAmount: rateString,
-          calculatedRate: calculatedRate,
-          rateBracket: rateBracket?.label
-        });
+        secureLog.debug('Updating amount field', { oldAmount: prev.amount?.substring(0, 20), newAmount: rateString, bracket: rateBracket?.label });
         return { ...prev, amount: rateString };
       });
     } else if (calculatedRate === 0 && chargeableWeight > 0 && route) {
       // If we have weight and route but no rate, there might be an issue
-      console.warn('⚠️ Warning: chargeableWeight > 0 and route exists but calculatedRate is 0', {
-        chargeableWeight,
-        route,
-        serviceCode: verificationData.service_code || request.service_code
-      });
+      secureLog.warn('Weight and route exist but rate is 0', { chargeableWeight, route: route?.substring(0, 20), serviceCode: (verificationData.service_code || request.service_code)?.substring(0, 30) });
     }
   }, [calculatedRate, rateBracket]);
 
@@ -503,11 +504,26 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     const isUaeToPinas = route === 'UAE_TO_PH' || 
                         (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PH') ||
                         (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PINAS');
-    const isInsured = verificationData.insured === true || verificationData.insured === 'true';
+    // Check insured from database (request/booking/verification/sender), not from form state
+    // Handle both boolean true and string "true"
+    const checkInsured = (value: any): boolean => {
+      return value === true || value === 'true' || value === 1 || value === '1';
+    };
+    
+    const isInsuredInDb = 
+      checkInsured(request.insured) ||
+      checkInsured(request.verification?.insured) ||
+      checkInsured(request.booking?.insured) ||
+      checkInsured(request.sender?.insured) ||
+      checkInsured(request.request_id?.insured) ||
+      checkInsured(request.request_id?.booking?.insured) ||
+      checkInsured(request.request_id?.sender?.insured) ||
+      (request.request_id?.booking_id && typeof request.request_id.booking_id === 'object' && checkInsured(request.request_id.booking_id.insured)) ||
+      (request.booking_id && typeof request.booking_id === 'object' && checkInsured(request.booking_id.insured));
     const hasDeclaredValue = verificationData.declared_value && parseFloat(verificationData.declared_value) > 0;
     
-    // If UAE_TO_PINAS and insured, declared_value is required
-    const insuranceFieldsValid = !(isUaeToPinas && isInsured) || hasDeclaredValue;
+    // If UAE_TO_PH/PINAS + insured in database, declared_value is required (any classification)
+    const insuranceFieldsValid = !(isUaeToPinas && isInsuredInDb) || hasDeclaredValue;
 
     return (
       verificationData.invoice_number &&
@@ -523,6 +539,8 @@ export default function VerificationForm({ request, onVerificationComplete, curr
       determinedWeightType && // Auto-determined weight type
       verificationData.cargo_service &&
       verificationData.number_of_boxes &&
+      verificationData.total_kg && // Total kilograms is required
+      parseFloat(verificationData.total_kg) > 0 && // Must be greater than 0
       verificationData.sender_details_complete &&
       verificationData.receiver_details_complete &&
       insuranceFieldsValid // Insurance fields validation
@@ -552,7 +570,22 @@ export default function VerificationForm({ request, onVerificationComplete, curr
       const isUaeToPinas = route === 'UAE_TO_PH' || 
                           (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PH') ||
                           (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PINAS');
-      const isInsured = verificationData.insured === true || verificationData.insured === 'true';
+      // Check insured from database (request/booking/verification/sender), not from form state
+      // Handle both boolean true and string "true"
+      const checkInsured = (value: any): boolean => {
+        return value === true || value === 'true' || value === 1 || value === '1';
+      };
+      
+      const isInsuredInDb = 
+        checkInsured(request.insured) ||
+        checkInsured(request.verification?.insured) ||
+        checkInsured(request.booking?.insured) ||
+        checkInsured(request.sender?.insured) ||
+        checkInsured(request.request_id?.insured) ||
+        checkInsured(request.request_id?.booking?.insured) ||
+        checkInsured(request.request_id?.sender?.insured) ||
+        (request.request_id?.booking_id && typeof request.request_id.booking_id === 'object' && checkInsured(request.request_id.booking_id.insured)) ||
+        (request.booking_id && typeof request.booking_id === 'object' && checkInsured(request.booking_id.insured));
       
       // Prepare update data
       const updateData: any = {
@@ -568,12 +601,13 @@ export default function VerificationForm({ request, onVerificationComplete, curr
         rate_bracket: rateBracket?.label || '', // Store the bracket label
         calculated_rate: calculatedRate, // Store the calculated rate
         number_of_boxes: parseInt(verificationData.number_of_boxes) || 1,
+        total_kg: parseFloat(verificationData.total_kg) || 0, // Manual total kilograms input
         weight: chargeableWeight, // Store the chargeable weight (higher of actual or volumetric)
         listed_commodities: '', // Empty for now since boxes are disregarded
       };
 
-      // Add insurance fields for UAE_TO_PINAS with insured = true
-      if (isUaeToPinas && isInsured && verificationData.declared_value) {
+      // Add insurance fields for UAE_TO_PH/PINAS + insured = true in database (any classification)
+      if (isUaeToPinas && isInsuredInDb && verificationData.declared_value) {
         updateData.declared_value = parseFloat(verificationData.declared_value) || 0;
         updateData.insured = true;
       }
@@ -1029,29 +1063,71 @@ export default function VerificationForm({ request, onVerificationComplete, curr
             </div>
           </div>
 
-          {/* Insurance Information - Only for UAE_TO_PINAS with insured = true */}
+          {/* Insurance Information - Only for UAE_TO_PH/PINAS + insured = true in database */}
           {(() => {
             const isUaeToPinas = route === 'UAE_TO_PH' || 
                                 (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PH') ||
                                 (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PINAS');
-            const isInsured = verificationData.insured === true || verificationData.insured === 'true';
-            const hasDeclaredValue = verificationData.declared_value && parseFloat(verificationData.declared_value) > 0;
+            // Check insured from database (request/booking/verification/sender), not from form state
+            // Check multiple possible paths including nested structures
+            // Priority: Top-level insured field first (most common location based on collection structure)
+            const checkInsuredValue = (value: any): boolean => {
+              return value === true || value === 'true' || value === 1 || value === '1';
+            };
             
-            if (isUaeToPinas && isInsured && hasDeclaredValue) {
+            const isInsuredInDb = 
+              // Direct on request (TOP PRIORITY - this is where it's stored in the collection)
+              checkInsuredValue(request.insured) ||
+              // In booking_snapshot (if booking data is stored here)
+              checkInsuredValue(request.booking_snapshot?.insured) ||
+              // In booking_data (if booking data is stored here)
+              checkInsuredValue(request.booking_data?.insured) ||
+              // In booking (if booking is populated as an object)
+              checkInsuredValue(request.booking?.insured) ||
+              // In verification
+              checkInsuredValue(request.verification?.insured) ||
+              // In sender
+              checkInsuredValue(request.sender?.insured) ||
+              // In request_id
+              checkInsuredValue(request.request_id?.insured) ||
+              // In request_id.booking
+              checkInsuredValue(request.request_id?.booking?.insured) ||
+              // In request_id.sender
+              checkInsuredValue(request.request_id?.sender?.insured) ||
+              // In request_id.booking_id (if it's populated as an object)
+              (request.request_id?.booking_id && typeof request.request_id.booking_id === 'object' && checkInsuredValue(request.request_id.booking_id.insured)) ||
+              // In booking_id (if it's populated as an object)
+              (request.booking_id && typeof request.booking_id === 'object' && checkInsuredValue(request.booking_id.insured));
+            
+            // Secure logging - only log useful info in development
+            secureLog.debug('Insurance field check', {
+              route,
+              serviceCode: verificationData.service_code,
+              isUaeToPinas,
+              isInsuredInDb,
+              insuredFound: isInsuredInDb,
+              shouldShowField: isUaeToPinas && isInsuredInDb
+            });
+            
+            // Show declared value field when: UAE_TO_PH/PINAS + insured = true in database (any classification)
+            if (isUaeToPinas && isInsuredInDb) {
               return (
                 <div className="border-l-4 border-indigo-500 pl-4 space-y-4 bg-indigo-50 p-4 rounded-lg">
                   <h3 className="font-semibold text-lg mb-4 text-indigo-900">Insurance Information</h3>
+                  <p className="text-sm text-indigo-800 mb-4">
+                    This shipment has service <strong>UAE to PH/PINAS</strong> and is <strong>insured</strong> in the database. Please enter the declared value.
+                  </p>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="insured_checkbox" className="text-sm font-semibold text-gray-700">Insured</Label>
+                      <Label htmlFor="insured_checkbox" className="text-sm font-semibold text-gray-700">Insured Status</Label>
                       <div className="mt-1 p-2 bg-white rounded border">
                         <Badge variant="default" className="bg-green-100 text-green-800">
-                          ✓ Insured
+                          ✓ Insured (from database)
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
-                        This shipment is insured
+                        This shipment is marked as insured in the booking/request
                       </p>
                     </div>
                     
@@ -1214,6 +1290,23 @@ export default function VerificationForm({ request, onVerificationComplete, curr
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Enter the total number of boxes manually
+              </p>
+            </div>
+            
+            <div>
+              <Label htmlFor="total_kg">Total Kilograms (kg) *</Label>
+              <Input
+                id="total_kg"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                value={verificationData.total_kg}
+                onChange={(e) => setVerificationData({ ...verificationData, total_kg: e.target.value })}
+                required
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Enter the total weight in kilograms manually. This will be used by Finance for invoice generation.
               </p>
             </div>
           </div>

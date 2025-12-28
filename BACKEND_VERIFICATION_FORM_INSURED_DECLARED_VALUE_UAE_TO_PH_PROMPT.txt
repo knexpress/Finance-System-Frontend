@@ -1,0 +1,76 @@
+BACKEND PROMPT: Update Verification Form to Show Insured Declared Value for UAE_TO_PH Service
+
+CONTEXT:
+The verification form (src/components/verification-form.tsx) currently shows the insured declared value field only when:
+- Service is UAE_TO_PH or UAE_TO_PINAS (checked via route or service_code)
+- Classification is FLOWMIC
+- insured = true in the database (from request/booking)
+
+ISSUE:
+Users need to see and enter the insured declared value for UAE_TO_PH service when insured is true, regardless of classification. Currently, the field only appears when classification is FLOWMIC.
+
+REQUIREMENTS:
+1. Update the condition to show the insured declared value field when:
+   - Service code is UAE_TO_PH or UAE_TO_PINAS (or any variation like UAE_TO_PH_*)
+   - insured = true in the database (from request.insured, request.booking.insured, request.request_id.insured, or request.request_id.booking.insured)
+   - Classification can be FLOWMIC, COMMERCIAL, or any other classification (remove the FLOWMIC-only restriction)
+
+2. The field should appear in the verification form when these conditions are met, allowing users to enter the declared value.
+
+3. Ensure the declared value is properly saved to verification.declared_value when the form is submitted.
+
+4. The validation should require declared_value when:
+   - Service is UAE_TO_PH or UAE_TO_PINAS
+   - insured = true in database
+   - (Classification can be any type, not just FLOWMIC)
+
+5. Update all three locations in verification-form.tsx where isUaeToPinas is checked:
+   - Line ~504: In isVerificationComplete() function
+   - Line ~560: In handleSubmit() function  
+   - Line ~1048: In the JSX render section
+
+6. Make sure the condition checks for both UAE_TO_PH and UAE_TO_PINAS service codes properly. The current check uses:
+   ```typescript
+   const isUaeToPinas = route === 'UAE_TO_PH' || 
+                       (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PH') ||
+                       (verificationData.service_code || '').toUpperCase().includes('UAE_TO_PINAS');
+   ```
+   This should work, but ensure it also handles normalized service codes properly.
+
+7. Also check for insured in verification.insured field:
+   ```typescript
+   const isInsuredInDb = request.insured === true || 
+                        request.verification?.insured === true ||
+                        request.booking?.insured === true ||
+                        request.request_id?.insured === true ||
+                        request.request_id?.booking?.insured === true;
+   ```
+
+8. Update the text/labels to say "UAE to PH/PINAS" instead of just "UAE to PINAS" to be more accurate.
+
+EXPECTED BEHAVIOR:
+- When a user opens the verification form for a request with:
+  - service_code: "UAE_TO_PH" (or any UAE_TO_PH variation)
+  - insured: true (in request, booking, or request_id)
+- The insured declared value field should appear, allowing the user to enter the value.
+- The field should be required and validated.
+- The value should be saved to verification.declared_value when submitted.
+
+TEST CASES:
+1. UAE_TO_PH service + insured: true + FLOWMIC classification → Should show field
+2. UAE_TO_PH service + insured: true + COMMERCIAL classification → Should show field
+3. UAE_TO_PH service + insured: true + GENERAL classification → Should show field
+4. UAE_TO_PH service + insured: false → Should NOT show field
+5. UAE_TO_PINAS service + insured: true → Should show field
+6. PH_TO_UAE service + insured: true → Should NOT show field
+
+FILES TO UPDATE:
+- src/components/verification-form.tsx
+
+RELATED FRONTEND CHANGES:
+The invoice-requests page (src/app/dashboard/invoice-requests/page.tsx) has been updated to show the insured declared value when:
+- Service is UAE_TO_PH or UAE_TO_PINAS (using isUaeToPhService helper)
+- insured = true (checking request.insured, verification.insured, request_id.insured, booking.insured)
+
+Ensure consistency between both components.
+

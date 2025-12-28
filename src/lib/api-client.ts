@@ -1,5 +1,6 @@
 // API Client for Backend Communication
 import { apiCache } from './api-cache';
+import { secureLog } from './secure-logger';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -147,24 +148,18 @@ class ApiClient {
           `Request failed with status ${response.status}`;
         const safeErrorMessage = errorMessage || `Request failed with status ${response.status}`;
         
-        if (process.env.NODE_ENV === 'development') {
-          // Use warn instead of error to avoid noisy overlays in dev
-          console.warn('[API] Error Response:', {
-            status: response.status,
-            statusText: response.statusText,
-            url: url,
-            errorData: errorData,
-            errorMessage: safeErrorMessage
-          });
-        }
+        secureLog.warn('API Error Response', {
+          status: response.status,
+          statusText: response.statusText,
+          url: url.substring(0, 100),
+          errorMessage: safeErrorMessage?.substring(0, 200)
+        });
         
         return { success: false, error: safeErrorMessage };
       }
 
       const data = await response.json();
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[API] Success Response:', data);
-      }
+      secureLog.debug('API Success Response', { endpoint: endpoint.substring(0, 50) });
       
       // For auth endpoints, return the data directly wrapped in success
       if (endpoint.includes('/auth/')) {
@@ -491,6 +486,76 @@ class ApiClient {
   }
 
   // Fetch all invoice requests across all pages (for invoice-requests page)
+  // Optimized: Fetch single page of invoice requests (for pagination)
+  async getInvoiceRequestsPage(
+    page: number = 1, 
+    limit: number = 50,
+    filters?: { status?: string; search?: string }, 
+    useCache: boolean = true, 
+    fields?: string[]
+  ) {
+    const queryParams = new URLSearchParams();
+    queryParams.append('page', page.toString());
+    queryParams.append('limit', limit.toString());
+    
+    if (filters?.status && filters.status !== 'all') {
+      queryParams.append('status', filters.status);
+    }
+    if (filters?.search) {
+      queryParams.append('search', filters.search);
+    }
+    // Request only minimal fields for faster loading (if fields parameter provided)
+    if (fields && fields.length > 0) {
+      queryParams.append('fields', fields.join(','));
+    }
+    
+    const queryString = queryParams.toString();
+    const endpoint = `/invoice-requests?${queryString}`;
+    
+    const result = await this.request(endpoint, {}, useCache, 10000);
+    
+    if (result.success) {
+      const pagination = (result as any).pagination;
+      const data = result.data;
+      
+      // Handle different response formats
+      if (pagination && Array.isArray(data)) {
+        return {
+          success: true,
+          data: data,
+          pagination: pagination
+        };
+      } else if (data && typeof data === 'object' && (data as any).pagination) {
+        const responseData = data as any;
+        return {
+          success: true,
+          data: Array.isArray(responseData.data) ? responseData.data : [],
+          pagination: responseData.pagination
+        };
+      } else if (Array.isArray(data)) {
+        // Non-paginated response (backward compatibility)
+        return {
+          success: true,
+          data: data,
+          pagination: {
+            page: 1,
+            limit: data.length,
+            total: data.length,
+            pages: 1
+          }
+        };
+      }
+    }
+    
+    return {
+      success: false,
+      error: result.error || 'Failed to fetch invoice requests',
+      data: [],
+      pagination: null
+    };
+  }
+
+  // Legacy method: Fetch all pages (use sparingly, only when needed)
   async getAllInvoiceRequests(filters?: { status?: string; search?: string }, useCache: boolean = true, fields?: string[]) {
     const allRequests: any[] = [];
     let currentPage = 1;

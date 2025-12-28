@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, memo, type ReactNode, useRef } from 'react';
+import { useState, useEffect, memo, type ReactNode, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -28,6 +28,7 @@ import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { secureLog } from '@/lib/secure-logger';
 // Dynamically import heavy form components to reduce initial bundle size
 const InvoiceRequestForm = dynamic(() => import('@/components/invoice-request-form'), {
   ssr: false
@@ -38,7 +39,7 @@ const VerificationForm = dynamic(() => import('@/components/verification-form'),
 const BookingPrintView = dynamic(() => import('@/components/booking-print-view'), {
   ssr: false
 });
-import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download } from 'lucide-react';
+import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import BookingReviewModal from '@/components/booking-review-modal';
 
 const normalizeServiceCode = (code?: string | null) =>
@@ -273,6 +274,10 @@ InvoiceRequestCard.displayName = 'InvoiceRequestCard';
 export default function InvoiceRequestsPage() {
   const [invoiceRequests, setInvoiceRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pagination, setPagination] = useState<any>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageLimit] = useState(50); // Fixed limit for performance
+  const [statusFilter, setStatusFilter] = useState<string>(''); // Status filter dropdown
   const [awbSearch, setAwbSearch] = useState('');
   const [showAwbSuggestions, setShowAwbSuggestions] = useState(false);
   const [searchingBookings, setSearchingBookings] = useState(false);
@@ -287,7 +292,9 @@ export default function InvoiceRequestsPage() {
   const [nameSearchResults, setNameSearchResults] = useState<any[]>([]);
   const [nameSearchAwbs, setNameSearchAwbs] = useState<string[]>([]);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
-  const [selectedRequestForInvoice, setSelectedRequestForInvoice] = useState(null);
+  const [selectedRequestForInvoice, setSelectedRequestForInvoice] = useState<any>(null);
+  const hasInitializedRef = useRef(false); // Track if initial load has happened
+  const isInitializingRef = useRef(false); // Prevent concurrent initialization
   const [showTaxInputDialog, setShowTaxInputDialog] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -363,7 +370,12 @@ export default function InvoiceRequestsPage() {
 
   // Helper to extract declared amount as number
   const getDeclaredAmount = (request: any): number => {
-    const declaredAmount = request?.declaredAmount ||
+    // Priority 1: verification.declared_value (from invoiceRequests collection)
+    const declaredAmount = request?.verification?.declared_value ||
+      request?.request_id?.verification?.declared_value ||
+      request?.booking?.verification?.declared_value ||
+      // Priority 2: Other declared amount fields
+      request?.declaredAmount ||
       request?.declared_amount ||
       request?.request_id?.declaredAmount ||
       request?.request_id?.declared_amount ||
@@ -407,19 +419,14 @@ export default function InvoiceRequestsPage() {
   const senderDeliveryOption = senderDeliveryOptionRaw?.toString().toLowerCase().trim() || '';
   const receiverDeliveryOption = receiverDeliveryOptionRaw?.toString().toLowerCase().trim() || '';
   
-  // Debug logging - Always log when dialog is open
+  // Secure logging - Only in development
   if (selectedRequestForInvoice) {
-    console.log('🔍 Invoice Generation Dialog - Checking service and delivery options:');
-    console.log('  - Service Code:', selectedServiceCode);
-    console.log('  - Normalized Service Code:', normalizeServiceCode(selectedServiceCode));
-    console.log('  - Is UAE TO PH:', isUaeToPhSelected);
-    console.log('  - Sender Delivery Option (raw):', senderDeliveryOptionRaw);
-    console.log('  - Sender Delivery Option (normalized):', senderDeliveryOption);
-    console.log('  - Receiver Delivery Option (raw):', receiverDeliveryOptionRaw);
-    console.log('  - Receiver Delivery Option (normalized):', receiverDeliveryOption);
-    console.log('  - Full request object keys:', Object.keys(selectedRequestForInvoice));
-    console.log('  - Request ID keys:', selectedRequestForInvoice?.request_id ? Object.keys(selectedRequestForInvoice.request_id) : 'N/A');
-    console.log('  - Booking keys:', selectedRequestForInvoice?.booking ? Object.keys(selectedRequestForInvoice.booking) : 'N/A');
+    secureLog.debug('Invoice Generation Dialog', {
+      serviceCode: selectedServiceCode?.substring(0, 30),
+      isUaeToPh: isUaeToPhSelected,
+      senderOption: senderDeliveryOption?.substring(0, 20),
+      receiverOption: receiverDeliveryOption?.substring(0, 20)
+    });
   }
   
   // For UAE TO PH: Use manual entry based on delivery options
@@ -453,22 +460,34 @@ export default function InvoiceRequestsPage() {
     (needsDeliveryCharge && !deliveryCharge.trim());
   // Manual charges are now handled via pickupCharge and deliveryCharge based on delivery options
 
-  // Determine which requests to show based on department
+  // Determine which requests to show based on department and status filter
   const getVisibleRequests = () => {
     if (!userProfile) {
-      console.log('⚠️ [Invoice Requests] No user profile');
+      secureLog.warn('No user profile available');
       return [];
     }
     
     // Ensure invoiceRequests is always an array
     const safeInvoiceRequests = Array.isArray(invoiceRequests) ? invoiceRequests : [];
-    console.log('📊 [Invoice Requests] Total requests from API:', safeInvoiceRequests.length);
+    secureLog.debug('Invoice requests loaded', { count: safeInvoiceRequests.length });
     
     const department = userProfile.department.name;
-    console.log('👤 [Invoice Requests] User department:', department);
+    secureLog.debug('Filtering requests', { department, statusFilter });
     
     let filtered: any[] = [];
     
+    // If user has selected a specific status filter, apply it first
+    if (statusFilter && statusFilter !== 'all') {
+      filtered = safeInvoiceRequests.filter(request => {
+        const status = request.status;
+        // Match the selected status exactly
+        return status === statusFilter;
+      });
+      secureLog.debug('Filtered by status', { statusFilter, count: filtered.length });
+      return filtered;
+    }
+    
+    // Otherwise, apply department-based filtering
     switch (department) {
       case 'Sales':
         // Sales can see all invoice requests without filtering
@@ -489,8 +508,7 @@ export default function InvoiceRequestsPage() {
                          status === 'VERIFIED';
           return matches;
         });
-        console.log('📊 [Invoice Requests] Operations filtered:', filtered.length, 'requests');
-        console.log('📊 [Invoice Requests] Operations - Available statuses:', [...new Set(safeInvoiceRequests.map(r => r.status || 'NO_STATUS'))]);
+        secureLog.debug('Operations filtered', { count: filtered.length });
         break;
       
       case 'Finance':
@@ -507,12 +525,11 @@ export default function InvoiceRequestsPage() {
           
           return true;
         });
-        console.log('📊 [Invoice Requests] Finance filtered:', filtered.length, 'requests');
-        console.log('📊 [Invoice Requests] Finance - Backend already filtered to VERIFIED status only');
+        secureLog.debug('Finance filtered', { count: filtered.length });
         break;
       
       default:
-        console.log('⚠️ [Invoice Requests] Unknown department:', department);
+        secureLog.warn('Unknown department', { department });
         filtered = [];
     }
     
@@ -520,19 +537,66 @@ export default function InvoiceRequestsPage() {
   };
 
   useEffect(() => {
+    // Only initialize once when userProfile is first loaded
+    if (hasInitializedRef.current || !userProfile || isInitializingRef.current) {
+      return;
+    }
+    
+    isInitializingRef.current = true;
+    
     // Clear invoice requests notification count when page is visited
     clearCount('invoiceRequests');
-    fetchInvoiceRequests();
     
-    // Set up interval to refresh data every 30 seconds
+    // Set default status filter based on department
+    if (userProfile.department?.name === 'Operations') {
+      setStatusFilter('IN_PROGRESS');
+    } else if (userProfile.department?.name === 'Finance') {
+      setStatusFilter('VERIFIED');
+    } else {
+      setStatusFilter('all'); // Sales can see all
+    }
+    
+    hasInitializedRef.current = true;
+    isInitializingRef.current = false;
+  }, [userProfile, clearCount]);
+
+  // Fetch data when status filter changes (after initial load)
+  useEffect(() => {
+    // Only fetch if statusFilter is set and we've initialized
+    if (statusFilter !== '' && hasInitializedRef.current) {
+      fetchInvoiceRequests(1, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]); // Only depend on statusFilter, fetchInvoiceRequests is stable now
+
+  // Set up interval to refresh current page data every 60 seconds (reduced frequency to prevent overload)
+  useEffect(() => {
+    if (statusFilter === '' || !hasInitializedRef.current) return; // Don't set up interval until initialized
+    
     const intervalId = setInterval(() => {
-      console.log('🔄 Auto-refreshing invoice requests...');
-      fetchInvoiceRequests();
-    }, 30000); // 30 seconds
+      // Only refresh if page is visible (not in background)
+      if (document.visibilityState === 'visible') {
+        secureLog.debug('Auto-refreshing invoice requests', { page: currentPage });
+        fetchInvoiceRequests(currentPage, false); // Skip cache for refresh
+      }
+    }, 60000); // 60 seconds (increased from 30 to reduce load)
     
     // Cleanup interval on unmount
     return () => clearInterval(intervalId);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, statusFilter]); // fetchInvoiceRequests is stable, no need to include it
+
+  // Debounce search inputs to prevent excessive API calls
+  useEffect(() => {
+    const debounceTimer = setTimeout(() => {
+      if (awbSearch.trim() || nameSearch.trim()) {
+        // Search will trigger filtering on frontend, no need to refetch
+        // Only refetch if we need to search backend
+      }
+    }, 300);
+
+    return () => clearTimeout(debounceTimer);
+  }, [awbSearch, nameSearch]);
 
   // Update dropdown position on scroll and resize
   useEffect(() => {
@@ -558,43 +622,70 @@ export default function InvoiceRequestsPage() {
     };
   }, [showAwbSuggestions]);
 
-  const fetchInvoiceRequests = async (useCache: boolean = true) => {
+  // Optimized field list for Operations list view (reduces payload by 70-80%)
+  const getEssentialFields = () => [
+    '_id', 'status', 'delivery_status', 'createdAt', 'updatedAt',
+    'tracking_code', 'awb_number', 'awb',
+    'invoice_id', 'invoice_number',
+    'customer_name', 'customer_phone', 'customer_email',
+    'receiver_name', 'receiver_company', 'receiver_phone', 'receiver_address',
+    'origin_place', 'destination_place', 'service_code',
+    'weight', 'weight_kg', 'number_of_boxes',
+    'verification.actual_weight', 'verification.number_of_boxes', 'verification.chargeable_weight',
+    'verification.total_kg', 'verification.shipment_classification', 'verification.insured', 'verification.declared_value',
+    'verification.volumetric_weight',
+    'has_delivery', 'is_leviable', 'insured', 'declaredAmount', 'declared_amount', // Include insured and declared value fields
+    'booking', 'booking_snapshot', 'booking_data', // Include booking data which may contain insured
+    'sender_delivery_option', 'receiver_delivery_option', // Include delivery options
+    'request_id'
+  ];
+
+  const fetchInvoiceRequests = useCallback(async (page: number = currentPage, useCache: boolean = true) => {
     try {
-      // Request only essential fields for invoice-requests page for better performance
-      const essentialFields = [
-        '_id', 'status', 'delivery_status', 'createdAt', 'updatedAt',
-        'tracking_code', 'awb_number', 'awb',
-        'invoice_id', 'invoice_number',
-        'customer_name', 'customer_phone', 'customer_email',
-        'receiver_name', 'receiver_company', 'receiver_phone', 'receiver_address',
-        'origin_place', 'destination_place', 'service_code',
-        'weight', 'weight_kg', 'number_of_boxes',
-        'verification.actual_weight', 'verification.number_of_boxes', 'verification.chargeable_weight',
-        'verification.shipment_classification', 'verification.insured', 'verification.declared_value',
-        'verification.volumetric_weight',
-        'has_delivery', 'is_leviable', 'request_id'
-      ];
+      setLoading(true);
       
-      // For Finance department, only fetch VERIFIED status requests from backend for optimization
-      const filters = userProfile?.department?.name === 'Finance' 
-        ? { status: 'VERIFIED' } 
-        : undefined;
+      const essentialFields = getEssentialFields();
       
-      // Fetch all invoice requests across all pages to show complete list
-      const result = await apiClient.getAllInvoiceRequests(filters, useCache, essentialFields);
+      // Determine filters based on user-selected status filter or department default
+      let filters: { status?: string; search?: string } | undefined = undefined;
+      
+      // If user has selected a status filter, use that (overrides department default)
+      if (statusFilter && statusFilter !== 'all') {
+        filters = { status: statusFilter };
+      } else {
+        // Otherwise, use department defaults
+        if (userProfile?.department?.name === 'Finance') {
+          // Finance: Only VERIFIED status
+          filters = { status: 'VERIFIED' };
+        } else if (userProfile?.department?.name === 'Operations') {
+          // Operations: Only IN_PROGRESS status for better performance
+          filters = { status: 'IN_PROGRESS' };
+        }
+        // Sales: No status filter (can see all)
+      }
+      
+      // Use optimized single-page fetch instead of loading all pages
+      const result = await apiClient.getInvoiceRequestsPage(page, pageLimit, filters, useCache, essentialFields);
+      
       if (result.success) {
         const data = (result.data as any[]) || [];
-        console.log('📦 [Invoice Requests] API returned:', data.length, 'requests');
-        console.log('📦 [Invoice Requests] Sample request:', data[0]);
-        console.log('📦 [Invoice Requests] Request statuses:', [...new Set(data.map(r => r.status))]);
+        secureLog.debug('API response received', { requestCount: data.length, page, hasPagination: !!result.pagination });
         setInvoiceRequests(data);
+        setPagination(result.pagination);
+        // Only update currentPage if it's different to avoid unnecessary re-renders
+        setCurrentPage(prev => {
+          if (prev !== page) {
+            return page;
+          }
+          return prev;
+        });
       } else {
         // Handle rate limiting gracefully
         if (result.error === 'Rate limited') {
-          console.log('Rate limited, will retry later');
-          setInvoiceRequests([]); // Set empty array instead of showing error
+          secureLog.warn('Rate limited, will retry later');
+          setInvoiceRequests([]);
         } else {
-          console.error('Error fetching invoice requests:', result.error);
+          secureLog.error('Error fetching invoice requests', result.error);
           toast({
             variant: 'destructive',
             title: 'Error',
@@ -603,10 +694,8 @@ export default function InvoiceRequestsPage() {
         }
       }
     } catch (error) {
-      console.error('Error fetching invoice requests:', error);
-      // Ensure invoiceRequests is always an array even on error
+      secureLog.error('Error fetching invoice requests', error);
       setInvoiceRequests([]);
-      // Don't show toast for rate limiting errors
       if (!(error as any)?.message?.includes('429')) {
         toast({
           variant: 'destructive',
@@ -617,7 +706,7 @@ export default function InvoiceRequestsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter, userProfile?.department?.name, pageLimit]); // Don't include toast or currentPage to prevent unnecessary re-renders
 
   const handleStatusUpdate = async (id: string, newStatus: string) => {
     try {
@@ -628,7 +717,7 @@ export default function InvoiceRequestsPage() {
           description: 'Status updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(false); // Skip cache after status update
+        fetchInvoiceRequests(currentPage, false); // Skip cache after status update
       } else {
         toast({
           variant: 'destructive',
@@ -654,7 +743,7 @@ export default function InvoiceRequestsPage() {
           description: 'Delivery status updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(false); // Skip cache after status update
+        fetchInvoiceRequests(currentPage, false); // Skip cache after status update
       } else {
         toast({
           variant: 'destructive',
@@ -680,7 +769,7 @@ export default function InvoiceRequestsPage() {
           description: 'Weight updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(false); // Skip cache after verification complete
+        fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
       } else {
         toast({
           variant: 'destructive',
@@ -708,7 +797,7 @@ export default function InvoiceRequestsPage() {
           description: 'Invoice request cancelled and deleted successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(false); // Skip cache after verification complete
+        fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
       } else {
         toast({
           variant: 'destructive',
@@ -744,7 +833,8 @@ export default function InvoiceRequestsPage() {
     }
   };
 
-  const getDeliveryStatusBadgeColor = (deliveryStatus: string) => {
+  const getDeliveryStatusBadgeColor = (deliveryStatus?: string) => {
+    if (!deliveryStatus) return 'bg-gray-500 text-white';
     switch (deliveryStatus) {
       case 'PENDING':
         return 'bg-gray-500 text-white';
@@ -788,7 +878,7 @@ export default function InvoiceRequestsPage() {
     if (awb && awb !== request._id?.toString()) {
       // Allow if it looks like an AWB (alphanumeric, reasonable length)
       if (awb.length >= 3 && /^[A-Z0-9\-_]+$/i.test(awb)) {
-        return awb;
+      return awb;
       }
     }
     
@@ -797,50 +887,46 @@ export default function InvoiceRequestsPage() {
   
   // Search bookings by AWB when user types
   useEffect(() => {
-    const searchBookings = async () => {
-      if (!awbSearch.trim()) {
-        setFoundBookings([]);
-        setAwbSuggestions([]);
-        return;
-      }
+    if (!awbSearch.trim()) {
+      setFoundBookings([]);
+      setAwbSuggestions([]);
+      return;
+    }
 
-      // Debounce search
-      const timeoutId = setTimeout(async () => {
-        try {
-          setSearchingBookings(true);
-          const result = await apiClient.searchBookingsByAwb(awbSearch.trim());
-          if (result.success && result.data) {
-            const bookings = Array.isArray(result.data) ? result.data : [];
-            setFoundBookings(bookings);
-            
-            // Extract AWB numbers for suggestions
-            const awbNumbers = bookings
-              .map((booking: any) => 
-                booking.awb || 
-                booking.tracking_code || 
-                booking.awb_number || 
-                ''
-              )
-              .filter((awb: string) => awb && awb.toLowerCase().includes(awbSearch.toLowerCase().trim()))
-              .slice(0, 10);
-            setAwbSuggestions(awbNumbers);
-          } else {
-            setFoundBookings([]);
-            setAwbSuggestions([]);
-          }
-        } catch (error) {
-          console.error('Error searching bookings by AWB:', error);
+    // Debounce search
+    const timeoutId = setTimeout(async () => {
+      try {
+        setSearchingBookings(true);
+        const result = await apiClient.searchBookingsByAwb(awbSearch.trim());
+        if (result.success && result.data) {
+          const bookings = Array.isArray(result.data) ? result.data : [];
+          setFoundBookings(bookings);
+          
+          // Extract AWB numbers for suggestions
+          const awbNumbers = bookings
+            .map((booking: any) => 
+              booking.awb || 
+              booking.tracking_code || 
+              booking.awb_number || 
+              ''
+            )
+            .filter((awb: string) => awb && awb.toLowerCase().includes(awbSearch.toLowerCase().trim()))
+            .slice(0, 10);
+          setAwbSuggestions(awbNumbers);
+        } else {
           setFoundBookings([]);
           setAwbSuggestions([]);
-        } finally {
-          setSearchingBookings(false);
         }
-      }, 300); // 300ms debounce
+      } catch (error) {
+        secureLog.error('Error searching bookings by AWB', error);
+        setFoundBookings([]);
+        setAwbSuggestions([]);
+      } finally {
+        setSearchingBookings(false);
+      }
+    }, 300); // 300ms debounce
 
-      return () => clearTimeout(timeoutId);
-    };
-
-    searchBookings();
+    return () => clearTimeout(timeoutId);
   }, [awbSearch]);
 
   // Intelligent name search - automatically filters as user types
@@ -885,14 +971,13 @@ export default function InvoiceRequestsPage() {
             .filter((awb: string | null) => awb && awb.trim() !== '');
           
           setNameSearchAwbs(awbs as string[]);
-          console.log('🔍 [Name Search] Found AWBs:', awbs);
-          console.log('🔍 [Name Search] Bookings:', bookings);
+          secureLog.debug('Name search results', { awbCount: awbs.length, bookingCount: bookings.length });
         } else {
           setNameSearchResults([]);
           setNameSearchAwbs([]);
         }
       } catch (error) {
-        console.error('Error searching by name:', error);
+        secureLog.error('Error searching by name', error);
         setNameSearchResults([]);
         setNameSearchAwbs([]);
       } finally {
@@ -949,7 +1034,7 @@ export default function InvoiceRequestsPage() {
         
         // Debug logging
         if (nameSearch.trim() && requestAwb && searchAwb) {
-          console.log('🔍 [Name Filter] Comparing:', {
+          secureLog.debug('Name filter comparison', {
             requestAwb,
             searchAwb,
             exactMatch: requestAwb === searchAwb,
@@ -989,7 +1074,7 @@ export default function InvoiceRequestsPage() {
           description: 'Request updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(false); // Skip cache after verification complete
+        fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
       }
     } catch (error) {
       toast({
@@ -1023,7 +1108,7 @@ export default function InvoiceRequestsPage() {
       
       // If we have booking data, use it directly
       if (bookingData) {
-        console.log('Using embedded booking data');
+        secureLog.debug('Using embedded booking data');
         setSelectedBooking(bookingData);
         setLoadingBooking(false);
         return;
@@ -1039,7 +1124,7 @@ export default function InvoiceRequestsPage() {
       
       // If no booking ID found, use request as booking data
       if (!bookingId) {
-        console.log('No booking ID found, using request data');
+        secureLog.debug('No booking ID found, using request data');
         setSelectedBooking(request);
         setLoadingBooking(false);
         return;
@@ -1047,13 +1132,13 @@ export default function InvoiceRequestsPage() {
       
       // Validate booking ID format (should be a valid MongoDB ObjectId or string)
       if (typeof bookingId !== 'string' || bookingId.trim().length === 0) {
-        console.log('Invalid booking ID format, using request data');
+        secureLog.warn('Invalid booking ID format, using request data');
         setSelectedBooking(request);
         setLoadingBooking(false);
         return;
       }
       
-      console.log('Fetching booking with ID:', bookingId);
+      secureLog.debug('Fetching booking', { bookingId: bookingId?.substring(0, 20) });
       const result = await apiClient.getBooking(bookingId.trim());
       
       if (result.success && result.data) {
@@ -1087,7 +1172,7 @@ export default function InvoiceRequestsPage() {
         }
       }
     } catch (error: any) {
-      console.error('Error fetching booking:', error);
+      secureLog.error('Error fetching booking', error);
       
       // Try to use request data as fallback
       if (request.request_id && typeof request.request_id === 'object') {
@@ -1160,21 +1245,23 @@ export default function InvoiceRequestsPage() {
       }
       return parsed.toFixed(2);
     } catch (error) {
-      console.error('Error parsing weight:', error);
+      secureLog.error('Error parsing weight', error);
       return null;
     }
   };
 
-  const formatDateLabel = (value?: string) => {
+  const formatDateLabel = (value?: string | Date) => {
     if (!value) return '—';
     try {
-      return new Date(value).toLocaleDateString(undefined, {
+      const date = typeof value === 'string' ? new Date(value) : value;
+      if (isNaN(date.getTime())) return '—';
+      return date.toLocaleDateString(undefined, {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
       });
     } catch {
-      return value;
+      return typeof value === 'string' ? value : '—';
     }
   };
 
@@ -1192,7 +1279,7 @@ export default function InvoiceRequestsPage() {
       // Dynamically import XLSX only when needed
       const XLSX = await import('xlsx');
       
-      console.log("Exporting invoice requests to Excel...");
+      secureLog.debug('Exporting invoice requests to Excel');
       
       // Prepare data for export
       const dataToExport = filteredRequests.map((request) => {
@@ -1300,7 +1387,7 @@ export default function InvoiceRequestsPage() {
         description: `${dataToExport.length} invoice requests have been exported to ${filename}`,
       });
     } catch (error) {
-      console.error("Failed to export Excel file:", error);
+      secureLog.error('Failed to export Excel file', error);
       toast({
         variant: "destructive",
         title: "Export Failed",
@@ -1310,6 +1397,7 @@ export default function InvoiceRequestsPage() {
   };
 
   const renderActionControls = (request: any) => {
+    if (!userProfile) return null;
     const departmentName = userProfile.department.name;
 
     if (departmentName === 'Sales') {
@@ -1498,12 +1586,11 @@ export default function InvoiceRequestsPage() {
       };
       
       // Create client first
-      console.log('Creating client with data:', clientData);
+      secureLog.debug('Creating client', { companyName: clientData.company_name?.substring(0, 30) });
       const clientResult = await apiClient.createClient(clientData);
-      console.log('Client creation result:', clientResult);
       
       if (!clientResult.success) {
-        console.error('Client creation failed:', clientResult.error);
+        secureLog.error('Client creation failed', clientResult.error);
         toast({
           variant: 'destructive',
           title: 'Client Creation Failed',
@@ -1513,12 +1600,11 @@ export default function InvoiceRequestsPage() {
       }
       
       // Extract client ID from the result
-      const clientId = clientResult.data?.data?._id || clientResult.data?._id || clientResult.data?.id;
-      console.log('Extracted client ID:', clientId);
-      console.log('Full client result structure:', clientResult);
+      const clientResultData = clientResult.data as any;
+      const clientId = clientResultData?.data?._id || clientResultData?._id || clientResultData?.id;
       
       if (!clientId) {
-        console.error('No client ID found in result:', clientResult);
+        secureLog.error('No client ID found in result');
         toast({
           variant: 'destructive',
           title: 'Client Creation Failed',
@@ -1597,21 +1683,22 @@ export default function InvoiceRequestsPage() {
         customer_trn: customerTRN || undefined,
         batch_number: batchNumber || undefined,
         notes: invoiceData.notes,
-        created_by: userProfile?.employee_id || userProfile?.uid,
+        created_by: (userProfile as any)?.employee_id || (userProfile as any)?._id,
         due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
       });
       
-      console.log('Invoice creation result:', invoiceResult);
+      secureLog.debug('Invoice creation result', { success: invoiceResult.success });
       
       if (invoiceResult.success) {
         // Automatically create delivery assignment with QR code for the invoice
-        console.log('🎫 Creating delivery assignment with QR code...');
+        secureLog.debug('Creating delivery assignment with QR code');
         
         // Extract IDs properly
-        const invoiceId = invoiceResult.data._id || invoiceResult.data.invoice_id;
+        const invoiceData = invoiceResult.data as any;
+        const invoiceId = invoiceData?._id || invoiceData?.invoice_id;
         
         // Get request_id from the invoice request (which links to shipment request)
-        let requestId = (selectedRequestForInvoice as any).request_id;
+        let requestId = (selectedRequestForInvoice as any)?.request_id;
         
         // If request_id doesn't exist, use invoice request _id as fallback
         // Some invoice requests may not have an associated shipment request
@@ -1620,16 +1707,11 @@ export default function InvoiceRequestsPage() {
           requestId = (selectedRequestForInvoice as any)._id;
         }
         
-        console.log('🔍 Invoice data:', invoiceResult.data);
-        console.log('🔍 Invoice ID:', invoiceId);
-        console.log('🔍 Full invoice request:', selectedRequestForInvoice);
-        console.log('🔍 Request ID:', requestId);
-        console.log('🔍 Client ID:', clientId);
-        console.log('🔍 Amount:', invoiceData.totalAmount);
+        secureLog.debug('Invoice creation data', { invoiceId, requestId, clientId, hasAmount: !!invoiceData.totalAmount });
         
         // Validate IDs
         if (!invoiceId) {
-          console.error('❌ Invoice ID is missing');
+          secureLog.error('Invoice ID is missing');
           toast({
             variant: 'destructive',
             title: 'Error',
@@ -1639,7 +1721,7 @@ export default function InvoiceRequestsPage() {
         }
         
         if (!clientId) {
-          console.error('❌ Client ID is missing');
+          secureLog.error('Client ID is missing');
           toast({
             variant: 'destructive',
             title: 'Error',
@@ -1649,7 +1731,7 @@ export default function InvoiceRequestsPage() {
         }
         
         // Get the actual total amount from the created invoice
-        const invoiceTotalAmount = invoiceResult.data.total_amount || invoiceResult.data.amount || invoiceData.totalAmount;
+        const invoiceTotalAmount = invoiceData?.total_amount || invoiceData?.amount || invoiceData?.totalAmount || 0;
         
         const deliveryAssignmentData = {
           request_id: requestId,
@@ -1662,44 +1744,38 @@ export default function InvoiceRequestsPage() {
           delivery_instructions: 'Deliver to customer address. Driver will use QR code for payment verification.'
         };
 
-        console.log('📤 Sending delivery assignment data:', JSON.stringify(deliveryAssignmentData, null, 2));
+        secureLog.debug('Creating delivery assignment', { invoiceId, requestId, amount: invoiceTotalAmount });
         
         const assignmentResult = await apiClient.createDeliveryAssignment(deliveryAssignmentData);
         
-        console.log('📥 Assignment result:', assignmentResult);
-        
         if (assignmentResult.success) {
-          console.log('✅ Delivery assignment created with QR code:', assignmentResult.data.qr_url);
-          console.log('📊 Full assignment data:', assignmentResult.data);
-          // QR code data is stored in delivery assignment, no need to store in state
-          console.log('🔗 QR Code data:', assignmentResult.data);
+          const assignmentData = assignmentResult.data as any;
+          secureLog.success('Delivery assignment created', { hasQrUrl: !!assignmentData?.qr_url });
 
           // Create collection entry for payment tracking
-          console.log('💰 Creating collection entry...');
           try {
             const collectionResult = await apiClient.createCollection({
-              invoice_id: invoiceResult.data._id,
-              client_name: invoiceResult.data.client_id?.company_name || 'Unknown Client',
-              amount: invoiceData.totalAmount,
+              invoice_id: invoiceId,
+              client_name: invoiceData?.client_id?.company_name || 'Unknown Client',
+              amount: invoiceData?.totalAmount || invoiceTotalAmount,
               due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days from now
-              invoice_request_id: (selectedRequestForInvoice as any)._id
+              invoice_request_id: (selectedRequestForInvoice as any)?._id
             });
             
             if (collectionResult.success) {
-              console.log('✅ Collection entry created');
+              secureLog.success('Collection entry created');
             }
           } catch (collectionError) {
-            console.error('❌ Failed to create collection entry:', collectionError);
+            secureLog.error('Failed to create collection entry', collectionError);
           }
 
           // Update shipment status
-          console.log('📦 Updating shipment status...');
           try {
             if (requestId) {
               await apiClient.updateShipmentStatus(requestId, {
               delivery_status: 'DELIVERED'
             });
-            console.log('✅ Shipment status updated');
+            secureLog.success('Shipment status updated');
             } else {
               console.warn('⚠️ Skipping shipment status update: requestId is missing');
             }
@@ -1729,14 +1805,15 @@ export default function InvoiceRequestsPage() {
           });
           
           // Get invoice ID and redirect to invoice page
-          const invoiceId = invoiceResult.data._id || invoiceResult.data.invoice_id;
+          const invoiceDataResult = invoiceResult.data as any;
+          const invoiceId = invoiceDataResult?._id || invoiceDataResult?.invoice_id;
           if (invoiceId) {
             setShowTaxInputDialog(false);
             setCustomerTRN('');
             setBatchNumber('');
             setPickupCharge('');
             setDeliveryCharge('');
-            fetchInvoiceRequests(false); // Skip cache to get fresh data after invoice generation
+            fetchInvoiceRequests(currentPage, false); // Skip cache to get fresh data after invoice generation
             // Redirect to invoice page
             router.push(`/dashboard/invoices/${invoiceId}`);
           } else {
@@ -1750,7 +1827,7 @@ export default function InvoiceRequestsPage() {
             setBatchNumber('');
             setPickupCharge('');
             setDeliveryCharge('');
-            fetchInvoiceRequests(false); // Skip cache to get fresh data after invoice generation
+            fetchInvoiceRequests(currentPage, false); // Skip cache to get fresh data after invoice generation
           }
         }
       } else {
@@ -1836,11 +1913,37 @@ export default function InvoiceRequestsPage() {
       '';
     
     // Calculate charges based on weight and rate
+    // Priority: verification.total_kg (manual input) > chargeable_weight > actual_weight > weight
     // Convert Decimal128 to number if needed
-    const weight = request.weight ? 
-      (typeof request.weight === 'object' && request.weight.$numberDecimal ? 
+    let weight = 0;
+    
+    // First priority: Use manual total_kg from verification (for Finance invoice generation)
+    if (request.verification?.total_kg) {
+      const totalKg = request.verification.total_kg;
+      weight = typeof totalKg === 'object' && totalKg.$numberDecimal ? 
+        parseFloat(totalKg.$numberDecimal) : 
+        parseFloat(totalKg.toString());
+    }
+    // Second priority: Use chargeable_weight (system-calculated)
+    else if (request.verification?.chargeable_weight) {
+      const chargeableWeight = request.verification.chargeable_weight;
+      weight = typeof chargeableWeight === 'object' && chargeableWeight.$numberDecimal ? 
+        parseFloat(chargeableWeight.$numberDecimal) : 
+        parseFloat(chargeableWeight.toString());
+    }
+    // Third priority: Use actual_weight
+    else if (request.verification?.actual_weight) {
+      const actualWeight = request.verification.actual_weight;
+      weight = typeof actualWeight === 'object' && actualWeight.$numberDecimal ? 
+        parseFloat(actualWeight.$numberDecimal) : 
+        parseFloat(actualWeight.toString());
+    }
+    // Fallback: Use request.weight
+    else if (request.weight) {
+      weight = typeof request.weight === 'object' && request.weight.$numberDecimal ? 
         parseFloat(request.weight.$numberDecimal) : 
-        parseFloat(request.weight.toString())) : 0;
+        parseFloat(request.weight.toString());
+    }
     const serviceCode = getRequestServiceCode(request);
     const isPhToUae = isPhToUaeService(serviceCode);
     const isUaeToPh = isUaeToPhService(serviceCode);
@@ -1849,7 +1952,11 @@ export default function InvoiceRequestsPage() {
     const isTaxMode = mode === 'tax';
     const rate = 31.00; // Default rate, you might want to make this configurable
     const shippingCharge = weight * rate;
-    let numberOfBoxes = request.verification?.number_of_boxes || request.shipment?.number_of_boxes || request.number_of_boxes || 1;
+    // Priority: verification.number_of_boxes (manual input) > shipment.number_of_boxes > request.number_of_boxes
+    let numberOfBoxes = request.verification?.number_of_boxes || 
+                       request.shipment?.number_of_boxes || 
+                       request.number_of_boxes || 
+                       1;
     numberOfBoxes = parseInt(numberOfBoxes, 10);
     if (!Number.isFinite(numberOfBoxes) || numberOfBoxes < 1) numberOfBoxes = 1;
     
@@ -2094,7 +2201,38 @@ export default function InvoiceRequestsPage() {
           <CardTitle>Filters</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label htmlFor="status-filter">Filter by Status</Label>
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => {
+                  setStatusFilter(value);
+                  setCurrentPage(1); // Reset to first page when filter changes
+                  fetchInvoiceRequests(1, false); // Fetch with new filter
+                }}
+              >
+                <SelectTrigger id="status-filter">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="SUBMITTED">SUBMITTED</SelectItem>
+                  <SelectItem value="IN_PROGRESS">IN_PROGRESS</SelectItem>
+                  <SelectItem value="VERIFIED">VERIFIED</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {statusFilter && statusFilter !== 'all' 
+                  ? `Showing only ${statusFilter} requests` 
+                  : userProfile?.department?.name === 'Operations' 
+                    ? 'Default: IN_PROGRESS (Operations)' 
+                    : userProfile?.department?.name === 'Finance'
+                      ? 'Default: VERIFIED (Finance)'
+                      : 'Showing all statuses'}
+              </p>
+            </div>
+            
             <div className="relative">
               <Label htmlFor="awb-search">Search by AWB Number</Label>
               <Input
@@ -2155,8 +2293,8 @@ export default function InvoiceRequestsPage() {
               {!searchingByName && nameSearch.trim().length >= 2 && nameSearchAwbs.length > 0 && (
                 <div className="mt-1 space-y-1">
                   <p className="text-xs text-green-600">
-                    Found {nameSearchAwbs.length} AWB{nameSearchAwbs.length !== 1 ? 's' : ''}
-                  </p>
+                  Found {nameSearchAwbs.length} AWB{nameSearchAwbs.length !== 1 ? 's' : ''}
+                </p>
                   <div className="text-xs text-muted-foreground">
                     {nameSearchAwbs.map((awb, idx) => (
                       <p key={idx} className="font-mono">AWB: {awb}</p>
@@ -2219,7 +2357,19 @@ export default function InvoiceRequestsPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Invoice Requests ({filteredRequests.length})</CardTitle>
+            <div className="flex flex-col gap-1">
+              <CardTitle>
+                Invoice Requests {pagination ? `(${pagination.displayText || `${pagination.startRecord || 0}-${pagination.endRecord || 0} of ${pagination.total || 0}`})` : `(${filteredRequests.length})`}
+              </CardTitle>
+              {pagination && (
+                <p className="text-xs text-muted-foreground">
+                  Optimized: Page {pagination.page || currentPage} of {pagination.pages || 1} 
+                  {statusFilter && statusFilter !== 'all' ? ` (${statusFilter} status)` : 
+                   userProfile?.department?.name === 'Operations' ? ' (IN_PROGRESS status)' :
+                   userProfile?.department?.name === 'Finance' ? ' (VERIFIED status)' : ''}
+                </p>
+              )}
+            </div>
             {filteredRequests.length > 0 && (
               <Button
                 variant="outline"
@@ -2261,10 +2411,42 @@ export default function InvoiceRequestsPage() {
                   getStatusBadgeColor={getStatusBadgeColor}
                   getDeliveryStatusBadgeColor={getDeliveryStatusBadgeColor}
                   renderActionControls={renderActionControls}
-                  fetchInvoiceRequests={fetchInvoiceRequests}
+                  fetchInvoiceRequests={() => fetchInvoiceRequests(currentPage, false)}
                   onBadgeClick={handleBadgeClick}
                 />
               ))}
+            </div>
+          )}
+          
+          {/* Pagination Controls */}
+          {pagination && pagination.pages > 1 && (
+            <div className="flex items-center justify-between mt-6 pt-4 border-t">
+              <div className="text-sm text-muted-foreground">
+                Showing {pagination.startRecord || ((currentPage - 1) * pageLimit + 1)} to {pagination.endRecord || (currentPage * pageLimit)} of {pagination.total || 0} results
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchInvoiceRequests(currentPage - 1, false)}
+                  disabled={!pagination.hasPreviousPage || currentPage === 1 || loading}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                <div className="text-sm text-muted-foreground px-2">
+                  Page {currentPage} of {pagination.pages}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchInvoiceRequests(currentPage + 1, false)}
+                  disabled={!pagination.hasNextPage || currentPage >= pagination.pages || loading}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
@@ -2743,34 +2925,36 @@ export default function InvoiceRequestsPage() {
                         {formatWeight(selectedRequestForInvoice.verification?.chargeable_weight)}
                       </p>
                     </div>
-                    {/* Insurance Information - Only for UAE TO PINAS service when insured is true */}
+                    {/* Insurance Information - Only for UAE TO PH/PINAS service when insured is true */}
                     {(() => {
                       const serviceCode = selectedRequestForInvoice.service_code || 
                                         selectedRequestForInvoice.verification?.service_code ||
                                         selectedRequestForInvoice.request_id?.service_code ||
                                         '';
-                      const normalizedService = normalizeServiceCode(serviceCode);
-                      const isUaeToPinas = normalizedService === 'UAE_TO_PINAS' || 
-                                          normalizedService.includes('UAE_TO_PINAS');
+                      const isUaeToPh = isUaeToPhService(serviceCode);
                       const insured = selectedRequestForInvoice.insured || 
+                                     selectedRequestForInvoice.verification?.insured ||
                                      selectedRequestForInvoice.request_id?.insured ||
                                      selectedRequestForInvoice.booking?.insured ||
                                      false;
                       const declaredAmount = selectedRequestForInvoice.declaredAmount || 
                                             selectedRequestForInvoice.declared_amount ||
+                                            selectedRequestForInvoice.verification?.declared_value ||
                                             selectedRequestForInvoice.request_id?.declaredAmount ||
                                             selectedRequestForInvoice.request_id?.declared_amount ||
                                             selectedRequestForInvoice.booking?.declaredAmount ||
                                             selectedRequestForInvoice.booking?.declared_amount ||
                                             null;
                       
-                      if (isUaeToPinas && insured === true && declaredAmount) {
-                        const amount = parseNumericValue(declaredAmount);
+                      if (isUaeToPh && insured === true) {
+                        const amount = declaredAmount ? parseNumericValue(declaredAmount) : null;
                         return (
                           <div>
-                            <Label className="text-sm font-semibold text-gray-600">Insurance</Label>
+                            <Label className="text-sm font-semibold text-gray-600">Insured Declared Value</Label>
                             <p className="text-base">
-                              {amount === 'N/A' ? 'N/A' : `${typeof amount === 'number' ? amount.toFixed(2) : amount} AED`}
+                              {amount && amount !== 'N/A' 
+                                ? `${typeof amount === 'number' ? amount.toFixed(2) : amount} AED`
+                                : 'Not set'}
                             </p>
                           </div>
                         );
@@ -2953,7 +3137,7 @@ export default function InvoiceRequestsPage() {
           onReviewComplete={() => {
             // Refresh data if needed
             apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(false); // Skip cache after verification complete
+        fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
           }}
           currentUser={userProfile}
           viewOnly={true}
