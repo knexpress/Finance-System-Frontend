@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, memo, type ReactNode, useRef, useCallback } from 'react';
+import { useState, useEffect, memo, type ReactNode, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -61,6 +61,33 @@ const isUaeToPhService = (code?: string | null) => {
          normalized.startsWith('UAE_TO_PH_') ||
          normalized.startsWith('UAE_TO_PINAS_') ||
          normalized.includes('UAE_TO_PINAS');
+};
+
+// Helper function to extract AWB number from request (moved outside component for performance)
+const getAwbNumber = (request: any): string => {
+  const awb = (
+    request.awb ||
+    request.tracking_code ||
+    request.awb_number ||
+    request.request_id?.awb ||
+    request.request_id?.tracking_code ||
+    request.request_id?.awb_number ||
+    request.booking?.awb ||
+    request.booking?.tracking_code ||
+    request.booking?.awb_number ||
+    ''
+  ).toString().trim();
+  
+  // Don't return _id as AWB - only return if it's actually an AWB format
+  // Made less strict: allow shorter AWBs and be more lenient with format
+  if (awb && awb !== request._id?.toString()) {
+    // Allow if it looks like an AWB (alphanumeric, reasonable length)
+    if (awb.length >= 3 && /^[A-Z0-9\-_]+$/i.test(awb)) {
+      return awb;
+    }
+  }
+  
+  return '';
 };
 
 // Memoized Invoice Request Card Component - Only re-renders when its props change
@@ -853,37 +880,13 @@ export default function InvoiceRequestsPage() {
     }
   };
 
-  const visibleRequests = getVisibleRequests();
+  // Memoize visible requests to avoid recalculating on every render
+  const visibleRequests = useMemo(() => {
+    return getVisibleRequests();
+  }, [invoiceRequests, statusFilter, userProfile?.department?.name]);
   
   // Ensure visibleRequests is always an array
   const safeVisibleRequests = Array.isArray(visibleRequests) ? visibleRequests : [];
-  
-  // Helper function to extract AWB number from request
-  const getAwbNumber = (request: any): string => {
-    const awb = (
-      request.awb ||
-      request.tracking_code ||
-      request.awb_number ||
-      request.request_id?.awb ||
-      request.request_id?.tracking_code ||
-      request.request_id?.awb_number ||
-      request.booking?.awb ||
-      request.booking?.tracking_code ||
-      request.booking?.awb_number ||
-      ''
-    ).toString().trim();
-    
-    // Don't return _id as AWB - only return if it's actually an AWB format
-    // Made less strict: allow shorter AWBs and be more lenient with format
-    if (awb && awb !== request._id?.toString()) {
-      // Allow if it looks like an AWB (alphanumeric, reasonable length)
-      if (awb.length >= 3 && /^[A-Z0-9\-_]+$/i.test(awb)) {
-      return awb;
-      }
-    }
-    
-    return '';
-  };
   
   // Search bookings by AWB when user types
   useEffect(() => {
@@ -993,69 +996,66 @@ export default function InvoiceRequestsPage() {
     return () => clearTimeout(timer);
   }, [nameSearch]);
 
-  const filteredRequests = safeVisibleRequests.filter(request => {
-    // If AWB search is active, filter by found bookings
-    if (awbSearch.trim() && foundBookings.length > 0) {
-      const requestAwb = getAwbNumber(request).toLowerCase().trim();
-      const matchesAwb = foundBookings.some((booking: any) => {
-        const bookingAwb = (
-          booking.awb || 
-          booking.tracking_code || 
-          booking.awb_number || 
-          ''
-        ).toLowerCase().trim();
-        return bookingAwb === requestAwb;
-      });
-      
-      // If name search is also active, check both
-      if (nameSearch.trim()) {
-        const requestAwbForName = getAwbNumber(request).toLowerCase();
-        const matchesName = nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => 
-          requestAwbForName === awb.toLowerCase()
-        );
-        return matchesAwb && matchesName;
+  // Memoize filtered requests to avoid expensive filtering on every render
+  const filteredRequests = useMemo(() => {
+    // Early return if no search filters are active
+    if (!awbSearch.trim() && !nameSearch.trim()) {
+      return safeVisibleRequests;
+    }
+
+    return safeVisibleRequests.filter(request => {
+      // If AWB search is active, filter by found bookings
+      if (awbSearch.trim() && foundBookings.length > 0) {
+        const requestAwb = getAwbNumber(request).toLowerCase().trim();
+        const matchesAwb = foundBookings.some((booking: any) => {
+          const bookingAwb = (
+            booking.awb || 
+            booking.tracking_code || 
+            booking.awb_number || 
+            ''
+          ).toLowerCase().trim();
+          return bookingAwb === requestAwb;
+        });
+        
+        // If name search is also active, check both
+        if (nameSearch.trim()) {
+          const requestAwbForName = getAwbNumber(request).toLowerCase();
+          const matchesName = nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => 
+            requestAwbForName === awb.toLowerCase()
+          );
+          return matchesAwb && matchesName;
+        }
+        
+        return matchesAwb;
       }
       
-      return matchesAwb;
-    }
-    
-    // Fallback to frontend filtering if no backend results
-    const awbMatch = !awbSearch.trim() || 
-      getAwbNumber(request).toLowerCase().includes(awbSearch.toLowerCase().trim());
-    
-    // Name search filter - check customer name directly first, then AWB matching
-    const nameMatch = !nameSearch.trim() || 
-      // Primary: Direct customer name matching (most reliable)
-      (request.customer_name && request.customer_name.toLowerCase().includes(nameSearch.toLowerCase().trim())) ||
-      // Secondary: Check if request AWB is in the name search results
-      (nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => {
-        const requestAwb = getAwbNumber(request).toLowerCase().trim();
-        const searchAwb = awb.toLowerCase().trim();
-        
-        // Debug logging
-        if (nameSearch.trim() && requestAwb && searchAwb) {
-          secureLog.debug('Name filter comparison', {
-            requestAwb,
-            searchAwb,
-            exactMatch: requestAwb === searchAwb,
-            requestId: request._id,
-            invoiceNumber: request.invoice_number
-          });
-        }
-        
-        // Try exact match first
-        if (requestAwb === searchAwb) return true;
-        // Try partial match (in case of formatting differences)
-        if (requestAwb && searchAwb && (requestAwb.includes(searchAwb) || searchAwb.includes(requestAwb))) {
-          return true;
-        }
-        return false;
-      })) ||
-      // Fallback: Also check receiver name
-      (request.receiver_name && request.receiver_name.toLowerCase().includes(nameSearch.toLowerCase().trim()));
-    
-    return awbMatch && nameMatch;
-  });
+      // Fallback to frontend filtering if no backend results
+      const awbMatch = !awbSearch.trim() || 
+        getAwbNumber(request).toLowerCase().includes(awbSearch.toLowerCase().trim());
+      
+      // Name search filter - check customer name directly first, then AWB matching
+      const nameMatch = !nameSearch.trim() || 
+        // Primary: Direct customer name matching (most reliable)
+        (request.customer_name && request.customer_name.toLowerCase().includes(nameSearch.toLowerCase().trim())) ||
+        // Secondary: Check if request AWB is in the name search results
+        (nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => {
+          const requestAwb = getAwbNumber(request).toLowerCase().trim();
+          const searchAwb = awb.toLowerCase().trim();
+          
+          // Try exact match first
+          if (requestAwb === searchAwb) return true;
+          // Try partial match (in case of formatting differences)
+          if (requestAwb && searchAwb && (requestAwb.includes(searchAwb) || searchAwb.includes(requestAwb))) {
+            return true;
+          }
+          return false;
+        })) ||
+        // Fallback: Also check receiver name
+        (request.receiver_name && request.receiver_name.toLowerCase().includes(nameSearch.toLowerCase().trim()));
+      
+      return awbMatch && nameMatch;
+    });
+  }, [safeVisibleRequests, awbSearch, nameSearch, foundBookings, nameSearchAwbs]);
 
   // Department-specific actions
   const handleOperationsAction = async (id: string, action: string) => {
