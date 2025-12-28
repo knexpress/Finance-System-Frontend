@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
               "img-src 'self' data: https: blob:",
               "font-src 'self' data: https://fonts.gstatic.com",
               "connect-src 'self' https: http://localhost:5000 http://127.0.0.1:5000", // Allow localhost API for development
-              "frame-src 'self'",
+              "frame-src 'self' https://vercel.live", // Allow Vercel Live feedback iframe
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",
