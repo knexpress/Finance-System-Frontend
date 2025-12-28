@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
   compress: true,
   poweredByHeader: false, // Remove X-Powered-By header for security
   reactStrictMode: true, // Enable React strict mode
-  swcMinify: true, // Use SWC minifier for faster builds
+  // Note: swcMinify is enabled by default in Next.js 15, no need to specify
   images: {
     remotePatterns: [
       {
