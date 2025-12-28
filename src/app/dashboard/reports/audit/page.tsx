@@ -24,10 +24,10 @@ export default function AuditReportPage() {
                     
                     // The API might return { success: true, data: [...] } or just the array directly
                     let reportsArray = reportsResult;
-                    if (reportsResult && !Array.isArray(reportsResult) && reportsResult.data) {
-                        reportsArray = reportsResult.data;
+                    if (reportsResult && !Array.isArray(reportsResult) && (reportsResult as any).data) {
+                        reportsArray = (reportsResult as any).data;
                         console.log('📦 Extracted data from response object');
-                    } else if (reportsResult && !Array.isArray(reportsResult) && reportsResult.success) {
+                    } else if (reportsResult && !Array.isArray(reportsResult) && (reportsResult as any).success) {
                         // Already an object but no data field, could be array directly
                         console.log('📝 Response is already an object with success field');
                     }

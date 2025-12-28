@@ -28,9 +28,7 @@ export default function QRCode({ value, size = 200, className = '' }: QRCodeProp
           dark: '#000000',  // Black modules
           light: '#FFFFFF'  // White background
         },
-        errorCorrectionLevel: 'H', // High error correction for better reliability
-        type: 'image/png',
-        quality: 1.0
+        errorCorrectionLevel: 'H' // High error correction for better reliability
       }).catch((err) => {
         console.error('Error generating QR code:', err);
         setError('Failed to generate QR code');

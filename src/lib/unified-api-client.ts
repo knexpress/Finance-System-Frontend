@@ -249,7 +249,7 @@ class UnifiedApiClient {
   async getCollectionsSummary() {
     const response = await this.getShipmentRequests({ invoice_status: 'GENERATED' });
     if (response.success && response.data) {
-      const collections = response.data;
+      const collections = Array.isArray(response.data) ? response.data : [];
       const summary = {
         total: collections.length,
         paid: collections.filter((c: any) => c.status.payment_status === 'PAID').length,
@@ -310,7 +310,8 @@ class UnifiedApiClient {
     // For now, extract clients from shipment requests
     const response = await this.getShipmentRequests();
     if (response.success && response.data) {
-      const clients = response.data.map((request: any) => ({
+      const dataArray = Array.isArray(response.data) ? response.data : [];
+      const clients = dataArray.map((request: any) => ({
         _id: request._id,
         company_name: request.customer.company || request.customer.name,
         contact_name: request.customer.name,

@@ -75,7 +75,7 @@ export default function RejectedRequestsPage() {
         setLoading(true);
       }
 
-      const result = await apiClient.getBookingsByStatus('rejected', useCache);
+      const result = await apiClient.getBookingsByStatus('rejected', undefined, useCache);
 
       if (result.success) {
         const bookingData = Array.isArray(result.data) ? result.data : [];

@@ -161,7 +161,8 @@ export default function ChatInterface() {
         setLoadingUsers(true);
         const response = await apiClient.getAvailableUsers(userProfile._id);
         if (response.success && response.data) {
-          setAvailableUsers(response.data);
+          const usersData = Array.isArray(response.data) ? response.data : [];
+          setAvailableUsers(usersData);
         }
       } catch (error) {
         console.error('Error fetching available users:', error);
@@ -188,10 +189,11 @@ export default function ChatInterface() {
         const departmentId = department?._id;
         const response = await apiClient.getChatRooms(userProfile._id, departmentId);
         if (response.success && response.data) {
-          setRooms(response.data);
+          const roomsData = Array.isArray(response.data) ? response.data : [];
+          setRooms(roomsData);
           // Auto-select first room if available and no room is selected
-          if (response.data.length > 0 && !selectedRoom) {
-            setSelectedRoom(response.data[0]);
+          if (roomsData.length > 0 && !selectedRoom) {
+            setSelectedRoom(roomsData[0]);
             setShowUserList(false);
           }
         }
@@ -218,7 +220,8 @@ export default function ChatInterface() {
       try {
         const response = await apiClient.getChatMessages(selectedRoom._id, 50);
         if (response.success && response.data) {
-          setMessages(response.data);
+          const messagesData = Array.isArray(response.data) ? response.data : [];
+          setMessages(messagesData);
           // Mark room as read
           await apiClient.markRoomAsRead(selectedRoom._id, employeeId);
           // Scroll to bottom
@@ -247,7 +250,8 @@ export default function ChatInterface() {
       try {
         const response = await apiClient.getChatMessages(selectedRoom._id, 50);
         if (response.success && response.data) {
-          setMessages(response.data);
+          const messagesData = Array.isArray(response.data) ? response.data : [];
+          setMessages(messagesData);
         }
       } catch (error) {
         console.error('Error polling messages:', error);
@@ -272,7 +276,7 @@ export default function ChatInterface() {
           if (response.success) {
             setUnreadCounts(prev => ({
               ...prev,
-              [room._id]: response.count || 0
+              [room._id]: (response as any).count || 0
             }));
           }
         }
@@ -310,17 +314,19 @@ export default function ChatInterface() {
         // Refresh messages to get the latest
         const messagesResponse = await apiClient.getChatMessages(selectedRoom._id, 50);
         if (messagesResponse.success && messagesResponse.data) {
-          setMessages(messagesResponse.data);
+          const messagesData = Array.isArray(messagesResponse.data) ? messagesResponse.data : [];
+          setMessages(messagesData);
         } else {
           // Fallback: add new message to array
-          setMessages(prev => [...prev, response.data]);
+          setMessages(prev => [...prev, (response as any).data]);
         }
         // Refresh rooms list to update last activity
         if (userProfile?._id) {
           const departmentId = department?._id;
           const roomsResponse = await apiClient.getChatRooms(userProfile._id, departmentId);
           if (roomsResponse.success && roomsResponse.data) {
-            setRooms(roomsResponse.data);
+            const roomsData = Array.isArray(roomsResponse.data) ? roomsResponse.data : [];
+            setRooms(roomsData);
           }
         }
         // Scroll to bottom
@@ -362,7 +368,7 @@ export default function ChatInterface() {
       const response = await apiClient.createDirectChatRoom(userProfile._id, user._id);
       
       if (response.success && response.data) {
-        const room = response.data;
+        const room = response.data as any;
         
         // Add room to rooms list if not already there
         setRooms(prev => {
@@ -379,9 +385,10 @@ export default function ChatInterface() {
           const departmentId = department?._id;
           const roomsResponse = await apiClient.getChatRooms(userProfile._id, departmentId);
           if (roomsResponse.success && roomsResponse.data) {
-            setRooms(roomsResponse.data);
+            const roomsData = Array.isArray(roomsResponse.data) ? roomsResponse.data : [];
+            setRooms(roomsData);
             // Update selected room from the refreshed list
-            const updatedRoom = roomsResponse.data.find((r: ChatRoom) => r._id === room._id);
+            const updatedRoom = roomsData.find((r: ChatRoom) => r._id === room._id);
             if (updatedRoom) {
               setSelectedRoom(updatedRoom);
             }

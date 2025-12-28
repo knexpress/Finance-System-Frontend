@@ -107,9 +107,10 @@ export default function UserManagement() {
     try {
       const result = await apiClient.getUsers();
       if (result.success) {
-        setUsers(result.data || []);
+        const usersData = Array.isArray(result.data) ? result.data : [];
+        setUsers(usersData);
       } else {
-        console.error('Error fetching users:', result.error);
+        console.error('Error fetching users:', (result as any).error);
       }
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -123,7 +124,7 @@ export default function UserManagement() {
       const result = await apiClient.getAvailableEmployees();
       console.log('Available employees result:', result);
       if (result.success) {
-        const employees = result.data || [];
+        const employees = Array.isArray(result.data) ? result.data : [];
         console.log('Available employees:', employees);
         setAvailableEmployees(employees);
         if (employees.length === 0) {
@@ -155,9 +156,10 @@ export default function UserManagement() {
     try {
       const result = await apiClient.getDepartments();
       if (result.success) {
-        setDepartments(result.data || []);
+        const departmentsData = Array.isArray(result.data) ? result.data : [];
+        setDepartments(departmentsData);
       } else {
-        console.error('Error fetching departments:', result.error);
+        console.error('Error fetching departments:', (result as any).error);
       }
     } catch (error) {
       console.error('Error fetching departments:', error);

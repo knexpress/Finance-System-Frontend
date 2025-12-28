@@ -137,9 +137,9 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
         
         const element = printRef.current;
         const opt = {
-          margin: [10, 10, 10, 10],
+          margin: [10, 10, 10, 10] as [number, number, number, number],
           filename: `booking-${booking._id || 'form'}-${new Date().toISOString().split('T')[0]}.pdf`,
-          image: { type: 'jpeg', quality: 0.98 },
+          image: { type: 'jpeg' as const, quality: 0.98 },
           html2canvas: { 
             scale: 2,
             useCORS: true,
@@ -149,7 +149,7 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
           jsPDF: { 
             unit: 'mm', 
             format: 'a4', 
-            orientation: 'portrait' 
+            orientation: 'portrait' as const
           },
           pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
         };

@@ -90,7 +90,7 @@ export async function fetchCashFlowTransactions(): Promise<CashFlowTransaction[]
         
         return {
           id: transaction._id,
-          type: transaction.direction === 'IN' ? 'Income' : 'Expense',
+          type: (transaction.direction === 'IN' ? 'Income' : 'Expense') as 'Income' | 'Expense',
           description: transaction.description || transaction.notes || transaction.category || 'Transaction',
           amount: amountValue,
           taxRate: 0, // CashTracker doesn't have tax rate, default to 0

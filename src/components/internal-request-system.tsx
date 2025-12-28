@@ -49,7 +49,7 @@ import { createInternalRequest } from '@/lib/actions';
 const requestSchema = z.object({
   title: z.string().min(5, 'Title must be at least 5 characters.'),
   description: z.string().min(10, 'Description must be at least 10 characters.'),
-  targetDepartment: z.enum(departments),
+  targetDepartment: z.enum(["Sales", "Operations", "Finance", "HR", "Management", "IT", "Auditor"]),
 });
 
 export default function InternalRequestSystem({ 
@@ -74,7 +74,7 @@ export default function InternalRequestSystem({
   });
 
   async function onSubmit(values: z.infer<typeof requestSchema>) {
-    const result = await createInternalRequest(values);
+    const result = await createInternalRequest(values, currentUser);
     
     if (result.success) {
       toast({

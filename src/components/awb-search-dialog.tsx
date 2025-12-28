@@ -48,14 +48,15 @@ export default function AwbSearchDialog() {
 
       if (response.success && response.data) {
         // Handle both single AWB string and array of AWBs
-        const awbNumbers = Array.isArray(response.data)
-          ? response.data
-          : response.data.awbNumbers
-          ? response.data.awbNumbers
-          : response.data.awb_number
-          ? [response.data.awb_number]
-          : response.data.tracking_code
-          ? [response.data.tracking_code]
+        const responseData = response.data as any;
+        const awbNumbers = Array.isArray(responseData)
+          ? responseData
+          : responseData.awbNumbers
+          ? responseData.awbNumbers
+          : responseData.awb_number
+          ? [responseData.awb_number]
+          : responseData.tracking_code
+          ? [responseData.tracking_code]
           : [];
 
         if (awbNumbers.length > 0) {

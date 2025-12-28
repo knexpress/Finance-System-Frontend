@@ -120,12 +120,13 @@ export default function EmployeesPage() {
     try {
       const result = await apiClient.getEmployees(true); // Use cache
       if (result.success) {
-        setEmployees(result.data || []);
+        const employeesData = Array.isArray(result.data) ? result.data : [];
+        setEmployees(employeesData);
       } else {
         toast({
           variant: 'destructive',
           title: 'Error',
-          description: result.error || 'Failed to fetch employees',
+          description: (result as any).error || 'Failed to fetch employees',
         });
       }
     } catch (error) {
@@ -144,7 +145,8 @@ export default function EmployeesPage() {
     try {
       const result = await apiClient.getUsers(true); // Use cache
       if (result.success) {
-        setUsers(result.data || []);
+        const usersData = Array.isArray(result.data) ? result.data : [];
+        setUsers(usersData);
       }
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -155,7 +157,8 @@ export default function EmployeesPage() {
     try {
       const result = await apiClient.getDepartments(true); // Use cache (departments rarely change)
       if (result.success) {
-        setDepartments(result.data || []);
+        const departmentsData = Array.isArray(result.data) ? result.data : [];
+        setDepartments(departmentsData);
       }
     } catch (error) {
       console.error('Error fetching departments:', error);

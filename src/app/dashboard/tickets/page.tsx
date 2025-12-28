@@ -17,7 +17,7 @@ const InternalRequestSystem = dynamic(() => import("@/components/internal-reques
 export default function InternalRequestsPage() {
     const { userProfile } = useAuth();
     const { clearCount } = useNotifications();
-    const [tickets, setTickets] = useState([]);
+    const [tickets, setTickets] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const { toast } = useToast();
 

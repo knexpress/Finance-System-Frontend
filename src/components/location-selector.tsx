@@ -321,6 +321,7 @@ export default function LocationSelector({ label, value, onChange, required, pre
       phProvince,
       phCity,
       phBarangay,
+      phLandmark,
     };
 
     // Check if any selection value actually changed

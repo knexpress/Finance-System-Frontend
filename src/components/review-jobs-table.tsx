@@ -27,14 +27,15 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
+import { Separator } from './ui/separator';
 import { approveRequest } from '@/lib/actions';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from './ui/form';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
-const shipmentTypes: ShipmentType[] = ["Docs", "Non-Docs", "Grocery", "Other"];
-const serviceTypes: ServiceType[] = ["Inbound", "Outbound", "Domestic"];
-const deliveryStatuses: DeliveryStatus[] = ["Completed", "RTS", "Pending"];
+const shipmentTypes = ["Docs", "Non-Docs", "Grocery", "Other"] as const;
+const serviceTypes = ["Inbound", "Outbound", "Domestic"] as const;
+const deliveryStatuses = ["Completed", "RTS", "Pending"] as const;
 
 const reviewSchema = z.object({
   awbNumber: z.string().min(5, "AWB number is required."),

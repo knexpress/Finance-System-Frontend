@@ -88,16 +88,17 @@ export default function InvoicePage() {
                 if (result.success && result.data) {
                     console.log('✅ Setting invoice data:', result.data);
                     setInvoice(result.data);
+                    const invoiceData = result.data as any;
                     setEditForm({
-                        receiver_name: result.data.receiver_name || '',
-                        receiver_address: result.data.receiver_address || '',
-                        receiver_phone: result.data.receiver_phone || '',
-                        amount: result.data.amount ? parseFloat(result.data.amount).toString() : '',
-                        pickup_charge: result.data.pickup_charge ? parseFloat(result.data.pickup_charge).toString() : '',
-                        delivery_charge: result.data.delivery_charge ? parseFloat(result.data.delivery_charge).toString() : '',
-                        tax_rate: result.data.tax_rate != null ? result.data.tax_rate.toString() : '',
-                        due_date: result.data.due_date ? new Date(result.data.due_date).toISOString().split('T')[0] : '',
-                        notes: result.data.notes || ''
+                        receiver_name: invoiceData.receiver_name || '',
+                        receiver_address: invoiceData.receiver_address || '',
+                        receiver_phone: invoiceData.receiver_phone || '',
+                        amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
+                        pickup_charge: invoiceData.pickup_charge ? parseFloat(invoiceData.pickup_charge).toString() : '',
+                        delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
+                        tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
+                        due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
+                        notes: invoiceData.notes || ''
                     });
 
                     // Fetch delivery assignment with QR code
@@ -505,9 +506,9 @@ export default function InvoicePage() {
             const opt = {
                 margin: 0.5,
                 filename: `Invoice-${invoiceData.invoiceNumber}.pdf`,
-                image: { type: 'jpeg', quality: 0.98 },
+                image: { type: 'jpeg' as const, quality: 0.98 },
                 html2canvas: { scale: 2, useCORS: true },
-                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' as const }
             };
             
             await html2pdf().set(opt).from(invoiceElement).save();
