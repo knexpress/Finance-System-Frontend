@@ -25,10 +25,11 @@ const nextConfig: NextConfig = {
             value: [
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // unsafe-eval needed for html2pdf.js
-              "style-src 'self' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+              "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: https: blob:",
-              "font-src 'self' data:",
-              "connect-src 'self' https:",
+              "font-src 'self' data: https://fonts.gstatic.com",
+              "connect-src 'self' https: http://localhost:5000 http://127.0.0.1:5000", // Allow localhost API for development
               "frame-src 'self'",
               "object-src 'none'",
               "base-uri 'self'",
