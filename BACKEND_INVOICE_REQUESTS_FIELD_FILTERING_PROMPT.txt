@@ -1,0 +1,338 @@
+BACKEND PROMPT: Implement Field Filtering for Invoice Requests API
+
+========================================
+REQUIREMENT
+========================================
+The invoice requests list endpoint should support field filtering via a `fields` query parameter to reduce data transfer and improve performance. Only the requested fields should be returned in the API response.
+
+========================================
+CURRENT REQUEST FORMAT
+========================================
+GET /api/invoice-requests?page=1&limit=20&status=IN_PROGRESS&fields=_id,invoice_id,invoice_number,status,delivery_status,createdAt,tracking_code,awb_number,awb,customer_name,customer_phone,receiver_name,receiver_company,receiver_phone,origin_place,destination_place,service_code,weight,weight_kg,number_of_boxes,verification.actual_weight,verification.number_of_boxes,has_delivery,is_leviable,sender_delivery_option,receiver_delivery_option,verification.insured,verification.declared_value,request_id._id,request_id.status,request_id.tracking_code
+
+Query Parameters:
+- page: number (default: 1)
+- limit: number (default: 20)
+- status: string (optional, e.g., 'IN_PROGRESS', 'SUBMITTED', 'VERIFIED', 'all')
+- search: string (optional, for AWB/customer name search)
+- fields: string (comma-separated list of fields to include)
+
+========================================
+FIELD FILTERING SPECIFICATION
+========================================
+
+1. FIELD PARAMETER FORMAT
+   - Comma-separated list of field paths
+   - Supports nested fields using dot notation (e.g., `verification.actual_weight`)
+   - Supports top-level fields (e.g., `_id`, `status`, `customer_name`)
+   - Case-sensitive field names (must match MongoDB schema exactly)
+
+2. NESTED FIELD HANDLING
+   - Nested fields like `verification.actual_weight` should include the parent object
+   - If `verification.actual_weight` is requested, the `verification` object should be included
+   - Nested fields in populated objects (e.g., `request_id._id`) should work with population
+
+3. REQUIRED FIELDS (Always Include)
+   - `_id` - Always include regardless of fields parameter
+   - Fields needed for pagination/filtering logic
+
+4. FIELD PROJECTION RULES
+   - If `fields` parameter is provided, ONLY return those fields (plus `_id`)
+   - If `fields` parameter is NOT provided, return all fields (current behavior)
+   - Field projection should work with MongoDB `.select()` or projection object
+
+========================================
+IMPLEMENTATION GUIDE
+========================================
+
+1. PARSE FIELDS PARAMETER
+   ```javascript
+   // Example parsing logic
+   const fieldsParam = req.query.fields;
+   let projection = {};
+   
+   if (fieldsParam) {
+     const fieldList = fieldsParam.split(',').map(f => f.trim());
+     
+     // Always include _id
+     projection._id = 1;
+     
+     // Process each field
+     fieldList.forEach(field => {
+       if (field.includes('.')) {
+         // Handle nested fields (e.g., "verification.actual_weight")
+         const parts = field.split('.');
+         // Build nested projection object
+         // Example: { "verification.actual_weight": 1 }
+         projection[field] = 1;
+       } else {
+         // Handle top-level fields
+         projection[field] = 1;
+       }
+     });
+   }
+   ```
+
+2. APPLY PROJECTION TO QUERY
+   ```javascript
+   // Example MongoDB query with projection
+   const query = { status: 'IN_PROGRESS' };
+   const options = {
+     page: parseInt(req.query.page) || 1,
+     limit: parseInt(req.query.limit) || 20,
+     select: Object.keys(projection).length > 0 ? projection : undefined, // Only apply if fields specified
+     populate: [
+       { path: 'request_id', select: 'status tracking_code _id' }, // Apply field filtering to populated fields
+       // ... other populate options
+     ]
+   };
+   
+   const results = await InvoiceRequest.paginate(query, options);
+   ```
+
+3. HANDLE NESTED FIELD PROJECTIONS
+   - For nested fields like `verification.actual_weight`, MongoDB will automatically include the parent `verification` object
+   - For populated fields like `request_id._id`, ensure the populate `select` option matches the requested fields
+   - Example: If `request_id._id` and `request_id.status` are requested, populate with `select: '_id status'`
+
+4. POPULATION WITH FIELD FILTERING
+   ```javascript
+   // When fields parameter includes request_id fields
+   const requestIdFields = fieldList
+     .filter(f => f.startsWith('request_id.'))
+     .map(f => f.replace('request_id.', ''));
+   
+   const populateOptions = {
+     path: 'request_id',
+     select: requestIdFields.length > 0 ? requestIdFields.join(' ') : undefined
+   };
+   ```
+
+========================================
+EXAMPLE IMPLEMENTATION
+========================================
+
+Endpoint: GET /api/invoice-requests
+
+```javascript
+router.get('/invoice-requests', async (req, res) => {
+  try {
+    const { page = 1, limit = 20, status, search, fields } = req.query;
+    
+    // Build query
+    const query = {};
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    if (search && search !== 'none') {
+      query.$or = [
+        { tracking_code: { $regex: search, $options: 'i' } },
+        { customer_name: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Parse fields parameter
+    let projection = {};
+    let populateSelects = {};
+    
+    if (fields) {
+      const fieldList = fields.split(',').map(f => f.trim());
+      
+      // Always include _id
+      projection._id = 1;
+      
+      // Separate top-level and nested fields
+      const topLevelFields = [];
+      const verificationFields = [];
+      const requestIdFields = [];
+      
+      fieldList.forEach(field => {
+        if (field === '_id') return; // Already included
+        
+        if (field.startsWith('verification.')) {
+          const subField = field.replace('verification.', '');
+          verificationFields.push(subField);
+          projection['verification'] = 1; // Include verification object
+        } else if (field.startsWith('request_id.')) {
+          const subField = field.replace('request_id.', '');
+          requestIdFields.push(subField);
+          populateSelects.request_id = requestIdFields;
+        } else {
+          topLevelFields.push(field);
+          projection[field] = 1;
+        }
+      });
+      
+      // Build verification projection if needed
+      if (verificationFields.length > 0) {
+        projection.verification = {};
+        verificationFields.forEach(field => {
+          projection.verification[field] = 1;
+        });
+      }
+    }
+    
+    // Build populate options
+    const populateOptions = [];
+    
+    if (populateSelects.request_id && populateSelects.request_id.length > 0) {
+      populateOptions.push({
+        path: 'request_id',
+        select: populateSelects.request_id.join(' ')
+      });
+    } else if (fields && fields.includes('request_id')) {
+      // If request_id is requested but no specific fields, include all
+      populateOptions.push({ path: 'request_id' });
+    }
+    
+    // Execute query with pagination
+    const options = {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      select: Object.keys(projection).length > 0 ? projection : undefined,
+      populate: populateOptions.length > 0 ? populateOptions : undefined,
+      sort: { createdAt: -1 }
+    };
+    
+    const result = await InvoiceRequest.paginate(query, options);
+    
+    res.json({
+      success: true,
+      data: result.docs,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.totalDocs,
+        pages: result.totalPages,
+        startRecord: (result.page - 1) * result.limit + 1,
+        endRecord: Math.min(result.page * result.limit, result.totalDocs)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+```
+
+========================================
+FIELD LIST REFERENCE
+========================================
+
+Common fields requested:
+- Core: `_id`, `invoice_id`, `invoice_number`, `status`, `delivery_status`, `createdAt`
+- Tracking: `tracking_code`, `awb_number`, `awb`
+- Customer: `customer_name`, `customer_phone`
+- Receiver: `receiver_name`, `receiver_company`, `receiver_phone`
+- Route: `origin_place`, `destination_place`, `service_code`
+- Weight: `weight`, `weight_kg`, `number_of_boxes`
+- Verification (nested): `verification.actual_weight`, `verification.number_of_boxes`, `verification.insured`, `verification.declared_value`
+- Flags: `has_delivery`, `is_leviable`
+- Delivery: `sender_delivery_option`, `receiver_delivery_option`
+- Request ID (populated): `request_id._id`, `request_id.status`, `request_id.tracking_code`
+
+========================================
+IMPORTANT NOTES
+========================================
+
+1. PERFORMANCE
+   - Field projection significantly reduces data transfer
+   - Only fetch and return requested fields
+   - Use MongoDB projection for efficiency
+
+2. BACKWARD COMPATIBILITY
+   - If `fields` parameter is NOT provided, return all fields (existing behavior)
+   - This ensures existing API consumers continue to work
+
+3. NESTED OBJECTS
+   - When a nested field is requested (e.g., `verification.actual_weight`), include the parent object
+   - MongoDB will automatically structure nested fields correctly
+
+4. POPULATED FIELDS
+   - For populated fields like `request_id`, apply field filtering to the populated document
+   - Use the `select` option in `populate()` to limit populated fields
+
+5. VALIDATION
+   - Validate that requested fields exist in the schema (optional, for better error messages)
+   - If an invalid field is requested, either ignore it or return an error (your choice)
+
+6. TESTING
+   - Test with minimal fields list (only `_id`, `status`, `tracking_code`)
+   - Test with nested fields (`verification.actual_weight`)
+   - Test with populated fields (`request_id._id`)
+   - Test without fields parameter (should return all fields)
+   - Test with pagination + field filtering
+
+========================================
+EXPECTED RESPONSE FORMAT
+========================================
+
+With fields parameter:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "_id": "...",
+      "status": "IN_PROGRESS",
+      "tracking_code": "AWB123",
+      "customer_name": "John Doe",
+      "receiver_name": "Jane Smith",
+      "verification": {
+        "actual_weight": 5.5,
+        "number_of_boxes": 2
+      },
+      "request_id": {
+        "_id": "...",
+        "status": "SUBMITTED",
+        "tracking_code": "AWB123"
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 100,
+    "pages": 5,
+    "startRecord": 1,
+    "endRecord": 20
+  }
+}
+```
+
+Without fields parameter (return all fields):
+```json
+{
+  "success": true,
+  "data": [
+    {
+      // All invoice request fields
+    }
+  ],
+  "pagination": { ... }
+}
+```
+
+========================================
+DEBUGGING
+========================================
+
+The frontend sends these query parameters:
+- `page`: 1
+- `limit`: 20
+- `status`: 'IN_PROGRESS' (or other status)
+- `fields`: Comma-separated field list
+
+Log the parsed projection object to verify correct field filtering:
+```javascript
+console.log('Field projection:', projection);
+console.log('Populate options:', populateOptions);
+```
+
+========================================
+PRIORITY
+========================================
+HIGH - This is critical for performance optimization. The frontend is already sending the fields parameter, so the backend must support it to reduce data transfer and improve loading speed.
+

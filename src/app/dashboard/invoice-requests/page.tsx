@@ -303,7 +303,7 @@ export default function InvoiceRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageLimit] = useState(50); // Fixed limit for performance
+  const [pageLimit] = useState(20); // Reduced limit for faster loading (20 items per page)
   const [statusFilter, setStatusFilter] = useState<string>(''); // Status filter dropdown
   const [awbSearch, setAwbSearch] = useState('');
   const [showAwbSuggestions, setShowAwbSuggestions] = useState(false);
@@ -596,7 +596,7 @@ export default function InvoiceRequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]); // Only depend on statusFilter, fetchInvoiceRequests is stable now
 
-  // Set up interval to refresh current page data every 60 seconds (reduced frequency to prevent overload)
+  // Set up interval to refresh current page data every 90 seconds (optimized for performance)
   useEffect(() => {
     if (statusFilter === '' || !hasInitializedRef.current) return; // Don't set up interval until initialized
     
@@ -604,9 +604,9 @@ export default function InvoiceRequestsPage() {
       // Only refresh if page is visible (not in background)
       if (document.visibilityState === 'visible') {
         secureLog.debug('Auto-refreshing invoice requests', { page: currentPage });
-        fetchInvoiceRequests(currentPage, false); // Skip cache for refresh
+        fetchInvoiceRequests(currentPage, true); // Use cache for background refresh (faster, less server load)
       }
-    }, 60000); // 60 seconds (increased from 30 to reduce load)
+    }, 90000); // 90 seconds (increased to reduce server load and improve performance)
     
     // Cleanup interval on unmount
     return () => clearInterval(intervalId);
@@ -650,20 +650,43 @@ export default function InvoiceRequestsPage() {
   }, [showAwbSuggestions]);
 
   // Optimized field list for Operations list view (reduces payload by 70-80%)
+  // Optimized: Only fetch fields needed for list view display
   const getEssentialFields = () => [
-    '_id', 'status', 'delivery_status', 'createdAt', 'updatedAt',
+    // Core identifiers
+    '_id', 'invoice_id', 'invoice_number',
+    // Status and dates
+    'status', 'delivery_status', 'createdAt',
+    // AWB/Tracking
     'tracking_code', 'awb_number', 'awb',
-    'invoice_id', 'invoice_number',
-    'customer_name', 'customer_phone', 'customer_email',
-    'receiver_name', 'receiver_company', 'receiver_phone', 'receiver_address',
+    // Customer info (minimal for list)
+    'customer_name', 'customer_phone',
+    // Receiver info (minimal for list)
+    'receiver_name', 'receiver_company', 'receiver_phone',
+    // Route info
     'origin_place', 'destination_place', 'service_code',
+    // Weight and boxes (minimal)
     'weight', 'weight_kg', 'number_of_boxes',
-    'verification.actual_weight', 'verification.number_of_boxes', 'verification.chargeable_weight',
-    'verification.total_kg', 'verification.shipment_classification', 'verification.insured', 'verification.declared_value',
-    'verification.volumetric_weight',
-    'has_delivery', 'is_leviable', 'insured', 'declaredAmount', 'declared_amount', // Include insured and declared value fields
-    'booking', 'booking_snapshot', 'booking_data', // Include booking data which may contain insured
-    'sender_delivery_option', 'receiver_delivery_option', // Include delivery options
+    'verification.actual_weight', 'verification.number_of_boxes',
+    // Shipment type (for Document/Non-Document badge)
+    'shipment_type',
+    // Flags
+    'has_delivery', 'is_leviable',
+    // Delivery options (needed for invoice generation)
+    'sender_delivery_option', 'receiver_delivery_option',
+    // Minimal verification data (only what's displayed)
+    'verification.insured', 'verification.declared_value',
+    // Request reference (minimal)
+    'request_id._id', 'request_id.status', 'request_id.tracking_code'
+  ];
+  
+  // Full fields for detailed views (when opening modals/dialogs)
+  const getFullFields = () => [
+    ...getEssentialFields(),
+    'updatedAt', 'customer_email', 'receiver_address',
+    'verification.chargeable_weight', 'verification.total_kg', 
+    'verification.shipment_classification', 'verification.volumetric_weight',
+    'insured', 'declaredAmount', 'declared_amount',
+    'booking', 'booking_snapshot', 'booking_data',
     'request_id'
   ];
 

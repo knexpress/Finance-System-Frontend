@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { apiClient } from '@/lib/api-client';
+// import { apiClient } from '@/lib/api-client'; // Disabled: Notification endpoints removed
 import { secureLog } from '@/lib/secure-logger';
 
 interface NotificationCounts {
@@ -69,61 +69,25 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
   };
 
   const clearCount = async (type: keyof NotificationCounts) => {
-    // First update local state immediately for better UX
+    // Disabled: Notification endpoints removed
+    // Just update local state without API call
     setCounts(prev => ({
       ...prev,
       [type]: 0,
     }));
-    
-    // Then call backend API to mark all notifications of this type as viewed
-    try {
-      await apiClient.markAllAsViewed(type);
-      secureLog.debug('Marked notifications as viewed', { type });
-    } catch (error) {
-      secureLog.error('Failed to mark notifications as viewed', error);
-      // If the API call fails, we could optionally revert the local state
-      // But for now, we'll keep the optimistic update
-    }
   };
 
   const refreshCounts = async () => {
-    // Prevent too frequent calls (minimum 30 seconds between calls)
-    const now = Date.now();
-    if (now - lastFetchTime < 30000) {
-      secureLog.debug('Skipping notification refresh - too frequent');
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      setLastFetchTime(now);
-      const response = await apiClient.getNotificationCounts();
-      if (response.success && response.data) {
-        secureLog.debug('Notification counts received', { counts: response.data });
-        setCounts(response.data as NotificationCounts);
-      } else {
-        secureLog.warn('Failed to get notification counts');
-      }
-    } catch (error) {
-      secureLog.error('Error fetching notification counts', error);
-      // If rate limited, don't show error to user, just silently fail
-      if (error instanceof Error && error.message.includes('429')) {
-        secureLog.debug('Rate limited, skipping notification refresh');
-        return;
-      }
-    } finally {
-      setIsLoading(false);
-    }
+    // Disabled: Notification endpoints removed
+    // No API calls, just set loading to false
+    setIsLoading(false);
   };
 
-  // Fetch counts on mount and set up periodic refresh
+  // Disabled: Notification endpoints removed
+  // No automatic fetching or refresh intervals
   useEffect(() => {
-    refreshCounts();
-    
-    // Refresh counts every 2 minutes (further reduced frequency to avoid rate limiting)
-    const interval = setInterval(refreshCounts, 120000);
-    
-    return () => clearInterval(interval);
+    setIsLoading(false);
+    // No interval setup - notifications disabled
   }, []);
 
   const value: NotificationContextType = {

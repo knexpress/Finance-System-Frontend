@@ -512,7 +512,8 @@ class ApiClient {
     const queryString = queryParams.toString();
     const endpoint = `/invoice-requests?${queryString}`;
     
-    const result = await this.request(endpoint, {}, useCache, 10000);
+    // Reduced cache time for faster updates (5 seconds instead of 10)
+    const result = await this.request(endpoint, {}, useCache, 5000);
     
     if (result.success) {
       const pagination = (result as any).pagination;
@@ -724,22 +725,25 @@ class ApiClient {
   }
 
   // Notifications
+  // Disabled: Notification endpoints removed
   async getNotificationCounts() {
-    return this.request('/notifications/counts');
+    return { success: true, data: { invoices: 0, chat: 0, tickets: 0, invoiceRequests: 0, requests: 0 } };
   }
 
   async markAsViewed(type: string, itemId: string) {
-    return this.request(`/notifications/mark-viewed`, {
-      method: 'POST',
-      body: JSON.stringify({ type, itemId }),
-    });
+    // Disabled: No API call
+    return { success: true };
   }
 
   async markAllAsViewed(type: string) {
-    return this.request(`/notifications/mark-all-viewed`, {
-      method: 'POST',
-      body: JSON.stringify({ type }),
-    });
+    // Disabled: No API call
+    return { success: true };
+  }
+
+  // Get full invoice request details by AWB (for verification form)
+  async getInvoiceRequestByAwb(awb: string, useCache: boolean = false) {
+    // Don't cache this since it's called on-demand when user opens verification
+    return this.request(`/invoice-requests/by-awb/${encodeURIComponent(awb)}`, {}, useCache, 0);
   }
 
   // Invoices

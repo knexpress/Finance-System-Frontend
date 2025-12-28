@@ -1,0 +1,195 @@
+BACKEND PROMPT: Create Endpoint to Fetch Full Invoice Request Details by AWB
+
+========================================
+REQUIREMENT
+========================================
+Create a new API endpoint that fetches COMPLETE invoice request details by AWB number. This endpoint should be used when the user opens the verification form or needs full details for a specific invoice request.
+
+========================================
+ENDPOINT SPECIFICATION
+========================================
+
+Endpoint: GET /api/invoice-requests/by-awb/:awb
+
+Parameters:
+- awb (URL parameter): The AWB number, tracking code, or invoice number to search for
+
+Query Parameters (optional):
+- includeBooking: boolean (default: true) - Include full booking data
+- includeVerification: boolean (default: true) - Include full verification data
+- includeRequestId: boolean (default: true) - Include full request_id data
+
+Response Format:
+{
+  "success": true,
+  "data": {
+    // All fields from invoiceRequests collection
+    "_id": "...",
+    "invoice_number": "...",
+    "tracking_code": "...",
+    "awb_number": "...",
+    "status": "...",
+    "delivery_status": "...",
+    
+    // Full customer/receiver details
+    "customer_name": "...",
+    "customer_phone": "...",
+    "customer_email": "...",
+    "receiver_name": "...",
+    "receiver_company": "...",
+    "receiver_phone": "...",
+    "receiver_address": "...",
+    
+    // Full route details
+    "origin_place": "...",
+    "destination_place": "...",
+    "service_code": "...",
+    
+    // Full weight and shipment details
+    "weight": ...,
+    "weight_kg": ...,
+    "number_of_boxes": ...,
+    "volume_cbm": ...,
+    
+    // FULL verification object (all nested fields)
+    "verification": {
+      "actual_weight": ...,
+      "volumetric_weight": ...,
+      "chargeable_weight": ...,
+      "total_kg": ...,
+      "number_of_boxes": ...,
+      "boxes": [...], // Full boxes array with all details
+      "shipment_classification": "...",
+      "cargo_service": "...",
+      "weight_type": "...",
+      "receiver_address": "...",
+      "receiver_phone": "...",
+      "agents_name": "...",
+      "sender_details_complete": boolean,
+      "receiver_details_complete": boolean,
+      "verification_notes": "...",
+      "insured": boolean,
+      "declared_value": ...,
+      "service_code": "...",
+      "invoice_number": "...",
+      "tracking_code": "...",
+      "amount": ...,
+      "volume_cbm": ...
+    },
+    
+    // FULL booking data (if includeBooking=true)
+    "booking": {
+      // All booking fields including:
+      "_id": "...",
+      "awb": "...",
+      "tracking_code": "...",
+      "service": "...",
+      "service_code": "...",
+      "sender": { /* full sender object */ },
+      "receiver": { /* full receiver object */ },
+      "insured": boolean,
+      "declared_value": ...,
+      "declaredAmount": ...,
+      "weight": ...,
+      "boxes": [...], // Full boxes array
+      // ... all other booking fields
+    },
+    
+    // FULL booking_snapshot (if available)
+    "booking_snapshot": {
+      "insured": boolean,
+      "declared_value": ...,
+      // ... all snapshot fields
+    },
+    
+    // FULL booking_data (if available)
+    "booking_data": {
+      "insured": boolean,
+      "declared_value": ...,
+      // ... all booking data fields
+    },
+    
+    // FULL request_id (if includeRequestId=true)
+    "request_id": {
+      "_id": "...",
+      "status": "...",
+      "delivery_status": "...",
+      "tracking_code": "...",
+      "awb_number": "...",
+      "booking": { /* full booking object */ },
+      "booking_id": "...",
+      "sender": { /* full sender object */ },
+      "receiver": { /* full receiver object */ },
+      "verification": { /* full verification object */ },
+      "insured": boolean,
+      "declared_value": ...,
+      // ... all request_id fields
+    },
+    
+    // Delivery options
+    "sender_delivery_option": "...",
+    "receiver_delivery_option": "...",
+    
+    // Flags
+    "has_delivery": boolean,
+    "is_leviable": boolean,
+    "insured": boolean,
+    "declaredAmount": ...,
+    "declared_amount": ...,
+    
+    // Dates
+    "createdAt": "...",
+    "updatedAt": "...",
+    
+    // ... all other invoice request fields
+  }
+}
+
+Error Response:
+{
+  "success": false,
+  "error": "Invoice request not found" // or appropriate error message
+}
+
+========================================
+SEARCH LOGIC
+========================================
+The endpoint should search for invoice requests matching the AWB parameter in the following order:
+1. tracking_code (exact match)
+2. awb_number (exact match)
+3. awb (exact match)
+4. invoice_number (exact match)
+
+If multiple matches are found, return the most recent one (by createdAt descending).
+
+========================================
+POPULATION REQUIREMENTS
+========================================
+- Populate ALL nested objects (booking, request_id, verification, etc.)
+- Include ALL fields from related collections
+- Do NOT use field filtering for this endpoint (return complete data)
+- Ensure all Decimal128 fields are properly formatted
+
+========================================
+PERFORMANCE CONSIDERATIONS
+========================================
+- This endpoint is called only when user opens verification form (not on every page load)
+- It's acceptable to be slightly slower since it's user-initiated
+- Use MongoDB aggregation pipeline for efficient data retrieval
+- Cache the result for 30 seconds to handle multiple rapid requests
+
+========================================
+EXAMPLE USAGE
+========================================
+GET /api/invoice-requests/by-awb/AWB123456
+GET /api/invoice-requests/by-awb/AWB123456?includeBooking=true&includeVerification=true
+
+========================================
+IMPLEMENTATION NOTES
+========================================
+1. This endpoint should NOT be paginated (returns single document)
+2. Should handle case-insensitive AWB matching
+3. Should handle partial AWB matches if exact match not found (optional)
+4. Should return 404 if no invoice request found with that AWB
+5. Should include proper error handling for invalid AWB formats
+
