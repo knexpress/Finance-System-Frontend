@@ -134,7 +134,7 @@ export default function BookingRequestsPage() {
           toast({
             variant: 'destructive',
             title: 'Error',
-            description: result.error || 'Failed to fetch bookings',
+            description: (result as any).error || 'Failed to fetch bookings',
           });
         }
       }
@@ -174,7 +174,7 @@ export default function BookingRequestsPage() {
         toast({
           variant: 'destructive',
           title: 'Warning',
-          description: result.error || 'Failed to load full booking details. Showing cached data.',
+          description: (result as any).error || 'Failed to load full booking details. Showing cached data.',
         });
         setSelectedBooking(booking);
         setShowReviewModal(true);
@@ -207,7 +207,7 @@ export default function BookingRequestsPage() {
         toast({
           variant: 'destructive',
           title: 'Warning',
-          description: result.error || 'Failed to load full booking details. Showing cached data.',
+          description: (result as any).error || 'Failed to load full booking details. Showing cached data.',
         });
         setSelectedBooking(booking);
         setShowViewModal(true);
@@ -248,7 +248,7 @@ export default function BookingRequestsPage() {
         toast({
           variant: 'destructive',
           title: 'Warning',
-          description: result.error || 'Failed to load full booking details. Showing cached data.',
+          description: (result as any).error || 'Failed to load full booking details. Showing cached data.',
         });
         setBookingToPrint(booking);
         setShowPrintView(true);
