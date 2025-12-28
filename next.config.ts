@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // unsafe-eval needed for html2pdf.js
+              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://vercel.live", // unsafe-eval needed for html2pdf.js, vercel.live for Vercel Live feedback
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: https: blob:",
