@@ -49,6 +49,7 @@ interface InvoiceData {
     url: string;
     code: string;
   };
+  isUaeToPh?: boolean;
 }
 
 interface TaxInvoiceTemplateProps {
@@ -174,13 +175,18 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
               </tr>
               <tr className="bg-gray-100">
                 <td className="border border-gray-300 px-4 py-2 text-left font-bold">
-                  <div>Total Amount</div>
-                  {data.charges.taxAmount > 0 && (
-                    <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of tax</div>
-                  )}
+                  Total Amount
                 </td>
                 <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
               </tr>
+              {data.isUaeToPh && data.charges.taxAmount > 0 && (
+                <tr>
+                  <td className="border border-gray-300 px-4 py-2 text-left text-sm text-gray-600">
+                    Inclusive of Tax
+                  </td>
+                  <td className="border border-gray-300 px-4 py-2 text-right"></td>
+                </tr>
+              )}
               <tr>
                 <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
                 <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>

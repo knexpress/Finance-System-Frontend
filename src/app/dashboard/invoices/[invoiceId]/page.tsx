@@ -458,7 +458,8 @@ export default function InvoicePage() {
         qrCode: qrCodeData ? {
             url: qrCodeData.qr_url || '',
             code: qrCodeData.qr_code || ''
-        } : undefined
+        } : undefined,
+        isUaeToPh: isUaeToPh
     };
 
     // For tax invoice: PH_TO_UAE shows delivery only (unless flowmic/personal)
