@@ -416,7 +416,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     return {
       invoice_number: req.invoice_number || req.verification?.invoice_number || '',
       tracking_code: req.tracking_code || req.verification?.tracking_code || '',
-      service_code: initialServiceCode,
+    service_code: initialServiceCode,
       amount: req.amount?.toString() || req.verification?.amount?.toString() || '',
       actual_weight: req.weight?.toString() || req.verification?.actual_weight?.toString() || '',
       volumetric_weight: req.verification?.volumetric_weight?.toString() || '',
@@ -433,7 +433,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
       total_kg: req.verification?.total_kg?.toString() || '',
       verification_notes: req.verification?.verification_notes || '',
       declared_value: req.verification?.declared_value?.toString() || getDeclaredValue() || '',
-      insured: getInsuredValue(),
+    insured: getInsuredValue(),
     };
   });
 

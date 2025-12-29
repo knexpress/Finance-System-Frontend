@@ -650,17 +650,17 @@ export default function InvoiceRequestsPage() {
   }, [showAwbSuggestions]);
 
   // Optimized field list for Operations list view (reduces payload by 70-80%)
-  // Optimized: Only fetch fields needed for list view display and invoice generation modal
+  // Optimized: Only fetch fields needed for list view display
   const getEssentialFields = () => [
     // Core identifiers
     '_id', 'invoice_id', 'invoice_number',
     // Status and dates
-    'status', 'delivery_status', 'createdAt', 'updatedAt',
+    'status', 'delivery_status', 'createdAt',
     // AWB/Tracking
     'tracking_code', 'awb_number', 'awb',
-    // Customer info (minimal for list + invoice modal)
-    'customer_name', 'customer_phone', 'customer_email',
-    // Receiver info (minimal for list + invoice modal)
+    // Customer info (minimal for list)
+    'customer_name', 'customer_phone',
+    // Receiver info (minimal for list)
     'receiver_name', 'receiver_company', 'receiver_phone',
     // Route info
     'origin_place', 'destination_place', 'service_code',
@@ -673,18 +673,8 @@ export default function InvoiceRequestsPage() {
     'has_delivery', 'is_leviable',
     // Delivery options (needed for invoice generation)
     'sender_delivery_option', 'receiver_delivery_option',
-    // Verification data (for invoice generation modal)
+    // Minimal verification data (only what's displayed)
     'verification.insured', 'verification.declared_value',
-    'verification.chargeable_weight', 'verification.total_kg',
-    'verification.total_vm', 'verification.volumetric_weight',
-    'verification.weight_type', 'verification.calculated_rate',
-    'verification.shipment_classification', 'verification.cargo_service',
-    'verification.rate_bracket', 'verification.agents_name',
-    'verification.listed_commodities', 'verification.verification_notes',
-    'verification.receiver_address', 'verification.receiver_phone',
-    'verification.boxes', // Box details (length, width, height, vm, classification, items, quantity)
-    // Insurance fields (for invoice generation)
-    'insured', 'declaredAmount', 'declared_amount',
     // Request reference (minimal)
     'request_id._id', 'request_id.status', 'request_id.tracking_code'
   ];
@@ -923,46 +913,46 @@ export default function InvoiceRequestsPage() {
   
   // Search bookings by AWB when user types
   useEffect(() => {
-    if (!awbSearch.trim()) {
-      setFoundBookings([]);
-      setAwbSuggestions([]);
-      return;
-    }
-
-    // Debounce search
-    const timeoutId = setTimeout(async () => {
-      try {
-        setSearchingBookings(true);
-        const result = await apiClient.searchBookingsByAwb(awbSearch.trim());
-        if (result.success && result.data) {
-          const bookings = Array.isArray(result.data) ? result.data : [];
-          setFoundBookings(bookings);
-          
-          // Extract AWB numbers for suggestions
-          const awbNumbers = bookings
-            .map((booking: any) => 
-              booking.awb || 
-              booking.tracking_code || 
-              booking.awb_number || 
-              ''
-            )
-            .filter((awb: string) => awb && awb.toLowerCase().includes(awbSearch.toLowerCase().trim()))
-            .slice(0, 10);
-          setAwbSuggestions(awbNumbers);
-        } else {
-          setFoundBookings([]);
-          setAwbSuggestions([]);
-        }
-      } catch (error) {
-        secureLog.error('Error searching bookings by AWB', error);
+      if (!awbSearch.trim()) {
         setFoundBookings([]);
         setAwbSuggestions([]);
-      } finally {
-        setSearchingBookings(false);
+        return;
       }
-    }, 300); // 300ms debounce
 
-    return () => clearTimeout(timeoutId);
+      // Debounce search
+      const timeoutId = setTimeout(async () => {
+        try {
+          setSearchingBookings(true);
+          const result = await apiClient.searchBookingsByAwb(awbSearch.trim());
+          if (result.success && result.data) {
+            const bookings = Array.isArray(result.data) ? result.data : [];
+            setFoundBookings(bookings);
+            
+            // Extract AWB numbers for suggestions
+            const awbNumbers = bookings
+              .map((booking: any) => 
+                booking.awb || 
+                booking.tracking_code || 
+                booking.awb_number || 
+                ''
+              )
+              .filter((awb: string) => awb && awb.toLowerCase().includes(awbSearch.toLowerCase().trim()))
+              .slice(0, 10);
+            setAwbSuggestions(awbNumbers);
+          } else {
+            setFoundBookings([]);
+            setAwbSuggestions([]);
+          }
+        } catch (error) {
+        secureLog.error('Error searching bookings by AWB', error);
+          setFoundBookings([]);
+          setAwbSuggestions([]);
+        } finally {
+          setSearchingBookings(false);
+        }
+      }, 300); // 300ms debounce
+
+      return () => clearTimeout(timeoutId);
   }, [awbSearch]);
 
   // Intelligent name search - automatically filters as user types
@@ -1037,57 +1027,57 @@ export default function InvoiceRequestsPage() {
     }
 
     return safeVisibleRequests.filter(request => {
-      // If AWB search is active, filter by found bookings
-      if (awbSearch.trim() && foundBookings.length > 0) {
-        const requestAwb = getAwbNumber(request).toLowerCase().trim();
-        const matchesAwb = foundBookings.some((booking: any) => {
-          const bookingAwb = (
-            booking.awb || 
-            booking.tracking_code || 
-            booking.awb_number || 
-            ''
-          ).toLowerCase().trim();
-          return bookingAwb === requestAwb;
-        });
-        
-        // If name search is also active, check both
-        if (nameSearch.trim()) {
-          const requestAwbForName = getAwbNumber(request).toLowerCase();
-          const matchesName = nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => 
-            requestAwbForName === awb.toLowerCase()
-          );
-          return matchesAwb && matchesName;
-        }
-        
-        return matchesAwb;
+    // If AWB search is active, filter by found bookings
+    if (awbSearch.trim() && foundBookings.length > 0) {
+      const requestAwb = getAwbNumber(request).toLowerCase().trim();
+      const matchesAwb = foundBookings.some((booking: any) => {
+        const bookingAwb = (
+          booking.awb || 
+          booking.tracking_code || 
+          booking.awb_number || 
+          ''
+        ).toLowerCase().trim();
+        return bookingAwb === requestAwb;
+      });
+      
+      // If name search is also active, check both
+      if (nameSearch.trim()) {
+        const requestAwbForName = getAwbNumber(request).toLowerCase();
+        const matchesName = nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => 
+          requestAwbForName === awb.toLowerCase()
+        );
+        return matchesAwb && matchesName;
       }
       
-      // Fallback to frontend filtering if no backend results
-      const awbMatch = !awbSearch.trim() || 
-        getAwbNumber(request).toLowerCase().includes(awbSearch.toLowerCase().trim());
-      
-      // Name search filter - check customer name directly first, then AWB matching
-      const nameMatch = !nameSearch.trim() || 
-        // Primary: Direct customer name matching (most reliable)
-        (request.customer_name && request.customer_name.toLowerCase().includes(nameSearch.toLowerCase().trim())) ||
-        // Secondary: Check if request AWB is in the name search results
-        (nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => {
-          const requestAwb = getAwbNumber(request).toLowerCase().trim();
-          const searchAwb = awb.toLowerCase().trim();
-          
-          // Try exact match first
-          if (requestAwb === searchAwb) return true;
-          // Try partial match (in case of formatting differences)
-          if (requestAwb && searchAwb && (requestAwb.includes(searchAwb) || searchAwb.includes(requestAwb))) {
-            return true;
-          }
-          return false;
-        })) ||
-        // Fallback: Also check receiver name
-        (request.receiver_name && request.receiver_name.toLowerCase().includes(nameSearch.toLowerCase().trim()));
-      
-      return awbMatch && nameMatch;
-    });
+      return matchesAwb;
+    }
+    
+    // Fallback to frontend filtering if no backend results
+    const awbMatch = !awbSearch.trim() || 
+      getAwbNumber(request).toLowerCase().includes(awbSearch.toLowerCase().trim());
+    
+    // Name search filter - check customer name directly first, then AWB matching
+    const nameMatch = !nameSearch.trim() || 
+      // Primary: Direct customer name matching (most reliable)
+      (request.customer_name && request.customer_name.toLowerCase().includes(nameSearch.toLowerCase().trim())) ||
+      // Secondary: Check if request AWB is in the name search results
+      (nameSearchAwbs.length > 0 && nameSearchAwbs.some(awb => {
+        const requestAwb = getAwbNumber(request).toLowerCase().trim();
+        const searchAwb = awb.toLowerCase().trim();
+        
+        // Try exact match first
+        if (requestAwb === searchAwb) return true;
+        // Try partial match (in case of formatting differences)
+        if (requestAwb && searchAwb && (requestAwb.includes(searchAwb) || searchAwb.includes(requestAwb))) {
+          return true;
+        }
+        return false;
+      })) ||
+      // Fallback: Also check receiver name
+      (request.receiver_name && request.receiver_name.toLowerCase().includes(nameSearch.toLowerCase().trim()));
+    
+    return awbMatch && nameMatch;
+  });
   }, [safeVisibleRequests, awbSearch, nameSearch, foundBookings, nameSearchAwbs]);
 
   // Department-specific actions
