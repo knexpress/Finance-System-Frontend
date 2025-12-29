@@ -1522,9 +1522,11 @@ export default function InvoiceRequestsPage() {
       const pickupChargeValue = needsPickupCharge ? parseFloat(pickupCharge) : 0;
       const deliveryChargeValue = needsDeliveryCharge ? parseFloat(deliveryCharge) : 0;
 
-      // Compute insurance charge based on selection
+      // Compute insurance charge based on user selection
+      // IMPORTANT: User's explicit selection takes priority over database values
       let insuranceChargeValue = 0;
       if (insuranceOption === 'percent') {
+        // User selected "1% insurance" - calculate it
         const declared = getDeclaredAmount(selectedRequestForInvoice);
         if (declared <= 0) {
           toast({
@@ -1535,7 +1537,11 @@ export default function InvoiceRequestsPage() {
           return;
         }
         insuranceChargeValue = parseFloat((declared * 0.01).toFixed(2));
+      } else if (insuranceOption === 'none') {
+        // User explicitly selected "no insurance" - force to 0 regardless of database
+        insuranceChargeValue = 0;
       }
+      // If insuranceOption is undefined/null, insuranceChargeValue remains 0
       
       // Convert request to invoice data
       const invoiceData = convertRequestToInvoiceData(
@@ -1546,7 +1552,11 @@ export default function InvoiceRequestsPage() {
           batchNumber, 
           pickupCharge: pickupChargeValue > 0 ? pickupChargeValue : undefined,
           deliveryCharge: deliveryChargeValue > 0 ? deliveryChargeValue : undefined,
-          insuranceCharge: insuranceChargeValue > 0 ? insuranceChargeValue : undefined,
+          // CRITICAL: Always pass insuranceCharge when user has made a selection
+          // If user selected "none", pass 0 explicitly to override database
+          // If user selected "percent", pass the calculated value
+          // This ensures user's choice is respected, not database insured flag
+          insuranceCharge: insuranceChargeValue, // Always pass (0 or calculated value)
           hasDelivery: isPhToUaeSelected ? hasDelivery : false, // Only for PH TO UAE
           deliveryBaseAmount: isPhToUaeSelected && hasDelivery ? parseFloat(deliveryBaseAmount) || 20 : undefined, // Base delivery amount for PH_TO_UAE
           customerTRN: customerTRN || undefined // Pass customer TRN to invoice data
@@ -1994,22 +2004,26 @@ export default function InvoiceRequestsPage() {
     // Calculate insurance charge (PH→UAE: no insurance)
     let insuranceCharge = 0;
     if (!isPhToUae) {
-      const insured = request.insured || 
-                     request.request_id?.insured ||
-                     request.booking?.insured ||
-                     request.sender?.insured ||
-                     request.request_id?.sender?.insured ||
-                     false;
-      const declaredAmount = getDeclaredAmount(request);
-      
-      // Calculate insurance charge (override wins): 
-      // - If options.insuranceCharge provided, use it
-      // - Else: 1% of declaredAmount if insured flag is true
-      insuranceCharge = typeof options.insuranceCharge === 'number'
-        ? parseFloat(options.insuranceCharge.toFixed(2))
-        : (insured === true && declaredAmount > 0) 
-          ? parseFloat((declaredAmount * 0.01).toFixed(2)) 
-          : 0;
+      // IMPORTANT: If options.insuranceCharge is explicitly provided (even if 0), use it
+      // This allows the user to override the database insured flag when they select "no insurance"
+      if (typeof options.insuranceCharge === 'number') {
+        // User has explicitly set insurance (could be 0 for "no insurance" or a value for "with insurance")
+        insuranceCharge = parseFloat(options.insuranceCharge.toFixed(2));
+      } else {
+        // Only calculate from database if no explicit override provided
+        const insured = request.insured || 
+                       request.request_id?.insured ||
+                       request.booking?.insured ||
+                       request.sender?.insured ||
+                       request.request_id?.sender?.insured ||
+                       false;
+        const declaredAmount = getDeclaredAmount(request);
+        
+        // Only add insurance if insured flag is true AND declared amount exists
+        if (insured === true && declaredAmount > 0) {
+          insuranceCharge = parseFloat((declaredAmount * 0.01).toFixed(2));
+        }
+      }
     }
     
     const subtotal = shippingCharge + pickupChargeValue + deliveryCharge + insuranceCharge;

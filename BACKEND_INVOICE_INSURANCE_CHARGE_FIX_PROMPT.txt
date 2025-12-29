@@ -1,0 +1,251 @@
+# Backend Implementation: Fix Insurance Charge Calculation in Invoice Creation
+
+## Overview
+Fix the invoice creation endpoint to respect the user's insurance selection. When a user explicitly selects "no insurance" in the frontend, the backend should NOT calculate or add insurance charges, even if the database has `insured: true` flag set.
+
+## Problem
+
+**Current Behavior (❌ Bug):**
+- User selects "No insurance" in the invoice generation dialog
+- Frontend sends `insuranceCharge: 0` or no insurance charge
+- Backend still calculates insurance based on database `insured` flag
+- Insurance charge gets added to total amount even though user selected "no insurance"
+
+**Expected Behavior (✅ Fix):**
+- When frontend explicitly sends `insuranceCharge: 0` or `insuranceCharge` field is present with value 0, backend should use 0
+- Backend should NOT override user's explicit "no insurance" selection
+- Only calculate insurance from database `insured` flag if frontend doesn't provide `insuranceCharge` field
+
+## Endpoint to Fix
+
+### Primary Endpoint
+```
+POST /api/invoices-unified
+```
+
+### Secondary Endpoint (if exists)
+```
+PUT /api/invoices-unified/:id
+```
+
+## Request Payload Structure
+
+The frontend sends invoice data with the following structure:
+
+```json
+{
+  "request_id": "invoice_request_id",
+  "client_id": "client_id",
+  "amount": 914.00,
+  "line_items": [
+    {
+      "description": "Shipping - ACTUAL weight",
+      "quantity": 1,
+      "unit_price": 914.00,
+      "total": 914.00
+    }
+  ],
+  "tax_rate": 0,
+  "service_code": "UAE_TO_PH",
+  "shipment_classification": "FLOWMIC",
+  "has_delivery": false,
+  "customer_trn": "",
+  "batch_number": "BATCH123",
+  "notes": "Invoice for request...",
+  "created_by": "employee_id",
+  "due_date": "2024-12-01T00:00:00.000Z"
+}
+```
+
+**Note:** The frontend does NOT send `insuranceCharge` as a separate field in the main payload. Insurance is included in `line_items` if applicable.
+
+## Implementation Requirements
+
+### 1. Check Line Items for Insurance
+
+The backend should:
+1. **Check if insurance line item exists** in `line_items` array
+2. **If insurance line item is present with amount > 0**: Use that amount
+3. **If insurance line item is present with amount = 0**: Use 0 (user selected "no insurance")
+4. **If insurance line item is NOT present**: Only then check database `insured` flag
+
+### 2. Insurance Line Item Detection
+
+Insurance line items typically have:
+- `description` containing "Insurance" (case-insensitive)
+- Example: `"Insurance Charge"`, `"Insurance"`, etc.
+
+### 3. Database Override Logic
+
+**Current Logic (WRONG):**
+```javascript
+// ❌ This always calculates insurance from database, ignoring user selection
+const insured = request.insured || request.request_id?.insured || false;
+if (insured && declaredAmount > 0) {
+  insuranceCharge = declaredAmount * 0.01;
+  // Add to line_items and total
+}
+```
+
+**Fixed Logic (CORRECT):**
+```javascript
+// ✅ Check line_items first, only use database if not provided
+let insuranceCharge = 0;
+
+// Step 1: Check if insurance is already in line_items (user's explicit choice)
+const insuranceLineItem = line_items.find(item => 
+  item.description && item.description.toLowerCase().includes('insurance')
+);
+
+if (insuranceLineItem) {
+  // User has explicitly set insurance (could be 0 for "no insurance")
+  insuranceCharge = insuranceLineItem.total || 0;
+} else {
+  // Step 2: Only calculate from database if user didn't provide insurance in line_items
+  const insured = request.insured || request.request_id?.insured || false;
+  const declaredAmount = getDeclaredAmount(request);
+  
+  if (insured === true && declaredAmount > 0) {
+    insuranceCharge = declaredAmount * 0.01;
+    // Add insurance line item
+    line_items.push({
+      description: 'Insurance Charge',
+      quantity: 1,
+      unit_price: insuranceCharge,
+      total: insuranceCharge
+    });
+  }
+}
+```
+
+### 4. Total Amount Calculation
+
+Ensure total amount calculation respects insurance:
+```javascript
+// Calculate subtotal (all line items except insurance if user selected "no insurance")
+const subtotal = line_items
+  .filter(item => !item.description.toLowerCase().includes('insurance') || item.total > 0)
+  .reduce((sum, item) => sum + (item.total || 0), 0);
+
+// Add insurance only if > 0
+const insuranceCharge = insuranceLineItem?.total || 0;
+const totalAmount = subtotal + insuranceCharge;
+```
+
+## Testing Checklist
+
+### ✅ Test Case 1: User Selects "No Insurance"
+**Input:**
+- Frontend sends line_items WITHOUT insurance item
+- Database has `insured: true` and `declaredAmount: 1500`
+
+**Expected Output:**
+- `insuranceCharge = 0`
+- No insurance line item in invoice
+- Total amount does NOT include insurance
+
+### ✅ Test Case 2: User Selects "1% Insurance"
+**Input:**
+- Frontend sends line_items WITH insurance item: `{ description: "Insurance Charge", total: 15.00 }`
+- Database has `insured: true` and `declaredAmount: 1500`
+
+**Expected Output:**
+- `insuranceCharge = 15.00` (from line_items, NOT recalculated)
+- Insurance line item included in invoice
+- Total amount includes insurance
+
+### ✅ Test Case 3: No Insurance in Line Items, Database Has Insurance
+**Input:**
+- Frontend sends line_items WITHOUT insurance item
+- Database has `insured: true` and `declaredAmount: 1500`
+
+**Expected Output:**
+- `insuranceCharge = 15.00` (calculated from database: 1500 * 0.01)
+- Insurance line item added to invoice
+- Total amount includes insurance
+
+### ✅ Test Case 4: PH to UAE (No Insurance Allowed)
+**Input:**
+- Service code: `PH_TO_UAE`
+- Frontend sends line_items WITHOUT insurance item
+- Database has `insured: true`
+
+**Expected Output:**
+- `insuranceCharge = 0` (PH to UAE never has insurance)
+- No insurance line item
+- Total amount does NOT include insurance
+
+## Code Location
+
+The fix should be applied in:
+- Invoice creation endpoint handler
+- Invoice update endpoint handler (if it recalculates insurance)
+- Any invoice calculation/recalculation functions
+
+## Important Notes
+
+1. **User Selection Takes Priority**: If frontend provides insurance in line_items (even if 0), use that value
+2. **Database is Fallback**: Only calculate from database `insured` flag if frontend doesn't provide insurance
+3. **PH to UAE Exception**: Never add insurance for PH to UAE routes, regardless of database flags
+4. **Line Item Detection**: Use case-insensitive search for "insurance" in description field
+5. **Zero vs Undefined**: If insurance line item has `total: 0`, it means user explicitly selected "no insurance"
+
+## Example Fix Implementation
+
+```javascript
+// In invoice creation handler
+async function createInvoiceUnified(req, res) {
+  const { line_items, request_id, ...otherFields } = req.body;
+  
+  // Get request data
+  const request = await InvoiceRequest.findById(request_id).populate('request_id');
+  
+  // Check if insurance is in line_items (user's explicit choice)
+  const insuranceLineItem = line_items.find(item => 
+    item.description && item.description.toLowerCase().includes('insurance')
+  );
+  
+  let insuranceCharge = 0;
+  
+  if (insuranceLineItem) {
+    // User has explicitly set insurance (could be 0 for "no insurance")
+    insuranceCharge = insuranceLineItem.total || 0;
+  } else {
+    // Only calculate from database if user didn't provide insurance
+    const serviceCode = request.service_code || request.request_id?.service_code || '';
+    const isPhToUae = serviceCode.includes('PH_TO_UAE');
+    
+    if (!isPhToUae) {
+      const insured = request.insured || request.request_id?.insured || false;
+      const declaredAmount = getDeclaredAmount(request);
+      
+      if (insured === true && declaredAmount > 0) {
+        insuranceCharge = parseFloat((declaredAmount * 0.01).toFixed(2));
+        
+        // Add insurance line item
+        line_items.push({
+          description: 'Insurance Charge',
+          quantity: 1,
+          unit_price: insuranceCharge,
+          total: insuranceCharge
+        });
+      }
+    }
+  }
+  
+  // Calculate total (insurance already included in line_items if > 0)
+  const subtotal = line_items.reduce((sum, item) => sum + (item.total || 0), 0);
+  
+  // ... rest of invoice creation logic
+}
+```
+
+## Verification
+
+After implementing the fix, verify:
+1. ✅ Selecting "No insurance" results in 0 insurance charge
+2. ✅ Selecting "1% insurance" uses the calculated value
+3. ✅ Total amount is correct in both cases
+4. ✅ Database `insured` flag is only used when frontend doesn't provide insurance
+5. ✅ PH to UAE routes never have insurance
+
