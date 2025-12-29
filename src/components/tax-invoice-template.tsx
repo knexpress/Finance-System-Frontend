@@ -172,14 +172,6 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
                 <td className="border border-gray-300 px-4 py-2 text-left">Insurance Charge</td>
                 <td className="border border-gray-300 px-4 py-2 text-right">{(data.charges.insuranceCharge ?? 0).toFixed(2)}</td>
               </tr>
-              <tr>
-                <td className="border border-gray-300 px-4 py-2 text-left">Subtotal</td>
-                <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.subtotal.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
-                <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>
-              </tr>
               <tr className="bg-gray-100">
                 <td className="border border-gray-300 px-4 py-2 text-left font-bold">
                   <div>Total Amount</div>
@@ -188,6 +180,10 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
                   )}
                 </td>
                 <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
+              </tr>
+              <tr>
+                <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
+                <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>
               </tr>
             </tbody>
           </table>

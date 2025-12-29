@@ -345,7 +345,7 @@ export default function InvoiceRequestsPage() {
   const { toast } = useToast();
   const { userProfile } = useAuth();
   const { clearCount } = useNotifications();
-  const [insuranceOption, setInsuranceOption] = useState<'none' | 'percent' | 'fixed'>('none');
+  const [insuranceOption, setInsuranceOption] = useState<'none' | 'percent'>('none');
   const [fixedInsuranceType, setFixedInsuranceType] = useState<'mobile' | 'laptop' | 'other'>('mobile');
   const [insuranceManualAmount, setInsuranceManualAmount] = useState('');
   
@@ -1488,11 +1488,11 @@ export default function InvoiceRequestsPage() {
     // Validate pickup charge if needed
     if (needsPickupCharge) {
       const parsedPickup = parseFloat(pickupCharge);
-      if (!pickupCharge.trim() || isNaN(parsedPickup) || parsedPickup <= 0) {
+      if (!pickupCharge.trim() || isNaN(parsedPickup) || parsedPickup < 0) {
         toast({
           variant: 'destructive',
           title: 'Pickup Charge Required',
-          description: 'Please enter a positive pickup charge amount.',
+          description: 'Please enter a valid pickup charge amount (0 or greater).',
         });
         return;
       }
@@ -1501,11 +1501,11 @@ export default function InvoiceRequestsPage() {
     // Validate delivery charge if needed
     if (needsDeliveryCharge) {
       const parsedDelivery = parseFloat(deliveryCharge);
-      if (!deliveryCharge.trim() || isNaN(parsedDelivery) || parsedDelivery <= 0) {
+      if (!deliveryCharge.trim() || isNaN(parsedDelivery) || parsedDelivery < 0) {
         toast({
           variant: 'destructive',
           title: 'Delivery Charge Required',
-          description: 'Please enter a positive delivery charge amount.',
+          description: 'Please enter a valid delivery charge amount (0 or greater).',
         });
         return;
       }
@@ -1533,23 +1533,6 @@ export default function InvoiceRequestsPage() {
           return;
         }
         insuranceChargeValue = parseFloat((declared * 0.01).toFixed(2));
-      } else if (insuranceOption === 'fixed') {
-        if (fixedInsuranceType === 'mobile') {
-          insuranceChargeValue = 300;
-        } else if (fixedInsuranceType === 'laptop') {
-          insuranceChargeValue = 450;
-        } else {
-          const manual = parseFloat(insuranceManualAmount);
-          if (!insuranceManualAmount.trim() || isNaN(manual) || manual <= 0) {
-            toast({
-              variant: 'destructive',
-              title: 'Insurance Amount Required',
-              description: 'Enter a positive insurance amount for Other.',
-            });
-            return;
-          }
-          insuranceChargeValue = parseFloat(manual.toFixed(2));
-        }
       }
       
       // Convert request to invoice data
@@ -2231,11 +2214,11 @@ export default function InvoiceRequestsPage() {
                     </>
                   ) : (
                     <>
-                      <SelectItem value="all">All Statuses</SelectItem>
-                      <SelectItem value="SUBMITTED">SUBMITTED</SelectItem>
-                      <SelectItem value="IN_PROGRESS">IN_PROGRESS</SelectItem>
-                      <SelectItem value="VERIFIED">VERIFIED</SelectItem>
-                      <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="SUBMITTED">SUBMITTED</SelectItem>
+                  <SelectItem value="IN_PROGRESS">IN_PROGRESS</SelectItem>
+                  <SelectItem value="VERIFIED">VERIFIED</SelectItem>
+                  <SelectItem value="COMPLETED">COMPLETED</SelectItem>
                     </>
                   )}
                 </SelectContent>
@@ -2604,65 +2587,10 @@ export default function InvoiceRequestsPage() {
                       />
                       <span className="text-sm">1% of declared amount</span>
                     </label>
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="insurance-option"
-                        value="fixed"
-                        checked={insuranceOption === 'fixed'}
-                        onChange={() => setInsuranceOption('fixed')}
-                        className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                      />
-                      <span className="text-sm">Fixed amount</span>
-                    </label>
                   </div>
-
-                  {insuranceOption === 'fixed' && (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <button
-                          type="button"
-                          className={`border rounded px-3 py-2 text-sm ${fixedInsuranceType === 'mobile' ? 'border-green-600 text-green-700 font-semibold' : 'border-gray-300 text-gray-700'}`}
-                          onClick={() => setFixedInsuranceType('mobile')}
-                        >
-                          Mobile (300 AED)
-                        </button>
-                        <button
-                          type="button"
-                          className={`border rounded px-3 py-2 text-sm ${fixedInsuranceType === 'laptop' ? 'border-green-600 text-green-700 font-semibold' : 'border-gray-300 text-gray-700'}`}
-                          onClick={() => setFixedInsuranceType('laptop')}
-                        >
-                          Laptop (450 AED)
-                        </button>
-                        <button
-                          type="button"
-                          className={`border rounded px-3 py-2 text-sm ${fixedInsuranceType === 'other' ? 'border-green-600 text-green-700 font-semibold' : 'border-gray-300 text-gray-700'}`}
-                          onClick={() => setFixedInsuranceType('other')}
-                        >
-                          Other
-                        </button>
-                      </div>
-                      {fixedInsuranceType === 'other' && (
-                        <div>
-                          <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={insuranceManualAmount}
-                            onChange={(e) => setInsuranceManualAmount(e.target.value)}
-                            placeholder="Enter insurance amount (AED)"
-                            className="w-full"
-                          />
-                          <p className="text-xs text-gray-500 mt-1">
-                            Enter a custom insurance amount.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Choose 1% of declared value or a fixed amount (mobile 300, laptop 450, or custom).
+                  Choose 1% of declared value for insurance.
                 </p>
               </div>
             )}
