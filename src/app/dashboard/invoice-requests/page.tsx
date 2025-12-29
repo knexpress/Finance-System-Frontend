@@ -650,17 +650,17 @@ export default function InvoiceRequestsPage() {
   }, [showAwbSuggestions]);
 
   // Optimized field list for Operations list view (reduces payload by 70-80%)
-  // Optimized: Only fetch fields needed for list view display
+  // Optimized: Only fetch fields needed for list view display and invoice generation modal
   const getEssentialFields = () => [
     // Core identifiers
     '_id', 'invoice_id', 'invoice_number',
     // Status and dates
-    'status', 'delivery_status', 'createdAt',
+    'status', 'delivery_status', 'createdAt', 'updatedAt',
     // AWB/Tracking
     'tracking_code', 'awb_number', 'awb',
-    // Customer info (minimal for list)
-    'customer_name', 'customer_phone',
-    // Receiver info (minimal for list)
+    // Customer info (minimal for list + invoice modal)
+    'customer_name', 'customer_phone', 'customer_email',
+    // Receiver info (minimal for list + invoice modal)
     'receiver_name', 'receiver_company', 'receiver_phone',
     // Route info
     'origin_place', 'destination_place', 'service_code',
@@ -673,8 +673,18 @@ export default function InvoiceRequestsPage() {
     'has_delivery', 'is_leviable',
     // Delivery options (needed for invoice generation)
     'sender_delivery_option', 'receiver_delivery_option',
-    // Minimal verification data (only what's displayed)
+    // Verification data (for invoice generation modal)
     'verification.insured', 'verification.declared_value',
+    'verification.chargeable_weight', 'verification.total_kg',
+    'verification.total_vm', 'verification.volumetric_weight',
+    'verification.weight_type', 'verification.calculated_rate',
+    'verification.shipment_classification', 'verification.cargo_service',
+    'verification.rate_bracket', 'verification.agents_name',
+    'verification.listed_commodities', 'verification.verification_notes',
+    'verification.receiver_address', 'verification.receiver_phone',
+    'verification.boxes', // Box details (length, width, height, vm, classification, items, quantity)
+    // Insurance fields (for invoice generation)
+    'insured', 'declaredAmount', 'declared_amount',
     // Request reference (minimal)
     'request_id._id', 'request_id.status', 'request_id.tracking_code'
   ];
