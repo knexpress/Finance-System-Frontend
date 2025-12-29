@@ -2221,13 +2221,23 @@ export default function InvoiceRequestsPage() {
                 }}
               >
                 <SelectTrigger id="status-filter">
-                  <SelectValue placeholder="All Statuses" />
+                  <SelectValue placeholder={userProfile?.department?.name === 'Finance' ? 'Select Status' : 'All Statuses'} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="SUBMITTED">SUBMITTED</SelectItem>
-                  <SelectItem value="IN_PROGRESS">IN_PROGRESS</SelectItem>
-                  <SelectItem value="VERIFIED">VERIFIED</SelectItem>
+                  {userProfile?.department?.name === 'Finance' ? (
+                    <>
+                      <SelectItem value="VERIFIED">VERIFIED</SelectItem>
+                      <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="all">All Statuses</SelectItem>
+                      <SelectItem value="SUBMITTED">SUBMITTED</SelectItem>
+                      <SelectItem value="IN_PROGRESS">IN_PROGRESS</SelectItem>
+                      <SelectItem value="VERIFIED">VERIFIED</SelectItem>
+                      <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
@@ -2236,7 +2246,7 @@ export default function InvoiceRequestsPage() {
                   : userProfile?.department?.name === 'Operations' 
                     ? 'Default: IN_PROGRESS (Operations)' 
                     : userProfile?.department?.name === 'Finance'
-                      ? 'Default: VERIFIED (Finance)'
+                      ? 'Select VERIFIED or COMPLETED'
                       : 'Showing all statuses'}
               </p>
             </div>
@@ -2369,14 +2379,6 @@ export default function InvoiceRequestsPage() {
               <CardTitle>
                 Invoice Requests {pagination ? `(${pagination.displayText || `${pagination.startRecord || 0}-${pagination.endRecord || 0} of ${pagination.total || 0}`})` : `(${filteredRequests.length})`}
               </CardTitle>
-              {pagination && (
-                <p className="text-xs text-muted-foreground">
-                  Optimized: Page {pagination.page || currentPage} of {pagination.pages || 1} 
-                  {statusFilter && statusFilter !== 'all' ? ` (${statusFilter} status)` : 
-                   userProfile?.department?.name === 'Operations' ? ' (IN_PROGRESS status)' :
-                   userProfile?.department?.name === 'Finance' ? ' (VERIFIED status)' : ''}
-                </p>
-              )}
             </div>
             {filteredRequests.length > 0 && (
               <Button

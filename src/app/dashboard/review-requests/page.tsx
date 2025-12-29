@@ -37,17 +37,49 @@ import { useAuth } from '@/hooks/use-auth';
 import { Package, Truck, Plane, MapPin, CheckCircle, Search, Layers, Hash } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-// Shipment status options in order
-const SHIPMENT_STATUSES = [
-  { value: 'SHIPMENT_RECEIVED', label: 'Shipment Received', icon: Package, color: 'default' },
-  { value: 'SHIPMENT_PROCESSING', label: 'Shipment Processing', icon: Package, color: 'default' },
-  { value: 'DEPARTED_FROM_MANILA', label: 'Departed from Manila', icon: Plane, color: 'default' },
-  { value: 'IN_TRANSIT_TO_DUBAI', label: 'In Transit going to Dubai Airport', icon: Truck, color: 'default' },
-  { value: 'ARRIVED_AT_DUBAI', label: 'Arrived at Dubai Airport', icon: MapPin, color: 'default' },
-  { value: 'SHIPMENT_CLEARANCE', label: 'Shipment Clearance', icon: CheckCircle, color: 'default' },
-  { value: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', icon: Truck, color: 'default' },
-  { value: 'DELIVERED', label: 'Delivered', icon: CheckCircle, color: 'success' },
-];
+// Helper function to normalize service code
+const normalizeServiceCode = (code?: string | null) =>
+  (code || '')
+    .toString()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+
+// Helper function to check if service is PH to UAE
+const isPhToUaeService = (code?: string | null) => {
+  const normalized = normalizeServiceCode(code);
+  return normalized === 'PH_TO_UAE' || normalized.startsWith('PH_TO_UAE_');
+};
+
+// Get shipment statuses based on service code
+const getShipmentStatuses = (serviceCode?: string | null) => {
+  const isPhToUae = isPhToUaeService(serviceCode);
+  
+  return [
+    { value: 'SHIPMENT_RECEIVED', label: 'Shipment Received', icon: Package, color: 'default' },
+    { value: 'SHIPMENT_PROCESSING', label: 'Shipment Processing', icon: Package, color: 'default' },
+    { 
+      value: 'DEPARTED_FROM_MANILA', 
+      label: isPhToUae ? 'Departed from Manila' : 'Departed from UAE', 
+      icon: Plane, 
+      color: 'default' 
+    },
+    { 
+      value: 'IN_TRANSIT_TO_DUBAI', 
+      label: isPhToUae ? 'In Transit going to Dubai Airport' : 'In Transit going to Manila Airport', 
+      icon: Truck, 
+      color: 'default' 
+    },
+    { 
+      value: 'ARRIVED_AT_DUBAI', 
+      label: isPhToUae ? 'Arrived at Dubai Airport' : 'Arrived at Manila Airport', 
+      icon: MapPin, 
+      color: 'default' 
+    },
+    { value: 'SHIPMENT_CLEARANCE', label: 'Shipment Clearance', icon: CheckCircle, color: 'default' },
+    { value: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', icon: Truck, color: 'default' },
+    { value: 'DELIVERED', label: 'Delivered', icon: CheckCircle, color: 'success' },
+  ];
+};
 
 interface Booking {
   _id: string;
@@ -62,8 +94,26 @@ interface Booking {
   batch_no?: string;
   invoice_id?: string;
   invoice_number?: string;
+  service_code?: string;
+  service?: string;
   createdAt?: string;
   updatedAt?: string;
+  sender?: {
+    completeAddress?: string;
+    country?: string;
+  };
+  receiver?: {
+    completeAddress?: string;
+    country?: string;
+  };
+  request_id?: {
+    service_code?: string;
+    service?: string;
+  };
+  booking?: {
+    service_code?: string;
+    service?: string;
+  };
 }
 
 export default function ReviewRequestsPage() {
@@ -91,7 +141,12 @@ export default function ReviewRequestsPage() {
       const result = await apiClient.getBookingsWithVerifiedInvoices(false);
       if (result.success && result.data) {
         const bookingData = Array.isArray(result.data) ? result.data : [];
-        setBookings(bookingData);
+        // Set default shipment_status to SHIPMENT_RECEIVED if missing
+        const bookingsWithDefaults = bookingData.map(booking => ({
+          ...booking,
+          shipment_status: booking.shipment_status || 'SHIPMENT_RECEIVED'
+        }));
+        setBookings(bookingsWithDefaults);
       } else {
         toast({
           variant: 'destructive',
@@ -191,12 +246,24 @@ export default function ReviewRequestsPage() {
     }
   };
 
-  // Get status badge
-  const getStatusBadge = (status?: string) => {
-    if (!status) {
-      return <Badge variant="secondary">Not Set</Badge>;
-    }
-    const statusConfig = SHIPMENT_STATUSES.find(s => s.value === status);
+  // Get service code from booking
+  const getServiceCode = (booking: Booking): string | null => {
+    return booking.service_code || 
+           booking.service || 
+           booking.request_id?.service_code || 
+           booking.request_id?.service ||
+           booking.booking?.service_code ||
+           booking.booking?.service ||
+           null;
+  };
+
+  // Get status badge with dynamic labels based on service
+  const getStatusBadge = (booking: Booking) => {
+    // Default to SHIPMENT_RECEIVED if status is missing
+    const status = booking.shipment_status || 'SHIPMENT_RECEIVED';
+    const serviceCode = getServiceCode(booking);
+    const statuses = getShipmentStatuses(serviceCode);
+    const statusConfig = statuses.find(s => s.value === status);
     if (!statusConfig) {
       return <Badge variant="outline">{status}</Badge>;
     }
@@ -533,11 +600,25 @@ export default function ReviewRequestsPage() {
                         <TableCell>
                           {booking.receiver_name || 'N/A'}
                         </TableCell>
-                        <TableCell className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-xs">
-                            {booking.origin_place || 'N/A'} → {booking.destination_place || 'N/A'}
-                          </span>
+                        <TableCell>
+                          <div className="flex flex-col gap-1 text-xs">
+                            <div className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3 text-muted-foreground" />
+                              <span className="font-medium">From:</span>
+                              <span>
+                                {booking.sender?.completeAddress || booking.origin_place || 'N/A'}
+                                {booking.sender?.country && `, ${booking.sender.country}`}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3 text-muted-foreground" />
+                              <span className="font-medium">To:</span>
+                              <span>
+                                {booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
+                                {booking.receiver?.country && `, ${booking.receiver.country}`}
+                              </span>
+                            </div>
+                          </div>
                         </TableCell>
                         <TableCell>
                           {booking.batch_no ? (
@@ -550,7 +631,7 @@ export default function ReviewRequestsPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {getStatusBadge(booking.shipment_status)}
+                          {getStatusBadge(booking)}
                         </TableCell>
                         <TableCell>
                           {booking.invoice_number ? (
@@ -567,7 +648,7 @@ export default function ReviewRequestsPage() {
                             size="sm"
                             onClick={() => {
                               setSelectedBookings(new Set([booking._id]));
-                              setSelectedStatus(booking.shipment_status || '');
+                              setSelectedStatus(booking.shipment_status || 'SHIPMENT_RECEIVED');
                               setShowStatusDialog(true);
                             }}
                           >
@@ -603,17 +684,24 @@ export default function ReviewRequestsPage() {
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
-                  {SHIPMENT_STATUSES.map((status) => {
-                    const Icon = status.icon;
-                    return (
-                      <SelectItem key={status.value} value={status.value}>
-                        <div className="flex items-center gap-2">
-                          <Icon className="h-4 w-4" />
-                          {status.label}
-                        </div>
-                      </SelectItem>
-                    );
-                  })}
+                  {(() => {
+                    // Get service code from first selected booking for dynamic labels
+                    const firstSelectedBooking = filteredBookings.find(b => selectedBookings.has(b._id));
+                    const serviceCode = firstSelectedBooking ? getServiceCode(firstSelectedBooking) : null;
+                    const statuses = getShipmentStatuses(serviceCode);
+                    
+                    return statuses.map((status) => {
+                      const Icon = status.icon;
+                      return (
+                        <SelectItem key={status.value} value={status.value}>
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-4 w-4" />
+                            {status.label}
+                          </div>
+                        </SelectItem>
+                      );
+                    });
+                  })()}
                 </SelectContent>
               </Select>
             </div>

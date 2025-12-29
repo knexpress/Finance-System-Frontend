@@ -1,0 +1,161 @@
+BACKEND: Default Shipment Status for Bookings
+==============================================
+
+REQUIREMENT:
+------------
+All bookings should have a default `shipment_status` of "SHIPMENT_RECEIVED" when:
+1. A new booking is created
+2. A booking is fetched and doesn't have a shipment_status set
+3. A booking is returned in API responses
+
+CURRENT BEHAVIOR:
+-----------------
+Bookings may have null, undefined, or missing `shipment_status` fields, which causes the frontend to display "Not Set" or handle it inconsistently.
+
+REQUIRED CHANGES:
+-----------------
+
+1. **Database Schema:**
+   Ensure the Booking model/schema has a default value for `shipment_status`:
+   
+   ```javascript
+   // MongoDB/Mongoose example
+   const bookingSchema = new Schema({
+     // ... other fields
+     shipment_status: {
+       type: String,
+       default: 'SHIPMENT_RECEIVED',
+       enum: [
+         'SHIPMENT_RECEIVED',
+         'SHIPMENT_PROCESSING',
+         'DEPARTED_FROM_MANILA',
+         'DEPARTED_FROM_UAE',
+         'IN_TRANSIT_TO_DUBAI',
+         'IN_TRANSIT_TO_MANILA',
+         'ARRIVED_AT_DUBAI',
+         'ARRIVED_AT_MANILA',
+         'SHIPMENT_CLEARANCE',
+         'OUT_FOR_DELIVERY',
+         'DELIVERED'
+       ]
+     }
+   });
+   ```
+
+2. **API Response Normalization:**
+   When returning bookings in API responses (especially `/api/bookings/verified-invoices`), ensure all bookings have a `shipment_status`:
+   
+   ```javascript
+   // In GET /api/bookings/verified-invoices
+   const bookings = await Booking.find({ /* query */ })
+     .lean();
+   
+   const normalizedBookings = bookings.map(booking => ({
+     ...booking,
+     shipment_status: booking.shipment_status || 'SHIPMENT_RECEIVED'
+   }));
+   
+   res.json({
+     success: true,
+     data: normalizedBookings
+   });
+   ```
+
+3. **Booking Creation:**
+   When creating new bookings, always set `shipment_status` to 'SHIPMENT_RECEIVED' if not provided:
+   
+   ```javascript
+   // POST /api/bookings
+   const bookingData = {
+     ...req.body,
+     shipment_status: req.body.shipment_status || 'SHIPMENT_RECEIVED'
+   };
+   
+   const booking = await Booking.create(bookingData);
+   ```
+
+4. **Migration Script (if needed):**
+   Update existing bookings that have null/undefined shipment_status:
+   
+   ```javascript
+   // One-time migration script
+   await Booking.updateMany(
+     { 
+       $or: [
+         { shipment_status: { $exists: false } },
+         { shipment_status: null },
+         { shipment_status: '' }
+       ]
+     },
+     { 
+       $set: { shipment_status: 'SHIPMENT_RECEIVED' } 
+     }
+   );
+   ```
+
+5. **Update Related Endpoints:**
+   Apply the same default logic to:
+   - GET /api/bookings
+   - GET /api/bookings/verified-invoices
+   - GET /api/bookings/:id
+   - POST /api/bookings
+   - Any other endpoints that return booking data
+
+EXAMPLE IMPLEMENTATION:
+-----------------------
+
+```javascript
+// Middleware or helper function to normalize booking shipment_status
+function normalizeBookingStatus(booking) {
+  if (!booking.shipment_status || booking.shipment_status === '') {
+    booking.shipment_status = 'SHIPMENT_RECEIVED';
+  }
+  return booking;
+}
+
+// Use in API endpoints
+router.get('/bookings/verified-invoices', authenticateToken, async (req, res) => {
+  try {
+    const bookings = await Booking.find({
+      invoice_id: { $exists: true, $ne: null }
+    })
+    .lean();
+    
+    // Normalize all bookings to have default status
+    const normalizedBookings = bookings.map(normalizeBookingStatus);
+    
+    res.json({
+      success: true,
+      data: normalizedBookings
+    });
+  } catch (error) {
+    console.error('Error fetching bookings:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bookings'
+    });
+  }
+});
+```
+
+VALIDATION:
+-----------
+- All bookings returned in API responses must have a `shipment_status` field
+- The value should never be null, undefined, or empty string
+- Default value should always be 'SHIPMENT_RECEIVED'
+- New bookings should automatically get 'SHIPMENT_RECEIVED' status
+
+TESTING:
+--------
+1. Create a new booking without shipment_status → should default to 'SHIPMENT_RECEIVED'
+2. Fetch bookings with null shipment_status → should return 'SHIPMENT_RECEIVED'
+3. Fetch bookings with existing shipment_status → should preserve the existing status
+4. Verify all API endpoints return bookings with shipment_status set
+
+IMPORTANT NOTES:
+---------------
+- This ensures consistency across the application
+- Frontend relies on this default to display "Shipment Received" badge
+- Prevents "Not Set" or empty status displays
+- Makes the status workflow clearer for users
+
