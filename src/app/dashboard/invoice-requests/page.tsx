@@ -596,22 +596,7 @@ export default function InvoiceRequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]); // Only depend on statusFilter, fetchInvoiceRequests is stable now
 
-  // Set up interval to refresh current page data every 90 seconds (optimized for performance)
-  useEffect(() => {
-    if (statusFilter === '' || !hasInitializedRef.current) return; // Don't set up interval until initialized
-    
-    const intervalId = setInterval(() => {
-      // Only refresh if page is visible (not in background)
-      if (document.visibilityState === 'visible') {
-        secureLog.debug('Auto-refreshing invoice requests', { page: currentPage });
-        fetchInvoiceRequests(currentPage, true); // Use cache for background refresh (faster, less server load)
-      }
-    }, 90000); // 90 seconds (increased to reduce server load and improve performance)
-    
-    // Cleanup interval on unmount
-    return () => clearInterval(intervalId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, statusFilter]); // fetchInvoiceRequests is stable, no need to include it
+  // Auto-refresh removed - page will only refresh when user manually triggers it
 
   // Debounce search inputs to prevent excessive API calls
   useEffect(() => {
