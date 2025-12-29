@@ -1,0 +1,237 @@
+# Backend Implementation: Get Invoice Request Details Endpoint
+
+## Overview
+Create a new endpoint that fetches a complete invoice request record with all verification, booking, and shipment data when a user clicks the "View" button in the invoice generation dialog. This endpoint should return the full invoice request data including all nested information from related collections.
+
+## Endpoint Specification
+
+### Route
+```
+GET /api/invoice-requests/:id/details
+```
+
+### Purpose
+This endpoint is specifically designed to fetch complete invoice request data with all nested information when a Finance user wants to view full shipment details before generating an invoice. Unlike the regular `GET /api/invoice-requests/:id` endpoint, this one should:
+1. Return ALL data including full verification object with all fields
+2. Include complete booking/shipment data if linked
+3. Include all box details with dimensions, classifications, etc.
+4. Include all weight calculations (actual, volumetric, chargeable)
+5. Include all rate and pricing information
+6. Return data in a format that matches the frontend expectations
+
+### Request
+- **Method**: GET
+- **URL**: `/api/invoice-requests/:id/details`
+- **Parameters**: 
+  - `id` (path parameter) - The invoice request ID
+
+### Response Format
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "invoice_request_id",
+    "invoice_number": "INV-000014",
+    "status": "VERIFIED",
+    "delivery_status": "PENDING",
+    "customer_name": "Customer Name",
+    "customer_phone": "+971XXXXXXXXX",
+    "customer_email": "customer@example.com",
+    "origin_place": "Dubai, UAE",
+    "destination_place": "Manila, Philippines",
+    "service_code": "UAE_TO_PH",
+    "shipment_type": "DOCUMENT",
+    "tracking_code": "AEFC3WCOU2BOIBK",
+    "awb_number": "AEFC3WCOU2BOIBK",
+    "weight": 29.00,
+    "number_of_boxes": 3,
+    "sender_delivery_option": "pickup",
+    "receiver_delivery_option": "delivery",
+    "verification": {
+      "actual_weight": 29.00,
+      "volumetric_weight": 15.50,
+      "total_vm": 15.50,
+      "chargeable_weight": 29.00,
+      "weight_type": "ACTUAL",
+      "number_of_boxes": 3,
+      "calculated_rate": 31.00,
+      "agents_name": "Agent Name",
+      "shipment_classification": "FLOWMIC",
+      "cargo_service": "Express",
+      "rate_bracket": "Standard",
+      "listed_commodities": "Items description",
+      "verification_notes": "Notes",
+      "declared_value": 1500.00,
+      "insured": true,
+      "service_code": "UAE_TO_PH",
+      "receiver_phone": "+971XXXXXXXXX",
+      "receiver_address": "Full address",
+      "boxes": [
+        {
+          "classification": "FLOWMIC",
+          "items": "Item description",
+          "length": 30.5,
+          "width": 25.0,
+          "height": 20.0,
+          "vm": 5.17,
+          "quantity": 1
+        }
+      ]
+    },
+    "request_id": {
+      "_id": "request_id",
+      "status": "VERIFIED",
+      "tracking_code": "AEFC3WCOU2BOIBK",
+      "service_code": "UAE_TO_PH",
+      "shipment": {
+        "weight_type": "ACTUAL",
+        "number_of_boxes": 3,
+        "volumetric_weight": 15.50,
+        "chargeable_weight": 29.00
+      },
+      "verification": {
+        "weight_type": "ACTUAL",
+        "calculated_rate": 31.00,
+        "base_rate": 31.00
+      }
+    },
+    "base_rate": 31.00,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+#### Error Response (404 Not Found)
+```json
+{
+  "success": false,
+  "error": "Invoice request not found"
+}
+```
+
+#### Error Response (500 Internal Server Error)
+```json
+{
+  "success": false,
+  "error": "Failed to fetch invoice request details"
+}
+```
+
+## Implementation Requirements
+
+### 1. Data Population
+The endpoint should populate/join the following related data:
+- **Verification Data**: Full verification object with all fields including:
+  - Weight calculations (actual_weight, volumetric_weight, total_vm, chargeable_weight)
+  - Weight type (ACTUAL/VOLUMETRIC)
+  - Calculated rate
+  - All verification fields (agents_name, shipment_classification, cargo_service, rate_bracket, etc.)
+  - All box details with dimensions and classifications
+- **Request ID Data**: If invoice request has a linked request_id, populate:
+  - Full request object
+  - Shipment data (weight_type, number_of_boxes, volumetric_weight, chargeable_weight)
+  - Verification data from request
+- **Booking Data**: If invoice request has a linked booking, include booking details
+
+### 2. Field Mapping
+Ensure the following fields are returned (check multiple possible locations):
+- **Weight Type**: `verification.weight_type` OR `request_id.verification.weight_type` OR `request_id.shipment.weight_type` OR `shipment.weight_type`
+- **Volumetric Weight**: `verification.total_vm` OR `verification.volumetric_weight` OR `request_id.verification.total_vm` OR `request_id.shipment.volumetric_weight`
+- **Chargeable Weight**: `verification.chargeable_weight` OR `request_id.verification.chargeable_weight` OR `request_id.shipment.chargeable_weight`
+- **Calculated Rate**: `verification.calculated_rate` OR `request_id.verification.calculated_rate` OR `base_rate` OR `request_id.base_rate`
+
+### 3. Database Query
+Use MongoDB aggregation or populate to:
+1. Find the invoice request by ID
+2. Populate/join verification data
+3. Populate/join request_id data (if exists)
+4. Populate/join booking data (if exists)
+5. Ensure all nested objects are fully populated
+
+### 4. Performance Considerations
+- Use efficient aggregation pipelines
+- Only fetch necessary fields (but ensure all verification fields are included)
+- Consider caching if appropriate (but frontend will disable cache for this endpoint)
+
+## Testing Checklist
+
+Please test the following scenarios:
+
+### ✅ Should Return Complete Data:
+1. Invoice request with full verification data
+2. Invoice request with linked request_id
+3. Invoice request with linked booking
+4. Invoice request with all weight calculations
+5. Invoice request with box details
+
+### ✅ Should Handle Edge Cases:
+1. Invoice request without verification data (return available data)
+2. Invoice request without request_id (return available data)
+3. Invoice request with missing weight calculations (return available data)
+4. Invalid invoice request ID (return 404)
+
+## Example MongoDB Aggregation (Reference)
+
+```javascript
+// Example aggregation pipeline structure
+[
+  {
+    $match: { _id: ObjectId(invoiceRequestId) }
+  },
+  {
+    $lookup: {
+      from: 'requests',
+      localField: 'request_id',
+      foreignField: '_id',
+      as: 'request_id'
+    }
+  },
+  {
+    $unwind: {
+      path: '$request_id',
+      preserveNullAndEmptyArrays: true
+    }
+  },
+  {
+    $lookup: {
+      from: 'bookings',
+      localField: 'request_id.booking_id',
+      foreignField: '_id',
+      as: 'booking'
+    }
+  },
+  {
+    $unwind: {
+      path: '$booking',
+      preserveNullAndEmptyArrays: true
+    }
+  },
+  {
+    $project: {
+      // Include all fields needed
+      // Ensure verification object is fully included
+      // Ensure request_id object is fully included
+    }
+  }
+]
+```
+
+## Frontend Integration
+
+The frontend will:
+1. Call this endpoint when "View" button is clicked
+2. Show loading state while fetching
+3. Display all returned data in the shipment details dialog
+4. Fallback to cached data if API fails
+
+## Important Notes
+
+- This endpoint should NOT filter or exclude any verification data
+- All weight calculations should be included
+- All box details should be included
+- The response should match the structure expected by the frontend
+- Ensure Decimal128 values are properly converted to numbers in the response
+

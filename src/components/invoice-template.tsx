@@ -173,9 +173,7 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
               <tr className="bg-gray-100">
                 <td className="border border-gray-300 px-4 py-2 text-left font-bold">
                   <div>Total Amount</div>
-                  {(data.charges.taxAmount ?? 0) > 0 && (
-                    <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of tax</div>
-                  )}
+                  <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
                 </td>
                 <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
               </tr>

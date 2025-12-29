@@ -39,7 +39,7 @@ const VerificationForm = dynamic(() => import('@/components/verification-form'),
 const BookingPrintView = dynamic(() => import('@/components/booking-print-view'), {
   ssr: false
 });
-import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import BookingReviewModal from '@/components/booking-review-modal';
 
 const normalizeServiceCode = (code?: string | null) =>
@@ -327,6 +327,8 @@ export default function InvoiceRequestsPage() {
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [loadingBooking, setLoadingBooking] = useState(false);
   const [showShipmentDetailsDialog, setShowShipmentDetailsDialog] = useState(false);
+  const [loadingShipmentDetails, setLoadingShipmentDetails] = useState(false);
+  const [fullRequestDetails, setFullRequestDetails] = useState<any>(null);
   const [showPrintView, setShowPrintView] = useState(false);
   const [bookingToPrint, setBookingToPrint] = useState<any>(null);
   const [hasDelivery, setHasDelivery] = useState(false); // Delivery required flag for PH TO UAE
@@ -2662,7 +2664,11 @@ export default function InvoiceRequestsPage() {
       )}
 
       {/* Shipment Details Dialog */}
-      {showShipmentDetailsDialog && selectedRequestForInvoice && (() => {
+      {showShipmentDetailsDialog && (fullRequestDetails || selectedRequestForInvoice) && (() => {
+        // Use full details if available, otherwise fallback to selectedRequestForInvoice
+        const requestData = fullRequestDetails || selectedRequestForInvoice;
+        
+        if (!requestData) return null;
         // Helper function to safely parse Decimal128 and other numeric values
         const parseNumericValue = (value: any): number | string => {
           if (value === null || value === undefined || value === '') {
@@ -2703,11 +2709,21 @@ export default function InvoiceRequestsPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setShowShipmentDetailsDialog(false)}
+                  onClick={() => {
+                    setShowShipmentDetailsDialog(false);
+                    setFullRequestDetails(null);
+                  }}
                 >
                   <XCircle className="h-5 w-5" />
                 </Button>
               </div>
+              
+              {loadingShipmentDetails && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                  <span>Loading full details...</span>
+                </div>
+              )}
 
               <div className="space-y-6">
                 {/* Customer Information */}
@@ -2721,34 +2737,34 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Customer Name</Label>
-                      <p className="text-base">{selectedRequestForInvoice.customer_name || 'N/A'}</p>
+                      <p className="text-base">{requestData.customer_name || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Customer Phone</Label>
-                      <p className="text-base">{selectedRequestForInvoice.customer_phone || 'N/A'}</p>
+                      <p className="text-base">{requestData.customer_phone || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Customer Email</Label>
-                      <p className="text-base">{selectedRequestForInvoice.customer_email || 'N/A'}</p>
+                      <p className="text-base">{requestData.customer_email || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Origin Place</Label>
-                      <p className="text-base">{selectedRequestForInvoice.origin_place || 'N/A'}</p>
+                      <p className="text-base">{requestData.origin_place || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Sender Delivery Option</Label>
                       <p className="text-base">
                         <Badge variant={
-                          (selectedRequestForInvoice.sender_delivery_option || 
-                           selectedRequestForInvoice.request_id?.sender_delivery_option || 
-                           selectedRequestForInvoice.booking?.sender_delivery_option) === 'pickup' 
+                          (requestData.sender_delivery_option || 
+                           requestData.request_id?.sender_delivery_option || 
+                           requestData.booking?.sender_delivery_option) === 'pickup' 
                             ? 'default' 
                             : 'secondary'
                         }>
                           {(() => {
-                            const senderOption = selectedRequestForInvoice.sender_delivery_option || 
-                                                selectedRequestForInvoice.request_id?.sender_delivery_option || 
-                                                selectedRequestForInvoice.booking?.sender_delivery_option || 
+                            const senderOption = requestData.sender_delivery_option || 
+                                                requestData.request_id?.sender_delivery_option || 
+                                                requestData.booking?.sender_delivery_option || 
                                                 'N/A';
                             if (senderOption === 'pickup') return 'Pickup';
                             if (senderOption === 'delivery') return 'Delivery';
@@ -2771,30 +2787,30 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Receiver Name</Label>
-                      <p className="text-base">{selectedRequestForInvoice.receiver_name || 'N/A'}</p>
+                      <p className="text-base">{requestData.receiver_name || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Receiver Phone</Label>
-                      <p className="text-base">{selectedRequestForInvoice.receiver_phone || selectedRequestForInvoice.verification?.receiver_phone || 'N/A'}</p>
+                      <p className="text-base">{requestData.receiver_phone || requestData.verification?.receiver_phone || 'N/A'}</p>
                     </div>
                     <div className="md:col-span-2">
                       <Label className="text-sm font-semibold text-gray-600">Receiver Address</Label>
-                      <p className="text-base">{selectedRequestForInvoice.destination_place || selectedRequestForInvoice.verification?.receiver_address || 'N/A'}</p>
+                      <p className="text-base">{requestData.destination_place || requestData.verification?.receiver_address || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Receiver Delivery Option</Label>
                       <p className="text-base">
                         <Badge variant={
-                          (selectedRequestForInvoice.receiver_delivery_option || 
-                           selectedRequestForInvoice.request_id?.receiver_delivery_option || 
-                           selectedRequestForInvoice.booking?.receiver_delivery_option) === 'delivery' 
+                          (requestData.receiver_delivery_option || 
+                           requestData.request_id?.receiver_delivery_option || 
+                           requestData.booking?.receiver_delivery_option) === 'delivery' 
                             ? 'default' 
                             : 'secondary'
                         }>
                           {(() => {
-                            const receiverOption = selectedRequestForInvoice.receiver_delivery_option || 
-                                                  selectedRequestForInvoice.request_id?.receiver_delivery_option || 
-                                                  selectedRequestForInvoice.booking?.receiver_delivery_option || 
+                            const receiverOption = requestData.receiver_delivery_option || 
+                                                  requestData.request_id?.receiver_delivery_option || 
+                                                  requestData.booking?.receiver_delivery_option || 
                                                   'N/A';
                             if (receiverOption === 'delivery') return 'Delivery';
                             if (receiverOption === 'pickup') return 'Pickup';
@@ -2817,36 +2833,48 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Service Code</Label>
-                      <p className="text-base">{formatServiceCode(selectedRequestForInvoice.service_code || selectedRequestForInvoice.verification?.service_code || 'N/A')}</p>
+                      <p className="text-base">{formatServiceCode(requestData.service_code || requestData.verification?.service_code || 'N/A')}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Shipment Type</Label>
-                      <p className="text-base">{selectedRequestForInvoice.shipment_type || 'N/A'}</p>
+                      <p className="text-base">{requestData.shipment_type || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">AWB Number</Label>
-                      <p className="text-base">{selectedRequestForInvoice.tracking_code || selectedRequestForInvoice.awb_number || 'N/A'}</p>
+                      <p className="text-base">{requestData.tracking_code || requestData.awb_number || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Invoice Number</Label>
-                      <p className="text-base">{selectedRequestForInvoice.invoice_number || selectedRequestForInvoice.verification?.invoice_number || 'N/A'}</p>
+                      <p className="text-base">{requestData.invoice_number || requestData.verification?.invoice_number || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Weight (kg)</Label>
                       <p className="text-base">
-                        {formatWeight(selectedRequestForInvoice.verification?.actual_weight || 
-                         selectedRequestForInvoice.weight)}
+                        {formatWeight(requestData.verification?.actual_weight || 
+                         requestData.weight)}
                       </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Weight Type</Label>
-                      <p className="text-base">{selectedRequestForInvoice.verification?.weight_type || 'N/A'}</p>
+                      <p className="text-base">
+                        {requestData.verification?.weight_type ||
+                         requestData.request_id?.verification?.weight_type ||
+                         requestData.request_id?.shipment?.weight_type ||
+                         requestData.shipment?.weight_type ||
+                         'N/A'}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Number of Boxes</Label>
                       <p className="text-base">
                         {(() => {
-                          const boxes = parseNumericValue(selectedRequestForInvoice.verification?.number_of_boxes);
+                          const boxes = parseNumericValue(
+                            requestData.verification?.number_of_boxes ||
+                            requestData.request_id?.verification?.number_of_boxes ||
+                            requestData.request_id?.shipment?.number_of_boxes ||
+                            requestData.shipment?.number_of_boxes ||
+                            requestData.number_of_boxes
+                          );
                           return boxes === 'N/A' ? 'N/A' : boxes.toString();
                         })()}
                       </p>
@@ -2854,34 +2882,53 @@ export default function InvoiceRequestsPage() {
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Volumetric Weight (VM)</Label>
                       <p className="text-base">
-                        {formatWeight(selectedRequestForInvoice.verification?.total_vm)}
+                        {formatWeight(
+                          requestData.verification?.total_vm ||
+                          requestData.verification?.volumetric_weight ||
+                          requestData.request_id?.verification?.total_vm ||
+                          requestData.request_id?.verification?.volumetric_weight ||
+                          requestData.request_id?.shipment?.volumetric_weight ||
+                          requestData.shipment?.volumetric_weight ||
+                          requestData.verification?.total_vm_weight ||
+                          requestData.request_id?.verification?.total_vm_weight
+                        )}
                       </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Chargeable Weight</Label>
                       <p className="text-base">
-                        {formatWeight(selectedRequestForInvoice.verification?.chargeable_weight)}
+                        {formatWeight(
+                          requestData.verification?.actual_weight ||
+                          requestData.weight ||
+                          requestData.verification?.total_kg ||
+                          requestData.verification?.chargeable_weight ||
+                          requestData.request_id?.verification?.actual_weight ||
+                          requestData.request_id?.verification?.total_kg ||
+                          requestData.request_id?.verification?.chargeable_weight ||
+                          requestData.request_id?.shipment?.chargeable_weight ||
+                          requestData.shipment?.chargeable_weight
+                        )}
                       </p>
                     </div>
                     {/* Insurance Information - Only for UAE TO PH/PINAS service when insured is true */}
                     {(() => {
-                      const serviceCode = selectedRequestForInvoice.service_code || 
-                                        selectedRequestForInvoice.verification?.service_code ||
-                                        selectedRequestForInvoice.request_id?.service_code ||
+                      const serviceCode = requestData.service_code || 
+                                        requestData.verification?.service_code ||
+                                        requestData.request_id?.service_code ||
                                         '';
                       const isUaeToPh = isUaeToPhService(serviceCode);
-                      const insured = selectedRequestForInvoice.insured || 
-                                     selectedRequestForInvoice.verification?.insured ||
-                                     selectedRequestForInvoice.request_id?.insured ||
-                                     selectedRequestForInvoice.booking?.insured ||
+                      const insured = requestData.insured || 
+                                     requestData.verification?.insured ||
+                                     requestData.request_id?.insured ||
+                                     requestData.booking?.insured ||
                                      false;
-                      const declaredAmount = selectedRequestForInvoice.declaredAmount || 
-                                            selectedRequestForInvoice.declared_amount ||
-                                            selectedRequestForInvoice.verification?.declared_value ||
-                                            selectedRequestForInvoice.request_id?.declaredAmount ||
-                                            selectedRequestForInvoice.request_id?.declared_amount ||
-                                            selectedRequestForInvoice.booking?.declaredAmount ||
-                                            selectedRequestForInvoice.booking?.declared_amount ||
+                      const declaredAmount = requestData.declaredAmount || 
+                                            requestData.declared_amount ||
+                                            requestData.verification?.declared_value ||
+                                            requestData.request_id?.declaredAmount ||
+                                            requestData.request_id?.declared_amount ||
+                                            requestData.booking?.declaredAmount ||
+                                            requestData.booking?.declared_amount ||
                                             null;
                       
                       if (isUaeToPh && insured === true) {
@@ -2903,7 +2950,12 @@ export default function InvoiceRequestsPage() {
                       <Label className="text-sm font-semibold text-gray-600">Calculated Rate (AED/kg)</Label>
                       <p className="text-base">
                         {(() => {
-                          const rate = parseNumericValue(selectedRequestForInvoice.verification?.calculated_rate);
+                          const rate = parseNumericValue(
+                            requestData.verification?.calculated_rate ||
+                            requestData.request_id?.verification?.calculated_rate ||
+                            requestData.base_rate ||
+                            requestData.request_id?.base_rate
+                          );
                           if (rate === 'N/A') return 'N/A';
                           return typeof rate === 'number' ? rate.toFixed(2) : rate.toString();
                         })()}
@@ -2913,7 +2965,7 @@ export default function InvoiceRequestsPage() {
                 </Card>
 
                 {/* Verification Details */}
-                {selectedRequestForInvoice.verification && (
+                {requestData.verification && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -2924,30 +2976,30 @@ export default function InvoiceRequestsPage() {
                     <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <Label className="text-sm font-semibold text-gray-600">Agent Name</Label>
-                        <p className="text-base">{selectedRequestForInvoice.verification.agents_name || 'N/A'}</p>
+                        <p className="text-base">{requestData.verification.agents_name || 'N/A'}</p>
                       </div>
                       <div>
                         <Label className="text-sm font-semibold text-gray-600">Shipment Classification</Label>
-                        <p className="text-base">{selectedRequestForInvoice.verification.shipment_classification || 'N/A'}</p>
+                        <p className="text-base">{requestData.verification.shipment_classification || 'N/A'}</p>
                       </div>
                       <div>
                         <Label className="text-sm font-semibold text-gray-600">Cargo Service</Label>
-                        <p className="text-base">{selectedRequestForInvoice.verification.cargo_service || 'N/A'}</p>
+                        <p className="text-base">{requestData.verification.cargo_service || 'N/A'}</p>
                       </div>
                       <div>
                         <Label className="text-sm font-semibold text-gray-600">Rate Bracket</Label>
-                        <p className="text-base">{selectedRequestForInvoice.verification.rate_bracket || 'N/A'}</p>
+                        <p className="text-base">{requestData.verification.rate_bracket || 'N/A'}</p>
                       </div>
-                      {selectedRequestForInvoice.verification.listed_commodities && (
+                      {requestData.verification.listed_commodities && (
                         <div className="md:col-span-2">
                           <Label className="text-sm font-semibold text-gray-600">Listed Commodities</Label>
-                          <p className="text-base">{selectedRequestForInvoice.verification.listed_commodities}</p>
+                          <p className="text-base">{requestData.verification.listed_commodities}</p>
                         </div>
                       )}
-                      {selectedRequestForInvoice.verification.verification_notes && (
+                      {requestData.verification.verification_notes && (
                         <div className="md:col-span-2">
                           <Label className="text-sm font-semibold text-gray-600">Verification Notes</Label>
-                          <p className="text-base">{selectedRequestForInvoice.verification.verification_notes}</p>
+                          <p className="text-base">{requestData.verification.verification_notes}</p>
                         </div>
                       )}
                     </CardContent>
@@ -2955,7 +3007,7 @@ export default function InvoiceRequestsPage() {
                 )}
 
                 {/* Box Details */}
-                {selectedRequestForInvoice.verification?.boxes && Array.isArray(selectedRequestForInvoice.verification.boxes) && selectedRequestForInvoice.verification.boxes.length > 0 && (
+                {requestData.verification?.boxes && Array.isArray(requestData.verification.boxes) && requestData.verification.boxes.length > 0 && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -2965,7 +3017,7 @@ export default function InvoiceRequestsPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
-                        {selectedRequestForInvoice.verification.boxes.map((box: any, index: number) => (
+                        {requestData.verification.boxes.map((box: any, index: number) => (
                           <div key={index} className="border rounded-lg p-4">
                             <h4 className="font-semibold mb-3">Box {index + 1} {box.quantity > 1 && `(×${box.quantity})`}</h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3019,29 +3071,29 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Request Status</Label>
-                      <Badge className={getDeliveryStatusBadgeColor(selectedRequestForInvoice.status)}>
-                        {selectedRequestForInvoice.status}
+                      <Badge className={getDeliveryStatusBadgeColor(requestData.status)}>
+                        {requestData.status}
                       </Badge>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Delivery Status</Label>
-                      <Badge className={getDeliveryStatusBadgeColor(selectedRequestForInvoice.delivery_status)}>
-                        {selectedRequestForInvoice.delivery_status}
+                      <Badge className={getDeliveryStatusBadgeColor(requestData.delivery_status)}>
+                        {requestData.delivery_status}
                       </Badge>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Created At</Label>
                       <p className="text-base">
-                        {selectedRequestForInvoice.createdAt 
-                          ? new Date(selectedRequestForInvoice.createdAt).toLocaleString()
+                        {requestData.createdAt 
+                          ? new Date(requestData.createdAt).toLocaleString()
                           : 'N/A'}
                       </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Updated At</Label>
                       <p className="text-base">
-                        {selectedRequestForInvoice.updatedAt 
-                          ? new Date(selectedRequestForInvoice.updatedAt).toLocaleString()
+                        {requestData.updatedAt 
+                          ? new Date(requestData.updatedAt).toLocaleString()
                           : 'N/A'}
                       </p>
                     </div>

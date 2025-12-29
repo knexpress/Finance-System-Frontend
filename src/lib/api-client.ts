@@ -746,6 +746,12 @@ class ApiClient {
     return this.request(`/invoice-requests/by-awb/${encodeURIComponent(awb)}`, {}, useCache, 0);
   }
 
+  // Get invoice request with full details including all verification and booking data
+  // This endpoint should return complete invoice request data with all nested information
+  async getInvoiceRequestDetails(id: string, useCache: boolean = false) {
+    return this.request(`/invoice-requests/${id}/details`, {}, useCache, 0); // No cache for details
+  }
+
   // Invoices
   // Invoices (Unified)
   async getInvoicesUnified(useCache: boolean = true) {
