@@ -2133,9 +2133,43 @@ export default function InvoiceRequestsPage() {
       
       // Determine delivery_base_amount
       // Required if has_delivery = true for PH_TO_UAE
+      // Backend will use this to automatically calculate total_amount_cod
       const deliveryBaseAmountValue = isPhToUaeSelected && hasDeliveryFlag
         ? (parseFloat(deliveryBaseAmount) || 20) // PH_TO_UAE: user input or default 20
         : undefined; // Not required for other routes
+      
+      // Ensure delivery_base_amount is always sent for PH_TO_UAE when has_delivery is true
+      // This allows backend to automatically calculate total_amount_cod
+      if (isPhToUaeSelected && hasDeliveryFlag && !deliveryBaseAmountValue) {
+        console.warn('⚠️ delivery_base_amount is missing for PH_TO_UAE with delivery enabled, using default 20');
+      }
+      
+      // Get weight for COD invoice calculation (check if weight >= 15kg for free delivery)
+      let weightForDeliveryCheck = 0;
+      if (isPhToUaeSelected && !isTaxInvoice) {
+        // Priority: totalKgInput (user input) > verification.total_kg > chargeable_weight
+        if (totalKgInput) {
+          weightForDeliveryCheck = parseFloat(totalKgInput) || 0;
+        } else {
+          const verificationTotalKg = (selectedRequestForInvoice as any)?.verification?.total_kg ||
+                                     (selectedRequestForInvoice as any)?.request_id?.verification?.total_kg;
+          if (verificationTotalKg) {
+            weightForDeliveryCheck = typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal
+              ? parseFloat(verificationTotalKg.$numberDecimal)
+              : parseFloat(verificationTotalKg.toString());
+          }
+        }
+      }
+      
+      // Calculate baseAmountWithDelivery for COD invoices
+      // For weight < 15kg: shipping + delivery_base_amount
+      // For weight >= 15kg: shipping only (free delivery)
+      const isWeight15kgOrMore = weightForDeliveryCheck >= 15;
+      const baseAmountWithDelivery = isPhToUaeSelected && !isTaxInvoice && hasDeliveryFlag
+        ? (isWeight15kgOrMore 
+            ? invoiceAmountToSend // Free delivery when weight >= 15kg
+            : (invoiceAmountToSend + (deliveryBaseAmountValue || 0))) // Shipping + delivery_base_amount when weight < 15kg
+        : 0;
       
       secureLog.debug('Creating invoice with API-compliant data', {
         invoiceAmountToSend,
@@ -2143,6 +2177,9 @@ export default function InvoiceRequestsPage() {
         serviceCode,
         hasDeliveryFlag,
         deliveryBaseAmountValue,
+        weightForDeliveryCheck,
+        isWeight15kgOrMore,
+        baseAmountWithDelivery,
         lineItemsCount: invoiceData.lineItems.length,
         isPhToUae: isPhToUaeSelected,
         isTaxInvoice: isTaxInvoice
@@ -2167,9 +2204,17 @@ export default function InvoiceRequestsPage() {
         notes: invoiceData.notes,
         created_by: (userProfile as any)?.employee_id || (userProfile as any)?._id, // REQUIRED
         due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-        // PH TO UAE: Send both totals for backend storage
+        // PH TO UAE: Send delivery_base_amount and calculated totals
+        // NOTE: Backend should automatically calculate total_amount_cod using:
+        // - amount (shipping) + delivery_base_amount (when weight < 15kg)
+        // - amount only (when weight >= 15kg, free delivery)
+        // Frontend sends calculated values as fallback, but backend calculation takes precedence
         ...(isPhToUaeSelected && {
-          total_amount_cod: (invoiceData as any).totalAmountCod || 0, // COD Invoice total: Shipping + Delivery
+          // For COD invoice: Send calculated baseAmountWithDelivery (backend will recalculate based on weight)
+          // For Tax invoice: Use calculated totalAmountTaxInvoice
+          total_amount_cod: !isTaxInvoice && baseAmountWithDelivery > 0 
+            ? baseAmountWithDelivery 
+            : ((invoiceData as any).totalAmountCod || 0), // Fallback to calculated value
           total_amount_tax_invoice: (invoiceData as any).totalAmountTaxInvoice || 0 // Tax Invoice total: Delivery + Tax
         })
       });

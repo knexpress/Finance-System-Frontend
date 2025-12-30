@@ -190,9 +190,11 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
               </tr>
               {(() => {
                 const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
-                // For PH TO UAE: Show Subtotal (Delivery + Insurance) before tax
+                // For PH TO UAE Tax Invoice: Show Subtotal (Delivery Charge only, no insurance)
+                // For other routes: Show Subtotal (all charges)
                 if (isPhToUae) {
-                  const subtotal = (data.charges.deliveryCharge || 0) + (data.charges.insuranceCharge || 0);
+                  // PH TO UAE: Subtotal is delivery charge only (no shipping, no insurance in tax invoice)
+                  const subtotal = data.charges.subtotal || data.charges.deliveryCharge || 0;
                   return (
                     <tr>
                       <td className="border border-gray-300 px-4 py-2 text-left font-semibold">Subtotal</td>

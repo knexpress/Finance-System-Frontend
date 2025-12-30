@@ -52,6 +52,9 @@ interface InvoiceData {
   isUaeToPh?: boolean; // Flag to identify UAE TO PH invoices
   isPhToUae?: boolean; // Flag to identify PH TO UAE invoices
   serviceCode?: string; // Service code for route identification
+  totalAmountCod?: number; // PH TO UAE COD invoice total (shipping + delivery_base_amount)
+  totalAmountTaxInvoice?: number; // PH TO UAE Tax invoice total (delivery + tax)
+  invoiceType?: 'normal' | 'tax'; // Invoice type: 'normal' for COD, 'tax' for Tax invoice
 }
 
 interface InvoiceTemplateProps {
@@ -186,7 +189,35 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
                 </td>
                 <td className="border border-gray-300 px-4 py-2 text-right font-bold">
                   {(() => {
-                    const totalValue = data.charges?.total;
+                    // For PH TO UAE: Use invoiceType to determine which total to display
+                    // - Normal (COD) invoice: Use totalAmountCod (573)
+                    // - Tax invoice: Use totalAmountTaxInvoice (38.85)
+                    // Otherwise: Use charges.total
+                    let totalValue = data.charges?.total;
+                    
+                    if (data.isPhToUae) {
+                      // For PH TO UAE: Prioritize based on invoiceType or detect from totals
+                      // If invoiceType is 'tax', use totalAmountTaxInvoice
+                      // Otherwise (normal or undefined), use totalAmountCod if available
+                      if (data.invoiceType === 'tax' && data.totalAmountTaxInvoice && data.totalAmountTaxInvoice > 0) {
+                        // Tax invoice: Use totalAmountTaxInvoice
+                        totalValue = data.totalAmountTaxInvoice;
+                        console.log('✅ Template: Using totalAmountTaxInvoice for Tax invoice', {
+                          invoiceType: data.invoiceType,
+                          totalAmountTaxInvoice: data.totalAmountTaxInvoice
+                        });
+                      } else if (data.totalAmountCod && data.totalAmountCod > 0) {
+                        // Normal (COD) invoice or default: Use totalAmountCod
+                        // This handles both explicit 'normal' type and undefined (defaults to COD)
+                        totalValue = data.totalAmountCod;
+                        console.log('✅ Template: Using totalAmountCod for Normal (COD) invoice', {
+                          invoiceType: data.invoiceType,
+                          totalAmountCod: data.totalAmountCod,
+                          chargesTotal: data.charges?.total
+                        });
+                      }
+                    }
+                    
                     if (!totalValue) return null;
                     // Convert to number and check - handle both string "0" and number 0
                     const numValue = typeof totalValue === 'string' ? parseFloat(totalValue) : Number(totalValue);

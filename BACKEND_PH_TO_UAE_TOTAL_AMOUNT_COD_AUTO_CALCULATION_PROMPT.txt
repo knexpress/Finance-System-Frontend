@@ -1,0 +1,88 @@
+BACKEND IMPLEMENTATION PROMPT: PH TO UAE Invoice - Automatic total_amount_cod Calculation
+
+CONTEXT:
+The frontend sends invoice creation requests with the following fields for PH TO UAE invoices:
+- amount: Shipping charge (from line_items or calculated)
+- delivery_base_amount: Base delivery amount entered by Finance user (e.g., 20, 27, etc.)
+- has_delivery: Boolean flag indicating if delivery is enabled
+- service_code: PH_TO_UAE service code
+- tax_rate: 0 for COD invoices, 5 for Tax invoices
+- total_amount_cod: Currently calculated by frontend (should be calculated by backend)
+- total_amount_tax_invoice: Tax invoice total
+
+REQUIREMENT:
+The backend MUST automatically calculate and store `total_amount_cod` for PH TO UAE COD invoices (tax_rate = 0) based on the following logic:
+
+1. CALCULATION LOGIC FOR total_amount_cod:
+   - Get weight from request_id.verification.total_kg (this is the weight Operations entered manually)
+   - If weight >= 15kg: total_amount_cod = amount (shipping only, free delivery)
+   - If weight < 15kg: total_amount_cod = amount + delivery_base_amount (shipping + delivery base amount)
+   - If has_delivery = false: total_amount_cod = amount (no delivery charge)
+
+2. WHEN TO CALCULATE:
+   - Always calculate for PH TO UAE invoices (service_code contains "PH_TO_UAE")
+   - Only calculate for COD invoices (tax_rate = 0)
+   - Calculate even if frontend sends total_amount_cod (backend calculation takes precedence)
+
+3. DATABASE STORAGE:
+   - Store calculated total_amount_cod in invoice document
+   - Store delivery_base_amount in invoice document (already being sent)
+   - Ensure both fields are returned in invoice response
+
+4. VALIDATION:
+   - Validate that delivery_base_amount is provided when has_delivery = true for PH_TO_UAE
+   - Validate that amount (shipping) is greater than 0
+   - If weight is not available, default to weight < 15kg (apply delivery charge)
+
+5. RESPONSE:
+   - Return calculated total_amount_cod in invoice creation/update response
+   - Return delivery_base_amount in response
+   - Frontend will use these values to display correct totals
+
+IMPLEMENTATION DETAILS:
+
+Endpoint: POST /api/invoices/unified (createInvoiceUnified)
+Endpoint: PUT /api/invoices/:id (updateInvoice if needed)
+
+Pseudo-code:
+```
+if (service_code.includes('PH_TO_UAE') && tax_rate === 0) {
+  // COD Invoice
+  const weight = request_id?.verification?.total_kg || 0;
+  const isWeight15kgOrMore = weight >= 15;
+  
+  let totalAmountCod = 0;
+  if (has_delivery && delivery_base_amount) {
+    if (isWeight15kgOrMore) {
+      // Free delivery when weight >= 15kg
+      totalAmountCod = amount; // Shipping only
+    } else {
+      // Delivery charge applies when weight < 15kg
+      totalAmountCod = amount + delivery_base_amount; // Shipping + delivery base amount
+    }
+  } else {
+    // No delivery
+    totalAmountCod = amount; // Shipping only
+  }
+  
+  // Store in database
+  invoice.total_amount_cod = totalAmountCod;
+  invoice.delivery_base_amount = delivery_base_amount;
+}
+```
+
+IMPORTANT NOTES:
+1. The frontend currently calculates and sends total_amount_cod, but backend calculation should take precedence
+2. Weight check (>= 15kg) determines if delivery is free or charged
+3. delivery_base_amount is the base amount for first box (e.g., 20, 27)
+4. For COD invoices, no box calculation is applied (unlike Tax invoices)
+5. The calculated total_amount_cod should be used as the invoice.total_amount for COD invoices
+
+TESTING:
+- Test with weight < 15kg: Should calculate total_amount_cod = amount + delivery_base_amount
+- Test with weight >= 15kg: Should calculate total_amount_cod = amount (free delivery)
+- Test with has_delivery = false: Should calculate total_amount_cod = amount
+- Verify total_amount_cod is stored and returned in response
+- Verify invoice display shows correct total amount
+
+

@@ -49,6 +49,7 @@ export default function InvoicePage() {
     const router = useRouter();
     const invoiceId = params?.invoiceId as string;
     const typeParam = searchParams?.get('type');
+    // Default to 'normal' (COD) unless explicitly set to 'tax' in URL
     const [invoiceType, setInvoiceType] = useState<'normal' | 'tax'>(typeParam === 'tax' ? 'tax' : 'normal');
     
     const [invoice, setInvoice] = useState<any>(null);
@@ -386,6 +387,7 @@ export default function InvoicePage() {
     // Priority: Use stored totals from backend if available, otherwise recalculate
     const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
     const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
+    const deliveryBaseAmount = parseDecimal((invoice as any).delivery_base_amount || 0, 2); // Base delivery amount for PH TO UAE
     
     // Prioritize database values for tax_amount and total_amount
     // Only recalculate if database values are missing or invalid
@@ -394,17 +396,30 @@ export default function InvoicePage() {
     let total = parseDecimal(invoice.total_amount || 0, 2);
     
     // Check if database has valid tax_amount and total_amount
-    // For PH TO UAE COD invoices, if total is 0, we need to recalculate (don't trust 0 from DB)
+    // For PH TO UAE COD invoices, always use totalAmountCod if available
     const hasValidTaxAmount = taxAmount > 0 || (taxAmount === 0 && taxRate === 0);
-    const hasValidTotal = total > 0 && !(isPhToUae && taxRate === 0 && total === 0); // Don't trust 0 total for PH TO UAE COD
+    const isPhToUaeCodInvoice = isPhToUae && taxRate === 0;
     
-    // Only recalculate if database values are missing or invalid
-    if (!hasValidTaxAmount || !hasValidTotal) {
+    // For PH TO UAE COD: Always use totalAmountCod if available, otherwise recalculate
+    // Don't trust stored total_amount for COD invoices - use totalAmountCod instead
+    let useTotalAmountCod = false;
+    if (isPhToUaeCodInvoice && totalAmountCod && totalAmountCod > 0) {
+      // Use stored totalAmountCod directly for COD invoices
+      total = parseDecimal(totalAmountCod, 2);
+      taxRate = 0;
+      taxAmount = 0;
+      useTotalAmountCod = true;
+      console.log('✅ PH TO UAE COD: Using total_amount_cod from database:', totalAmountCod);
+    }
+    
+    // Only recalculate if we haven't already set total from totalAmountCod
+    if (!useTotalAmountCod && (!hasValidTaxAmount || total <= 0 || isPhToUaeCodInvoice)) {
+      // Recalculate for other cases or if totalAmountCod is not available
       console.log('⚠️ Database tax/total values missing or invalid, recalculating...', {
         taxAmount,
         total,
         hasValidTaxAmount,
-        hasValidTotal,
+        isPhToUaeCodInvoice,
         totalAmountCod,
         totalAmountTaxInvoice
       });
@@ -424,23 +439,35 @@ export default function InvoicePage() {
         taxAmount = parseDecimal((deliveryCharge * taxRate) / 100, 2);
         total = totalAmountTaxInvoice ? parseDecimal(totalAmountTaxInvoice, 2) : parseDecimal(deliveryCharge + taxAmount, 2);
       } else if (isPhToUae && isCodInvoice) {
-        // PH_TO_UAE COD Invoice: Use stored total_amount_cod if available, otherwise calculate
+        // PH_TO_UAE COD Invoice: Always recalculate to ensure correct total
         taxRate = 0;
         taxAmount = 0;
-        // Calculate total: Shipping + Delivery (for COD invoice)
-        const calculatedCodTotal = shippingCharge + deliveryCharge;
-        total = totalAmountCod && totalAmountCod > 0 
-          ? parseDecimal(totalAmountCod, 2) 
-          : (calculatedCodTotal > 0 ? parseDecimal(calculatedCodTotal, 2) : parseDecimal(subtotal, 2));
-        
-        console.log('📊 PH TO UAE COD Invoice total calculation:', {
-          totalAmountCod,
-          shippingCharge,
-          deliveryCharge,
-          calculatedCodTotal,
-          subtotal,
-          finalTotal: total
-        });
+        // Priority: Use stored total_amount_cod if available and valid, otherwise recalculate
+        if (totalAmountCod && totalAmountCod > 0) {
+          total = parseDecimal(totalAmountCod, 2);
+          console.log('✅ Using stored total_amount_cod:', totalAmountCod);
+        } else {
+          // Recalculate: For COD invoice when weight < 15kg: Use delivery_base_amount directly
+          // For weight >= 15kg: delivery is free (0)
+          const isWeight15kgOrMore = totalKg >= 15;
+          const codDeliveryAmount = isWeight15kgOrMore ? 0 : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
+          // Calculate total: Shipping + Delivery Base Amount (for COD invoice when weight < 15kg)
+          const calculatedCodTotal = shippingCharge + codDeliveryAmount;
+          total = calculatedCodTotal > 0 ? parseDecimal(calculatedCodTotal, 2) : parseDecimal(subtotal, 2);
+          
+          console.log('📊 PH TO UAE COD Invoice total calculation (recalculated):', {
+            totalAmountCod,
+            shippingCharge,
+            deliveryCharge,
+            deliveryBaseAmount,
+            codDeliveryAmount,
+            isWeight15kgOrMore,
+            totalKg,
+            calculatedCodTotal,
+            subtotal,
+            finalTotal: total
+          });
+        }
       } else {
         // Other routes COD Invoice or no tax: No tax applied
         taxRate = 0;
@@ -448,23 +475,50 @@ export default function InvoicePage() {
         total = subtotal;
       }
     } else {
-      // Database has valid values - use them directly
+      // Database has valid values - but for PH TO UAE COD, always prefer totalAmountCod
       // For PH TO UAE, prefer stored totals if available
       if (isPhToUae) {
-        const isTaxInvoice = taxRate === 5;
+        // Detect invoice type: If totalAmountCod exists and is significantly larger than totalAmountTaxInvoice,
+        // it's likely a COD invoice (even if tax_rate is incorrectly set to 5)
+        const hasBothTotals = totalAmountCod && totalAmountCod > 0 && totalAmountTaxInvoice && totalAmountTaxInvoice > 0;
+        const isLikelyCodInvoice = hasBothTotals && totalAmountCod > totalAmountTaxInvoice * 10; // COD is usually much larger
+        const isTaxInvoice = taxRate === 5 && !isLikelyCodInvoice; // Only treat as tax if not likely COD
+        
         if (isTaxInvoice && totalAmountTaxInvoice && totalAmountTaxInvoice > 0) {
           total = parseDecimal(totalAmountTaxInvoice, 2);
-        } else if (!isTaxInvoice && totalAmountCod && totalAmountCod > 0) {
+        } else if ((!isTaxInvoice || isLikelyCodInvoice) && totalAmountCod && totalAmountCod > 0) {
+          // For COD invoices, always use totalAmountCod if available (even if database has different total or wrong tax_rate)
+          const databaseTotal = total; // Store original database total before override
           total = parseDecimal(totalAmountCod, 2);
+          // Override taxRate to 0 for COD invoices
+          if (isLikelyCodInvoice && taxRate === 5) {
+            taxRate = 0;
+            taxAmount = 0;
+            console.log('⚠️ Correcting tax_rate from 5 to 0 (COD invoice detected)');
+          }
+          console.log('✅ PH TO UAE COD: Using total_amount_cod (overriding database total):', {
+            totalAmountCod,
+            databaseTotal,
+            newTotal: total,
+            isLikelyCodInvoice,
+            originalTaxRate: invoice.tax_rate
+          });
         } else if (!isTaxInvoice && total === 0) {
           // If total is 0 and we don't have stored COD total, recalculate
-          const calculatedCodTotal = shippingCharge + deliveryCharge;
+          // For COD invoice when weight < 15kg: Use delivery_base_amount directly
+          const isWeight15kgOrMore = totalKg >= 15;
+          const codDeliveryAmount = isWeight15kgOrMore ? 0 : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
+          const calculatedCodTotal = shippingCharge + codDeliveryAmount;
           if (calculatedCodTotal > 0) {
             total = parseDecimal(calculatedCodTotal, 2);
             console.log('⚠️ PH TO UAE COD: Database total is 0, using calculated total:', {
               calculatedCodTotal,
               shippingCharge,
-              deliveryCharge
+              deliveryCharge,
+              deliveryBaseAmount,
+              codDeliveryAmount,
+              isWeight15kgOrMore,
+              totalKg
             });
           }
         }
@@ -576,13 +630,63 @@ export default function InvoicePage() {
         charges: {
             shippingCharge: shippingCharge,
             pickupCharge: pickupCharge > 0 ? pickupCharge : undefined,
-            deliveryCharge: deliveryCharge,
+            // For PH TO UAE COD invoice when weight < 15kg: Use delivery_base_amount
+            // For other cases: Use deliveryCharge as calculated
+            deliveryCharge: (isPhToUae && taxRate === 0 && totalKg < 15 && deliveryBaseAmount > 0) 
+                ? deliveryBaseAmount 
+                : deliveryCharge,
             insuranceCharge: insuranceCharge > 0 ? insuranceCharge : undefined,
-            subtotal: subtotal,
+            // For PH TO UAE normal invoice: Subtotal should be shipping + delivery (573)
+            // For PH TO UAE tax invoice: Subtotal is delivery only
+            subtotal: (isPhToUae && invoiceType === 'tax') 
+                ? parseDecimal(deliveryCharge, 2)  // Tax invoice: delivery only
+                : parseDecimal(subtotal, 2),  // Normal invoice: shipping + delivery (573)
             taxRate: taxRate,
             taxAmount: taxAmount,
-            total: total
+            // For PH TO UAE: Use invoiceType to determine which total to use
+            // - Normal (COD) invoice: Use totalAmountCod (573)
+            // - Tax invoice: Use totalAmountTaxInvoice (38.85)
+            // For other invoices: Use calculated total
+            total: (() => {
+                // For PH TO UAE invoices, use invoiceType to determine which total to display
+                if (isPhToUae) {
+                    if (invoiceType === 'normal' && totalAmountCod && totalAmountCod > 0) {
+                        // Normal (COD) invoice: Use totalAmountCod
+                        const codTotal = parseDecimal(totalAmountCod, 2);
+                        console.log('✅ Using totalAmountCod for Normal (COD) invoice:', {
+                            invoiceType,
+                            totalAmountCod,
+                            codTotal
+                        });
+                        return codTotal;
+                    } else if (invoiceType === 'tax' && totalAmountTaxInvoice && totalAmountTaxInvoice > 0) {
+                        // Tax invoice: Use totalAmountTaxInvoice
+                        const taxTotal = parseDecimal(totalAmountTaxInvoice, 2);
+                        console.log('✅ Using totalAmountTaxInvoice for Tax invoice:', {
+                            invoiceType,
+                            totalAmountTaxInvoice,
+                            taxTotal
+                        });
+                        return taxTotal;
+                    }
+                }
+                // Use calculated total for other cases
+                console.log('⚠️ Using calculated total:', {
+                    isPhToUae,
+                    invoiceType,
+                    taxRate,
+                    totalAmountCod,
+                    totalAmountTaxInvoice,
+                    calculatedTotal: total
+                });
+                return total;
+            })()
         },
+        // PH TO UAE totals from backend
+        totalAmountCod: totalAmountCod ? parseDecimal(totalAmountCod, 2) : undefined,
+        totalAmountTaxInvoice: totalAmountTaxInvoice ? parseDecimal(totalAmountTaxInvoice, 2) : undefined,
+        // Invoice type for determining which total to display
+        invoiceType: invoiceType, // 'normal' or 'tax'
         remarks: {
         boxNumbers: invoice.notes || 'No remarks',
         agent: invoice.created_by?.full_name || 'SYSTEM',
@@ -602,15 +706,34 @@ export default function InvoicePage() {
     // - COD Invoice (normal): Show shipping + base delivery (no tax)
     // - Tax Invoice: Show only delivery (calculated with boxes) + tax on delivery (NO shipping, NO insurance)
     const shouldShowDeliveryOnlyInTaxInvoice = isPhToUae && invoiceType === 'tax';
+    
+    // For PH TO UAE tax invoice: Ensure taxRate is 5% and calculate tax correctly
+    let taxRateForTaxInvoice = taxRate;
+    let taxAmountForTaxInvoice = taxAmount;
+    if (shouldShowDeliveryOnlyInTaxInvoice) {
+        taxRateForTaxInvoice = 5; // Always 5% VAT for PH TO UAE tax invoices
+        // Calculate tax on delivery charge (5% VAT)
+        taxAmountForTaxInvoice = parseDecimal((deliveryCharge * taxRateForTaxInvoice) / 100, 2);
+        console.log('📊 PH TO UAE Tax Invoice tax calculation:', {
+            deliveryCharge,
+            taxRate: taxRateForTaxInvoice,
+            calculatedTax: taxAmountForTaxInvoice,
+            totalAmountTaxInvoice
+        });
+    }
+    
     const deliveryOnlyTaxAmount = shouldShowDeliveryOnlyInTaxInvoice 
-        ? parseDecimal((deliveryCharge * taxRate) / 100, 2)
+        ? taxAmountForTaxInvoice
         : taxAmount;
     // For PH TO UAE tax invoice: subtotal = delivery charge only (no shipping, no insurance)
     const deliveryOnlySubtotal = shouldShowDeliveryOnlyInTaxInvoice
         ? parseDecimal(deliveryCharge, 2)
         : subtotal;
+    // For tax invoice: Use totalAmountTaxInvoice if available, otherwise calculate delivery + tax
     const deliveryOnlyTotal = shouldShowDeliveryOnlyInTaxInvoice
-        ? parseDecimal(deliveryCharge + deliveryOnlyTaxAmount, 2)
+        ? (totalAmountTaxInvoice && totalAmountTaxInvoice > 0 
+            ? parseDecimal(totalAmountTaxInvoice, 2)
+            : parseDecimal(deliveryCharge + deliveryOnlyTaxAmount, 2))
         : total;
     const taxInvoiceData = shouldShowDeliveryOnlyInTaxInvoice
         ? {
@@ -623,8 +746,9 @@ export default function InvoicePage() {
                 pickupCharge: undefined, // No pickup in PH TO UAE
                 insuranceCharge: undefined, // No insurance in PH TO UAE
                 subtotal: deliveryOnlySubtotal, // Delivery charge only
-                taxAmount: deliveryOnlyTaxAmount, // Tax on delivery only
-                total: deliveryOnlyTotal // Delivery + tax
+                taxRate: taxRateForTaxInvoice, // 5% VAT for tax invoice
+                taxAmount: deliveryOnlyTaxAmount, // Tax on delivery only (5% of delivery charge)
+                total: deliveryOnlyTotal // Delivery + tax (or totalAmountTaxInvoice if available)
             }
         }
         : {
@@ -634,7 +758,17 @@ export default function InvoicePage() {
         };
 
     // Debug: Log mapped invoice data
-    console.log('📊 Mapped invoiceData:', invoiceData);
+    console.log('📊 Mapped invoiceData:', {
+        ...invoiceData,
+        charges: {
+            ...invoiceData.charges,
+            subtotal: invoiceData.charges.subtotal,
+            total: invoiceData.charges.total
+        },
+        invoiceType,
+        totalAmountCod,
+        totalAmountTaxInvoice
+    });
 
     // Print/Download PDF function
     const handlePrint = () => {
