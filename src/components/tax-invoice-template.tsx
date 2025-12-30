@@ -185,11 +185,12 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
                 const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
                 // For PH TO UAE tax invoices: Hide pickup charge (it's not shown in tax invoices)
                 // For other routes: Show pickup charge if > 0
-                const shouldShowPickup = !isPhToUae && data.charges.pickupCharge && data.charges.pickupCharge > 0;
+                const pickupCharge = data.charges.pickupCharge ?? 0;
+                const shouldShowPickup = !isPhToUae && pickupCharge > 0;
                 return shouldShowPickup ? (
                   <tr>
                     <td className="border border-gray-300 px-4 py-2 text-left">Pickup Charge</td>
-                    <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.pickupCharge.toFixed(2)}</td>
+                    <td className="border border-gray-300 px-4 py-2 text-right">{pickupCharge.toFixed(2)}</td>
                   </tr>
                 ) : null;
               })()}
