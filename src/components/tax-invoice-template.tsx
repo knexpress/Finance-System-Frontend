@@ -52,6 +52,7 @@ interface InvoiceData {
   isUaeToPh?: boolean;
   isPhToUae?: boolean; // Flag to identify PH TO UAE invoices
   serviceCode?: string; // Service code for route identification
+  shipmentClassification?: string; // Shipment classification: COMMERCIAL, FLOMIC, PERSONAL, GENERAL
 }
 
 interface TaxInvoiceTemplateProps {
@@ -168,26 +169,49 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
         <div className="w-80">
           <table className="w-full border-collapse border border-gray-300">
             <tbody>
-              {data.charges.shippingCharge > 0 && (
-                <tr>
-                  <td className="border border-gray-300 px-4 py-2 text-left">Shipping Charge</td>
-                  <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.shippingCharge.toFixed(2)}</td>
-                </tr>
-              )}
-              {data.charges.pickupCharge && data.charges.pickupCharge > 0 && (
-                <tr>
-                  <td className="border border-gray-300 px-4 py-2 text-left">Pickup Charge</td>
-                  <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.pickupCharge.toFixed(2)}</td>
-                </tr>
-              )}
+              {(() => {
+                const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
+                // For PH TO UAE tax invoices: Hide shipping charge (it's not shown in tax invoices)
+                // For other routes: Show shipping charge if > 0
+                const shouldShowShipping = !isPhToUae && data.charges.shippingCharge > 0;
+                return shouldShowShipping ? (
+                  <tr>
+                    <td className="border border-gray-300 px-4 py-2 text-left">Shipping Charge</td>
+                    <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.shippingCharge.toFixed(2)}</td>
+                  </tr>
+                ) : null;
+              })()}
+              {(() => {
+                const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
+                // For PH TO UAE tax invoices: Hide pickup charge (it's not shown in tax invoices)
+                // For other routes: Show pickup charge if > 0
+                const shouldShowPickup = !isPhToUae && data.charges.pickupCharge && data.charges.pickupCharge > 0;
+                return shouldShowPickup ? (
+                  <tr>
+                    <td className="border border-gray-300 px-4 py-2 text-left">Pickup Charge</td>
+                    <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.pickupCharge.toFixed(2)}</td>
+                  </tr>
+                ) : null;
+              })()}
               <tr>
                 <td className="border border-gray-300 px-4 py-2 text-left">Delivery Charge</td>
                 <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.deliveryCharge.toFixed(2)}</td>
               </tr>
-              <tr>
-                <td className="border border-gray-300 px-4 py-2 text-left">Insurance Charge</td>
-                <td className="border border-gray-300 px-4 py-2 text-right">{(data.charges.insuranceCharge ?? 0).toFixed(2)}</td>
-              </tr>
+              {(() => {
+                const isUaeToPh = data.isUaeToPh || (data.serviceCode && data.serviceCode.toUpperCase().includes('UAE_TO_PH'));
+                const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
+                const insuranceCharge = data.charges.insuranceCharge ?? 0;
+                // For UAE TO PH tax invoices: Always show insurance charge row (even if 0)
+                // For PH TO UAE tax invoices: Never show insurance charge
+                // For other routes: Show only if > 0
+                const shouldShow = isUaeToPh || (!isPhToUae && insuranceCharge > 0);
+                return shouldShow ? (
+                  <tr>
+                    <td className="border border-gray-300 px-4 py-2 text-left">Insurance Charge</td>
+                    <td className="border border-gray-300 px-4 py-2 text-right">{insuranceCharge.toFixed(2)}</td>
+                  </tr>
+                ) : null;
+              })()}
               {(() => {
                 const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
                 // For PH TO UAE Tax Invoice: Show Subtotal (Delivery Charge only, no insurance)
@@ -204,23 +228,46 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
                 }
                 return null;
               })()}
-              <tr>
-                <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
-                <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>
-              </tr>
-              <tr className="bg-gray-100">
-                <td className="border border-gray-300 px-4 py-2 text-left font-bold">
-                  <div>Total Amount</div>
-                  {/* Show "Inclusive of Tax" for PH TO UAE invoices */}
-                  {(() => {
-                    const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
-                    return isPhToUae ? (
-                      <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
-                    ) : null;
-                  })()}
-                </td>
-                <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
-              </tr>
+              {(() => {
+                const isUaeToPh = data.isUaeToPh || (data.serviceCode && data.serviceCode.toUpperCase().includes('UAE_TO_PH'));
+                const isFlomic = data.shipmentClassification?.toUpperCase() === 'FLOMIC';
+                const isUaeToPhFlomic = isUaeToPh && isFlomic;
+                
+                // For UAE TO PH Flomic: Show Total Amount first, then VAT
+                if (isUaeToPhFlomic) {
+                  return (
+                    <>
+                      <tr className="bg-gray-100">
+                        <td className="border border-gray-300 px-4 py-2 text-left font-bold">
+                          <div>Total Amount</div>
+                          <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
+                        </td>
+                        <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
+                        <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>
+                      </tr>
+                    </>
+                  );
+                }
+                
+                // For other invoices: Show VAT first, then Total Amount
+                return (
+                  <>
+                    <tr>
+                      <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
+                      <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>
+                    </tr>
+                    <tr className="bg-gray-100">
+                      <td className="border border-gray-300 px-4 py-2 text-left font-bold">
+                        <div>Total Amount</div>
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
+                    </tr>
+                  </>
+                );
+              })()}
             </tbody>
           </table>
         </div>

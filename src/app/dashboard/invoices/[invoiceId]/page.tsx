@@ -358,9 +358,42 @@ export default function InvoicePage() {
     // Calculate subtotal first
     const subtotal = parseDecimal(shippingCharge + pickupCharge + deliveryCharge + insuranceCharge, 2); // Shipping + Pickup + Delivery + Insurance
     
-    // Check if shipment is flowmic/personal for UAE_TO_PH services
+    // Check if shipment is flomic/personal for UAE_TO_PH services
     const isUaeToPh = isUaeToPhService(serviceCodeRaw);
-    const isFlowmicOrPersonal = (() => {
+    
+    // Get shipment classification for template
+    const getShipmentClassification = (): string | undefined => {
+      const norm = (v: any) => (v || '').toString().trim().toUpperCase();
+      
+      // Check top-level shipment classification first
+      const topClass = norm(
+        invoice.request_id?.verification?.shipment_classification ||
+        invoice.request_id?.shipment?.classification
+      );
+      if (topClass && (topClass === 'COMMERCIAL' || topClass === 'FLOMIC' || topClass === 'PERSONAL' || topClass === 'GENERAL')) {
+        return topClass;
+      }
+      
+      // Check box-level classification
+      const boxes = invoice.request_id?.verification?.boxes || [];
+      if (Array.isArray(boxes) && boxes.length > 0) {
+        for (const box of boxes) {
+          const sc = norm(box.shipment_classification);
+          const c = norm(box.classification);
+          if (sc === 'COMMERCIAL' || c === 'COMMERCIAL') return 'COMMERCIAL';
+          if (sc === 'FLOMIC' || c === 'FLOMIC' || sc === 'PERSONAL' || c === 'PERSONAL') return sc || c;
+        }
+      }
+      
+      // For PH TO UAE, default to GENERAL
+      if (isPhToUae) return 'GENERAL';
+      
+      return undefined;
+    };
+    
+    const shipmentClassification = getShipmentClassification();
+    
+    const isFlomicOrPersonal = (() => {
       if (!isUaeToPh) return false;
       const norm = (v: any) => (v || '').toString().trim().toUpperCase();
       
@@ -370,7 +403,7 @@ export default function InvoicePage() {
         const boxHit = boxes.some((box: any) => {
           const sc = norm(box.shipment_classification);
           const c = norm(box.classification);
-          return sc === 'PERSONAL' || sc === 'FLOWMIC' || c === 'PERSONAL' || c === 'FLOWMIC';
+          return sc === 'PERSONAL' || sc === 'FLOMIC' || c === 'PERSONAL' || c === 'FLOMIC';
         });
         if (boxHit) return true;
       }
@@ -380,7 +413,7 @@ export default function InvoicePage() {
         invoice.request_id?.verification?.shipment_classification ||
         invoice.request_id?.shipment?.classification
       );
-      return topClass === 'PERSONAL' || topClass === 'FLOWMIC';
+      return topClass === 'PERSONAL' || topClass === 'FLOMIC';
     })();
     
     // PH TO UAE: Check if backend has stored both totals (COD and Tax Invoice)
@@ -428,8 +461,8 @@ export default function InvoicePage() {
       const isTaxInvoice = taxRate === 5;
       const isCodInvoice = taxRate === 0;
       
-      if (isFlowmicOrPersonal && isUaeToPh) {
-        // Flowmic/Personal UAE_TO_PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
+      if (isFlomicOrPersonal && isUaeToPh) {
+        // Flomic/Personal UAE_TO_PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
         taxRate = 5;
         taxAmount = parseDecimal((subtotal * taxRate) / 100, 2);
         total = parseDecimal(subtotal, 2); // Total = subtotal (VAT already included)
@@ -699,7 +732,8 @@ export default function InvoicePage() {
         } : undefined,
         isUaeToPh: isUaeToPh,
         isPhToUae: isPhToUae,
-        serviceCode: serviceCodeRaw
+        serviceCode: serviceCodeRaw,
+        shipmentClassification: shipmentClassification // Pass classification to template
     };
 
     // PH TO UAE Invoice Display Logic:

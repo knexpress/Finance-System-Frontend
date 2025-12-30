@@ -668,7 +668,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     const hasActualWeight = actualWeight > 0;
     // Check if volumetric weight is provided
     const hasVolumetricWeight = volumetricWeight > 0;
-    // Check if classification is set (GENERAL for PH→UAE, or FLOWMIC/COMMERCIAL for UAE→PH)
+    // Check if classification is set (GENERAL for PH→UAE, or FLOMIC/COMMERCIAL for UAE→PH)
     const hasClassification = verificationData.shipment_classification !== '';
     
     // Check if insurance fields are required
@@ -1009,7 +1009,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
               
               <div>
                 <Label htmlFor="shipment_classification">
-                  Classification * {isPhToUaeRoute ? '(Auto: General for PH→UAE)' : '(UAE→Pinas: Flowmic/Commercial)'}
+                  Classification * {isPhToUaeRoute ? '(Auto: General for PH→UAE)' : '(UAE→Pinas: Flomic/Commercial)'}
                 </Label>
                 {isPhToUaeRoute ? (
                   <div className="p-2 bg-muted rounded border text-sm text-gray-600">
@@ -1025,7 +1025,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                       <SelectValue placeholder="Select classification" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="FLOWMIC">Flowmic</SelectItem>
+                      <SelectItem value="FLOMIC">Flomic</SelectItem>
                       <SelectItem value="COMMERCIAL">Commercial</SelectItem>
                     </SelectContent>
                   </Select>
@@ -1033,7 +1033,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                 <p className="text-xs text-muted-foreground mt-1">
                   {isPhToUaeRoute 
                     ? 'PH → UAE shipments default to General classification'
-                    : 'Select Flowmic (Personal) or Commercial for UAE → Pinas shipments'}
+                    : 'Select Flomic (Personal) or Commercial for UAE → Pinas shipments'}
                 </p>
               </div>
             </div>

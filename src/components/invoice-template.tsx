@@ -52,6 +52,7 @@ interface InvoiceData {
   isUaeToPh?: boolean; // Flag to identify UAE TO PH invoices
   isPhToUae?: boolean; // Flag to identify PH TO UAE invoices
   serviceCode?: string; // Service code for route identification
+  shipmentClassification?: string; // Shipment classification: COMMERCIAL, FLOMIC, PERSONAL, GENERAL
   totalAmountCod?: number; // PH TO UAE COD invoice total (shipping + delivery_base_amount)
   totalAmountTaxInvoice?: number; // PH TO UAE Tax invoice total (delivery + tax)
   invoiceType?: 'normal' | 'tax'; // Invoice type: 'normal' for COD, 'tax' for Tax invoice
@@ -179,10 +180,13 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
               <tr className="bg-gray-100">
                 <td className="border border-gray-300 px-4 py-2 text-left font-bold">
                   <div>Total Amount</div>
-                  {/* Show "Inclusive of Tax" for all UAE TO PH invoices (both COD and Tax) */}
+                  {/* Show "Inclusive of Tax" for UAE TO PH invoices, but NOT for Commercial shipments and NOT for PH TO UAE */}
                   {(() => {
                     const isUaeToPh = data.isUaeToPh || (data.serviceCode && data.serviceCode.toUpperCase().includes('UAE_TO_PH'));
-                    return isUaeToPh ? (
+                    const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
+                    const isCommercial = data.shipmentClassification?.toUpperCase() === 'COMMERCIAL';
+                    // Only show for UAE TO PH if it's NOT Commercial (i.e., Flomic/Personal) and NOT PH TO UAE
+                    return isUaeToPh && !isCommercial && !isPhToUae ? (
                       <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
                     ) : null;
                   })()}

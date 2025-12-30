@@ -353,22 +353,24 @@ export default function InvoiceRequestsPage() {
   const [insuranceOption, setInsuranceOption] = useState<'none' | 'percent'>('none');
   const [fixedInsuranceType, setFixedInsuranceType] = useState<'mobile' | 'laptop' | 'other'>('mobile');
   const [insuranceManualAmount, setInsuranceManualAmount] = useState('');
+  const [isSpecialCustomer, setIsSpecialCustomer] = useState(false); // Special customer checkbox
+  const [specialRate, setSpecialRate] = useState(''); // Special rate input (float)
   
-  // Helper function to check if shipment is flowmic
-  const isFlowmicShipment = (request?: any): boolean => {
+  // Helper function to check if shipment is flomic
+  const isFlomicShipment = (request?: any): boolean => {
     if (!request) return false;
-    // Check verification boxes and shipment classification for flowmic/personal
+    // Check verification boxes and shipment classification for flomic/personal
     const boxes =
       request.verification?.boxes ||
       request.request_id?.verification?.boxes ||
       request.booking?.verification?.boxes ||
       [];
-    const boxIsFlowmic =
+    const boxIsFlomic =
       Array.isArray(boxes) &&
       boxes.length > 0 &&
       boxes.some((box: any) => {
         const classification = (box.classification || '').toUpperCase();
-        return classification === 'FLOWMIC' || classification === 'PERSONAL';
+        return classification === 'FLOMIC' || classification === 'PERSONAL';
       });
 
     // Check shipment classification fields as a fallback
@@ -383,16 +385,16 @@ export default function InvoiceRequestsPage() {
       .filter(Boolean);
 
     const hasPersonalClassification = classificationFields.some(
-      (c) => c === 'PERSONAL' || c === 'FLOWMIC'
+      (c) => c === 'PERSONAL' || c === 'FLOMIC'
     );
 
-    return boxIsFlowmic || hasPersonalClassification;
+    return boxIsFlomic || hasPersonalClassification;
   };
   
   const getAutoTaxRate = (request?: any) => {
     if (!request) return 0;
-    // If shipment is flowmic, apply 5% VAT on subtotal
-    if (isFlowmicShipment(request)) {
+    // If shipment is flomic, apply 5% VAT on subtotal
+    if (isFlomicShipment(request)) {
       return 5;
     }
     const serviceCode = getRequestServiceCode(request);
@@ -464,18 +466,21 @@ export default function InvoiceRequestsPage() {
   // For UAE TO PH: Use manual entry based on delivery options
   // For PH TO UAE: Use old automatic calculation method
   // Use case-insensitive comparison
-  const needsPickupCharge = isUaeToPhSelected && (senderDeliveryOption === 'pickup');
+  // For PH TO UAE: Check if delivery is required (old method)
+  const isPhToUaeSelected = isPhToUaeService(selectedServiceCode);
+  
+  const needsPickupCharge = (isUaeToPhSelected && (senderDeliveryOption === 'pickup')) || 
+                            (isPhToUaeSelected && (senderDeliveryOption === 'pickup'));
   const needsDeliveryCharge = isUaeToPhSelected && (receiverDeliveryOption === 'delivery');
   
   // For UAE TO PH: Show fields based on delivery option combinations
   // - sender="pickup" AND receiver="delivery" → show both fields
   // - sender="delivery" AND receiver="delivery" → show only delivery charge
   // - sender="pickup" AND receiver="pickup" → show only pickup charge
-  const showPickupChargeField = isUaeToPhSelected && (senderDeliveryOption === 'pickup');
+  // For PH TO UAE: Show pickup charge field if sender delivery option is "pickup" (pickup in Philippines)
+  const showPickupChargeField = (isUaeToPhSelected && (senderDeliveryOption === 'pickup')) || 
+                                 (isPhToUaeSelected && (senderDeliveryOption === 'pickup'));
   const showDeliveryChargeField = isUaeToPhSelected && (receiverDeliveryOption === 'delivery');
-  
-  // For PH TO UAE: Check if delivery is required (old method)
-  const isPhToUaeSelected = isPhToUaeService(selectedServiceCode);
   
   // Get weight from selected request for PH TO UAE delivery check (fallback if user hasn't entered)
   const getRequestWeight = (request: any): number => {
@@ -1289,11 +1294,25 @@ export default function InvoiceRequestsPage() {
           description: 'Request updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        // Wait a bit before fetching to ensure backend has processed the update
-        // This prevents race conditions when filter is changed immediately after
-        setTimeout(() => {
-          fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
-        }, 200);
+        
+        // When status changes to IN_PROGRESS, reset to page 1 and use current filter
+        // This ensures the updated item appears in the IN_PROGRESS filter immediately
+        if (action === 'start') {
+          setCurrentPage(1); // Reset to first page to show the new item
+          // Use current statusFilter (or 'IN_PROGRESS' if filter is 'all' or empty)
+          const filterToUse = statusFilter && statusFilter !== 'all' ? statusFilter : 'IN_PROGRESS';
+          
+          // Wait a bit longer to ensure backend has fully processed the update
+          // This prevents race conditions and ensures the item appears in the correct filter
+          setTimeout(() => {
+            fetchInvoiceRequests(1, false, filterToUse); // Fetch page 1 with appropriate filter
+          }, 500); // Increased delay to 500ms for better reliability
+        } else {
+          // For other actions, use current page
+          setTimeout(() => {
+            fetchInvoiceRequests(currentPage, false);
+          }, 200);
+        }
       } else {
         // Revert optimistic update on error
         if (action === 'start') {
@@ -1534,6 +1553,9 @@ export default function InvoiceRequestsPage() {
         // Reset delivery - will be disabled if weight >= 15kg (checked by isDeliveryDisabled)
         setHasDelivery(false);
         setDeliveryBaseAmount('20');
+        // Reset special customer fields
+        setIsSpecialCustomer(false);
+        setSpecialRate('');
       } else {
         // Fallback to cached request if API fails
         const request = invoiceRequests.find((req: any) => req._id === id);
@@ -1579,6 +1601,9 @@ export default function InvoiceRequestsPage() {
           setTotalKgInput(initialWeight > 0 && !isNaN(initialWeight) ? initialWeight.toString() : '');
           setHasDelivery(false);
           setDeliveryBaseAmount('20');
+          // Reset special customer fields
+          setIsSpecialCustomer(false);
+          setSpecialRate('');
         } else {
           toast({
             variant: 'destructive',
@@ -1853,6 +1878,19 @@ export default function InvoiceRequestsPage() {
       return;
     }
 
+    // Validate special rate if special customer is checked
+    if (isSpecialCustomer) {
+      const parsedSpecialRate = parseFloat(specialRate);
+      if (!specialRate.trim() || isNaN(parsedSpecialRate) || parsedSpecialRate <= 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Special Rate Required',
+          description: 'Please enter a valid special rate (greater than 0) when Special Customer is checked.',
+        });
+        return;
+      }
+    }
+
     // Validate pickup charge if needed
     if (needsPickupCharge) {
       const parsedPickup = parseFloat(pickupCharge);
@@ -1888,8 +1926,31 @@ export default function InvoiceRequestsPage() {
       const taxRateForRequest = getAutoTaxRate(selectedRequestForInvoice);
 
       // Get pickup and delivery charges from user input (manual entry only)
+      // For PH TO UAE: Pickup charge is for pickup in Philippines
+      // For UAE TO PH: Pickup charge is for pickup in UAE
       const pickupChargeValue = needsPickupCharge ? parseFloat(pickupCharge) : 0;
       const deliveryChargeValue = needsDeliveryCharge ? parseFloat(deliveryCharge) : 0;
+      
+      // Debug: Log pickup charge for PH TO UAE
+      if (isPhToUaeSelected && needsPickupCharge) {
+        secureLog.debug('PH TO UAE Pickup Charge Input', {
+          pickupChargeInput: pickupCharge,
+          pickupChargeValue,
+          needsPickupCharge,
+          senderDeliveryOption: senderDeliveryOption,
+          isPhToUaeSelected
+        });
+      }
+      
+      // Debug: Log pickup charge for PH TO UAE
+      if (isPhToUaeSelected && needsPickupCharge) {
+        secureLog.debug('PH TO UAE Pickup Charge', {
+          pickupChargeInput: pickupCharge,
+          pickupChargeValue,
+          needsPickupCharge,
+          senderDeliveryOption: senderDeliveryOption
+        });
+      }
 
       // Compute insurance charge based on user selection
       // IMPORTANT: User's explicit selection takes priority over database values
@@ -1913,13 +1974,17 @@ export default function InvoiceRequestsPage() {
       // If insuranceOption is undefined/null, insuranceChargeValue remains 0
       
       // Convert request to invoice data
+      // CRITICAL: For PH TO UAE, always pass pickupCharge if user entered a value (even if 0)
+      // This ensures pickup charge in Philippines is included in invoice
       const invoiceData = convertRequestToInvoiceData(
         selectedRequestForInvoice,
         taxRateForRequest,
         undefined,
         { 
           batchNumber, 
-          pickupCharge: pickupChargeValue > 0 ? pickupChargeValue : undefined,
+          pickupCharge: isPhToUaeSelected && needsPickupCharge 
+            ? pickupChargeValue  // For PH TO UAE: Pass value even if 0 (user explicitly entered it)
+            : (pickupChargeValue > 0 ? pickupChargeValue : undefined), // For other routes: Only pass if > 0
           deliveryCharge: deliveryChargeValue > 0 ? deliveryChargeValue : undefined,
           // CRITICAL: Always pass insuranceCharge when user has made a selection
           // If user selected "none", pass 0 explicitly to override database
@@ -2045,10 +2110,10 @@ export default function InvoiceRequestsPage() {
         // If not found, check boxes for classification
         const boxes = request.verification?.boxes || request.request_id?.verification?.boxes || [];
         if (Array.isArray(boxes) && boxes.length > 0) {
-          // Check if any box is FLOWMIC or COMMERCIAL
-          const hasFlowmic = boxes.some((box: any) => {
+          // Check if any box is FLOMIC or COMMERCIAL
+          const hasFlomic = boxes.some((box: any) => {
             const classification = (box.classification || '').toUpperCase();
-            return classification === 'FLOWMIC' || classification === 'PERSONAL';
+            return classification === 'FLOMIC' || classification === 'PERSONAL';
           });
           const hasCommercial = boxes.some((box: any) => {
             const classification = (box.classification || '').toUpperCase();
@@ -2056,7 +2121,7 @@ export default function InvoiceRequestsPage() {
           });
           
           if (hasCommercial) return 'COMMERCIAL';
-          if (hasFlowmic) return 'FLOWMIC';
+          if (hasFlomic) return 'FLOMIC';
         }
         
         // Check top-level shipment classification
@@ -2144,6 +2209,23 @@ export default function InvoiceRequestsPage() {
         console.warn('⚠️ delivery_base_amount is missing for PH_TO_UAE with delivery enabled, using default 20');
       }
       
+      // Determine pickup_base_amount for PH_TO_UAE
+      // Required when sender_delivery_option is "pickup" for PH_TO_UAE
+      // Backend will save this and use it in invoice calculations
+      const pickupBaseAmountValue = isPhToUaeSelected && needsPickupCharge
+        ? (parseFloat(pickupCharge) || 0) // PH_TO_UAE: user input (pickup in Philippines)
+        : undefined; // Not required for other routes or when pickup is not needed
+      
+      // Debug: Log pickup base amount for PH TO UAE
+      if (isPhToUaeSelected && needsPickupCharge) {
+        secureLog.debug('PH TO UAE Pickup Base Amount', {
+          pickupChargeInput: pickupCharge,
+          pickupBaseAmountValue,
+          needsPickupCharge,
+          senderDeliveryOption: senderDeliveryOption
+        });
+      }
+      
       // Get weight for COD invoice calculation (check if weight >= 15kg for free delivery)
       let weightForDeliveryCheck = 0;
       if (isPhToUaeSelected && !isTaxInvoice) {
@@ -2182,8 +2264,102 @@ export default function InvoiceRequestsPage() {
         baseAmountWithDelivery,
         lineItemsCount: invoiceData.lineItems.length,
         isPhToUae: isPhToUaeSelected,
-        isTaxInvoice: isTaxInvoice
+        isTaxInvoice: isTaxInvoice,
+        isSpecialCustomer,
+        specialRate: isSpecialCustomer ? parseFloat(specialRate) : undefined
       });
+      
+      // If special customer is checked, update the verification's amount and calculated_rate before creating invoice
+      if (isSpecialCustomer && specialRate.trim()) {
+        const specialRateValue = parseFloat(specialRate);
+        if (!isNaN(specialRateValue) && specialRateValue > 0) {
+          secureLog.debug('Updating verification with special rate', {
+            requestId: (selectedRequestForInvoice as any)._id,
+            specialRate: specialRateValue
+          });
+          
+          // Get existing verification data to preserve required fields
+          const verification = (selectedRequestForInvoice as any)?.verification || 
+                              (selectedRequestForInvoice as any)?.request_id?.verification || {};
+          
+          // Parse existing weights (handle Decimal128 format)
+          const parseWeight = (weight: any): number => {
+            if (!weight) return 0;
+            if (typeof weight === 'object' && weight.$numberDecimal) {
+              return parseFloat(weight.$numberDecimal);
+            }
+            if (typeof weight === 'number') return weight;
+            return parseFloat(weight.toString()) || 0;
+          };
+          
+          const existingActualWeight = parseWeight(verification.actual_weight);
+          const existingVolumetricWeight = parseWeight(verification.volumetric_weight);
+          const existingChargeableWeight = parseWeight(verification.chargeable_weight || verification.weight);
+          
+          // Update verification with special rate, preserving all existing required fields
+          const updateVerificationResult = await apiClient.updateVerification(
+            (selectedRequestForInvoice as any)._id,
+            {
+              // Preserve existing required fields
+              actual_weight: existingActualWeight > 0 ? existingActualWeight : verification.actual_weight || 0,
+              volumetric_weight: existingVolumetricWeight > 0 ? existingVolumetricWeight : verification.volumetric_weight || 0,
+              chargeable_weight: existingChargeableWeight > 0 ? existingChargeableWeight : verification.chargeable_weight || verification.weight || 0,
+              weight: existingChargeableWeight > 0 ? existingChargeableWeight : verification.weight || 0,
+              // Update rate fields with special rate
+              amount: specialRateValue.toString(),
+              calculated_rate: specialRateValue,
+              // Preserve other existing fields if they exist
+              ...(verification.invoice_number && { invoice_number: verification.invoice_number }),
+              ...(verification.tracking_code && { tracking_code: verification.tracking_code }),
+              ...(verification.service_code && { service_code: verification.service_code }),
+              ...(verification.receiver_address && { receiver_address: verification.receiver_address }),
+              ...(verification.receiver_phone && { receiver_phone: verification.receiver_phone }),
+              ...(verification.agents_name && { agents_name: verification.agents_name }),
+              ...(verification.shipment_classification && { shipment_classification: verification.shipment_classification }),
+              ...(verification.weight_type && { weight_type: verification.weight_type }),
+              ...(verification.cargo_service && { cargo_service: verification.cargo_service }),
+              ...(verification.number_of_boxes && { number_of_boxes: verification.number_of_boxes }),
+              ...(verification.total_kg && { total_kg: verification.total_kg }),
+              ...(verification.sender_details_complete !== undefined && { sender_details_complete: verification.sender_details_complete }),
+              ...(verification.receiver_details_complete !== undefined && { receiver_details_complete: verification.receiver_details_complete })
+            }
+          );
+          
+          if (!updateVerificationResult.success) {
+            secureLog.error('Failed to update verification with special rate', updateVerificationResult.error);
+            toast({
+              variant: 'destructive',
+              title: 'Warning',
+              description: 'Failed to update special rate. Invoice will use default rate.',
+            });
+            // Continue with invoice generation even if update fails
+          } else {
+            secureLog.debug('Verification updated with special rate successfully');
+            // Refresh the request data to get updated rate
+            const refreshResult = await apiClient.getInvoiceRequestDetails((selectedRequestForInvoice as any)._id, false);
+            if (refreshResult.success && refreshResult.data) {
+              setSelectedRequestForInvoice(refreshResult.data);
+            }
+          }
+        }
+      }
+      
+      // Debug: Log line items before sending to backend (especially for PH TO UAE pickup charge)
+      if (isPhToUaeSelected && needsPickupCharge) {
+        secureLog.debug('PH TO UAE Invoice Creation - Line Items', {
+          pickupChargeInput: pickupCharge,
+          pickupChargeValue,
+          needsPickupCharge,
+          isPhToUaeSelected,
+          pickupChargePassedToConvert: isPhToUaeSelected && needsPickupCharge ? pickupChargeValue : undefined,
+          lineItems: invoiceData.lineItems,
+          hasPickupChargeInLineItems: invoiceData.lineItems.some((item: any) => 
+            item.description && item.description.toLowerCase().includes('pickup')
+          ),
+          lineItemsCount: invoiceData.lineItems.length,
+          lineItemsDescriptions: invoiceData.lineItems.map((item: any) => item.description)
+        });
+      }
       
       const invoiceResult = await apiClient.createInvoiceUnified({
         request_id: (selectedRequestForInvoice as any)._id,
@@ -2199,15 +2375,16 @@ export default function InvoiceRequestsPage() {
         service_code: serviceCode, // REQUIRED for PH_TO_UAE
         has_delivery: hasDeliveryFlag, // REQUIRED - Boolean indicating if delivery is enabled
         delivery_base_amount: deliveryBaseAmountValue, // REQUIRED if has_delivery = true for PH_TO_UAE
+        pickup_base_amount: pickupBaseAmountValue, // REQUIRED if sender_delivery_option = "pickup" for PH_TO_UAE (pickup in Philippines)
         customer_trn: customerTRN || undefined,
         batch_number: batchNumber || undefined, // REQUIRED
         notes: invoiceData.notes,
         created_by: (userProfile as any)?.employee_id || (userProfile as any)?._id, // REQUIRED
         due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-        // PH TO UAE: Send delivery_base_amount and calculated totals
+        // PH TO UAE: Send delivery_base_amount, pickup_base_amount, and calculated totals
         // NOTE: Backend should automatically calculate total_amount_cod using:
-        // - amount (shipping) + delivery_base_amount (when weight < 15kg)
-        // - amount only (when weight >= 15kg, free delivery)
+        // - amount (shipping) + pickup_base_amount + delivery_base_amount (when weight < 15kg)
+        // - amount (shipping) + pickup_base_amount + 0 (when weight >= 15kg, free delivery)
         // Frontend sends calculated values as fallback, but backend calculation takes precedence
         ...(isPhToUaeSelected && {
           // For COD invoice: Send calculated baseAmountWithDelivery (backend will recalculate based on weight)
@@ -2397,6 +2574,8 @@ export default function InvoiceRequestsPage() {
             setPickupCharge('');
             setDeliveryCharge('');
             setTotalKgInput(''); // Reset total kg input
+            setIsSpecialCustomer(false);
+            setSpecialRate('');
             fetchInvoiceRequests(currentPage, false); // Skip cache to get fresh data after invoice generation
           }
         }
@@ -2557,9 +2736,37 @@ export default function InvoiceRequestsPage() {
     if (!Number.isFinite(numberOfBoxes) || numberOfBoxes < 1) numberOfBoxes = 1;
     
     // Get pickup and delivery charges from options
-    const pickupChargeValue = typeof options.pickupCharge === 'number' && options.pickupCharge > 0 
-      ? parseFloat(options.pickupCharge.toFixed(2)) 
-      : 0;
+    // For PH TO UAE: Include pickup charge if provided (even if 0, as user explicitly entered it)
+    // For other routes: Only include if > 0
+    let pickupChargeValue = 0;
+    if (typeof options.pickupCharge === 'number') {
+      if (isPhToUae) {
+        // PH TO UAE: Always use the value if provided (even if 0, user explicitly entered it)
+        pickupChargeValue = parseFloat(options.pickupCharge.toFixed(2));
+        console.log('🔍 PH TO UAE Pickup Charge Extraction:', {
+          optionsPickupCharge: options.pickupCharge,
+          pickupChargeValue,
+          isPhToUae,
+          type: typeof options.pickupCharge
+        });
+      } else {
+        // Other routes: Only use if > 0
+        pickupChargeValue = options.pickupCharge > 0 ? parseFloat(options.pickupCharge.toFixed(2)) : 0;
+      }
+    } else if (options.pickupCharge !== undefined && options.pickupCharge !== null) {
+      // Handle case where pickupCharge might be passed as string or other type
+      const parsed = parseFloat(String(options.pickupCharge));
+      if (!isNaN(parsed)) {
+        pickupChargeValue = isPhToUae ? parsed : (parsed > 0 ? parsed : 0);
+        if (isPhToUae) {
+          console.log('🔍 PH TO UAE Pickup Charge Extraction (non-number):', {
+            optionsPickupCharge: options.pickupCharge,
+            parsed,
+            pickupChargeValue
+          });
+        }
+      }
+    }
     const deliveryChargeValue = typeof options.deliveryCharge === 'number' && options.deliveryCharge > 0 
       ? parseFloat(options.deliveryCharge.toFixed(2)) 
       : 0;
@@ -2665,12 +2872,12 @@ export default function InvoiceRequestsPage() {
     // - Tax Invoice: calculated delivery + tax on delivery only (no shipping shown)
     // IMPORTANT: For PH TO UAE, calculate BOTH totals (COD and Tax) regardless of current mode
     
-    // Check if shipment is flowmic
+    // Check if shipment is flomic
     const boxes = request.verification?.boxes || request.request_id?.verification?.boxes || [];
-    const isFlowmic = Array.isArray(boxes) && boxes.length > 0 && 
+    const isFlomic = Array.isArray(boxes) && boxes.length > 0 && 
       boxes.some((box: any) => {
         const classification = (box.classification || '').toUpperCase();
-        return classification === 'FLOWMIC';
+        return classification === 'FLOMIC';
       });
     
     // Calculate tax and totals based on invoice type and route
@@ -2724,15 +2931,15 @@ export default function InvoiceRequestsPage() {
       const effectiveTaxRate = typeof taxRateOverride === 'number' ? taxRateOverride : fallbackTaxRate;
       
       // Calculate tax:
-      // - If flowmic UAE to PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
+      // - If flomic UAE to PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
       // - Otherwise: Tax on delivery charge only (if present and PH to UAE)
-      if (isFlowmic && isUaeToPh && effectiveTaxRate > 0) {
-        // Flowmic UAE to PH: VAT is included in subtotal
+      if (isFlomic && isUaeToPh && effectiveTaxRate > 0) {
+        // Flomic UAE to PH: VAT is included in subtotal
         // Calculate VAT amount for display (5% of subtotal), but total = subtotal (VAT already included)
         taxAmount = (subtotal * effectiveTaxRate) / 100;
         taxRateForDelivery = effectiveTaxRate; // Store the rate for display
-      } else if (isFlowmic && effectiveTaxRate > 0) {
-        // Flowmic (non-UAE to PH): Apply 5% VAT on subtotal (add to total)
+      } else if (isFlomic && effectiveTaxRate > 0) {
+        // Flomic (non-UAE to PH): Apply 5% VAT on subtotal (add to total)
         taxAmount = (subtotal * effectiveTaxRate) / 100;
         taxRateForDelivery = effectiveTaxRate; // Store the rate for display
       } else {
@@ -2741,9 +2948,9 @@ export default function InvoiceRequestsPage() {
         taxAmount = deliveryCharge > 0 && taxRateForDelivery > 0 ? (deliveryCharge * taxRateForDelivery) / 100 : 0;
       }
       
-      // For flowmic UAE to PH: total = subtotal (VAT already included)
+      // For flomic UAE to PH: total = subtotal (VAT already included)
       // For others: total = subtotal + taxAmount
-      const total = (isFlowmic && isUaeToPh) ? subtotal : (subtotal + taxAmount);
+      const total = (isFlomic && isUaeToPh) ? subtotal : (subtotal + taxAmount);
       
       displayShippingCharge = shippingCharge;
       displaySubtotal = subtotal;
@@ -2865,12 +3072,33 @@ export default function InvoiceRequestsPage() {
         unitPrice: shippingCharge,
         total: shippingCharge
       });
-      if (pickupChargeValue > 0) {
+      // For PH TO UAE: Always add pickup charge if provided in options (user entered it)
+      // For other routes: Only add if > 0
+      const shouldAddPickupCharge = isPhToUae 
+        ? (options.pickupCharge !== undefined && options.pickupCharge !== null) // PH TO UAE: Add if provided (even if 0)
+        : (pickupChargeValue > 0); // Other routes: Only if > 0
+      
+      if (shouldAddPickupCharge) {
+        console.log('✅ Adding Pickup Charge to lineItems:', {
+          isPhToUae,
+          pickupChargeValue,
+          optionsPickupCharge: options.pickupCharge,
+          shouldAddPickupCharge
+        });
         lineItems.push({
           description: 'Pickup Charge',
           quantity: 1,
           unitPrice: pickupChargeValue,
           total: pickupChargeValue
+        });
+      } else if (isPhToUae) {
+        console.log('❌ NOT Adding Pickup Charge to lineItems:', {
+          isPhToUae,
+          pickupChargeValue,
+          optionsPickupCharge: options.pickupCharge,
+          shouldAddPickupCharge,
+          pickupChargeUndefined: options.pickupCharge === undefined,
+          pickupChargeNull: options.pickupCharge === null
         });
       }
       if (deliveryCharge > 0) {
@@ -3281,12 +3509,15 @@ export default function InvoiceRequestsPage() {
 
       {/* Tax Input Dialog */}
       {showTaxInputDialog && selectedRequestForInvoice && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Invoice Generation</h2>
-            <p className="text-gray-600 mb-4">
-              Confirm whether delivery is required. VAT will be calculated automatically based on the service route.
-            </p>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg w-full max-w-md max-h-[90vh] flex flex-col shadow-xl">
+            <div className="p-6 pb-4 border-b border-gray-200 flex-shrink-0">
+              <h2 className="text-xl font-bold mb-2">Invoice Generation</h2>
+              <p className="text-gray-600 text-sm">
+                Confirm whether delivery is required. VAT will be calculated automatically based on the service route.
+              </p>
+            </div>
+            <div className="overflow-y-auto flex-1 px-6 py-4">
 
             {/* Pickup Charge - Shown only if sender_delivery_option is "pickup" */}
             {showPickupChargeField && (
@@ -3305,7 +3536,12 @@ export default function InvoiceRequestsPage() {
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Required when sender delivery option is "pickup".
+                  {(() => {
+                    const isPhToUae = isPhToUaeService(selectedServiceCode);
+                    return isPhToUae 
+                      ? 'Required when sender delivery option is "pickup" (pickup in Philippines).'
+                      : 'Required when sender delivery option is "pickup".';
+                  })()}
                 </p>
               </div>
             )}
@@ -3404,6 +3640,48 @@ export default function InvoiceRequestsPage() {
               </p>
             </div>
 
+            {/* Special Customer Checkbox and Special Rate Input */}
+            <div className="mb-4">
+              <label className="flex items-center space-x-2 cursor-pointer mb-2">
+                <input
+                  type="checkbox"
+                  checked={isSpecialCustomer}
+                  onChange={(e) => {
+                    setIsSpecialCustomer(e.target.checked);
+                    if (!e.target.checked) {
+                      setSpecialRate(''); // Clear rate when unchecked
+                    }
+                  }}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-gray-700">
+                  Special Customer
+                </span>
+              </label>
+              {isSpecialCustomer && (
+                <div className="mt-3 ml-6 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                  <Label className="block text-sm font-medium text-gray-700 mb-2">
+                    Special Rate (AED/kg) *
+                  </Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={specialRate}
+                    onChange={(e) => setSpecialRate(e.target.value)}
+                    placeholder="Enter special rate (e.g., 29.00)"
+                    className="w-full max-w-xs"
+                    required={isSpecialCustomer}
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    This rate will override the calculated rate from weight brackets.
+                    <br />
+                    The backend will update the verification's amount and calculated_rate fields with this value.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {!isPhToUaeSelected && (
               <div className="mb-4">
                 <Label className="block text-sm font-medium text-gray-700 mb-2">
@@ -3468,8 +3746,8 @@ export default function InvoiceRequestsPage() {
                 PH → UAE shipments use automatic delivery charge calculation based on weight and number of boxes.
               </div>
             )}
-
-            <div className="flex justify-end space-x-2">
+            </div>
+            <div className="p-6 pt-4 border-t border-gray-200 flex-shrink-0 flex justify-end space-x-2">
               <Button
                 variant="outline"
                 onClick={() => {
@@ -3478,6 +3756,8 @@ export default function InvoiceRequestsPage() {
                   setCustomerTRN('');
                   setBatchNumber('');
                   setPickupCharge('');
+                  setIsSpecialCustomer(false);
+                  setSpecialRate('');
                   setDeliveryCharge('');
                   setDeliveryBaseAmount('20'); // Reset to default
                   setTotalKgInput(''); // Reset total kg input
@@ -3598,7 +3878,7 @@ export default function InvoiceRequestsPage() {
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Sender Delivery Option</Label>
-                      <p className="text-base">
+                      <div className="text-base">
                         <Badge variant={
                           (requestData.sender_delivery_option || 
                            requestData.request_id?.sender_delivery_option || 
@@ -3616,7 +3896,7 @@ export default function InvoiceRequestsPage() {
                             return senderOption;
                           })()}
                         </Badge>
-                      </p>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -3632,7 +3912,15 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Receiver Name</Label>
-                      <p className="text-base">{requestData.receiver_name || 'N/A'}</p>
+                      <p className="text-base">
+                        {requestData.receiver_name ||
+                         requestData.request_id?.receiver_name ||
+                         requestData.verification?.receiver_name ||
+                         requestData.booking?.receiver_name ||
+                         requestData.receiver?.name ||
+                         requestData.request_id?.receiver?.name ||
+                         'N/A'}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Receiver Phone</Label>
@@ -3644,7 +3932,7 @@ export default function InvoiceRequestsPage() {
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Receiver Delivery Option</Label>
-                      <p className="text-base">
+                      <div className="text-base">
                         <Badge variant={
                           (requestData.receiver_delivery_option || 
                            requestData.request_id?.receiver_delivery_option || 
@@ -3662,7 +3950,7 @@ export default function InvoiceRequestsPage() {
                             return receiverOption;
                           })()}
                         </Badge>
-                      </p>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -3678,25 +3966,65 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Service Code</Label>
-                      <p className="text-base">{formatServiceCode(requestData.service_code || requestData.verification?.service_code || 'N/A')}</p>
+                      <p className="text-base">
+                        {formatServiceCode(
+                          requestData.service_code ||
+                          requestData.verification?.service_code ||
+                          requestData.request_id?.service_code ||
+                          requestData.booking?.service_code ||
+                          'N/A'
+                        )}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Shipment Type</Label>
-                      <p className="text-base">{requestData.shipment_type || 'N/A'}</p>
+                      <p className="text-base">
+                        {requestData.shipment_type ||
+                         requestData.request_id?.shipment_type ||
+                         requestData.booking?.shipment_type ||
+                         requestData.verification?.shipment_type ||
+                         'N/A'}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">AWB Number</Label>
-                      <p className="text-base">{requestData.tracking_code || requestData.awb_number || 'N/A'}</p>
+                      <p className="text-base">
+                        {requestData.tracking_code ||
+                         requestData.awb_number ||
+                         requestData.awb ||
+                         requestData.request_id?.tracking_code ||
+                         requestData.request_id?.awb_number ||
+                         requestData.request_id?.awb ||
+                         requestData.booking?.awb_number ||
+                         requestData.booking?.awb ||
+                         requestData.verification?.awb_number ||
+                         'N/A'}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Invoice Number</Label>
-                      <p className="text-base">{requestData.invoice_number || requestData.verification?.invoice_number || 'N/A'}</p>
+                      <p className="text-base">
+                        {requestData.invoice_number ||
+                         requestData.verification?.invoice_number ||
+                         requestData.request_id?.invoice_number ||
+                         requestData.invoice_id ||
+                         requestData.request_id?.invoice_id ||
+                         'N/A'}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Weight (kg)</Label>
                       <p className="text-base">
-                        {formatWeight(requestData.verification?.actual_weight || 
-                         requestData.weight)}
+                        {formatWeight(
+                          requestData.verification?.actual_weight ||
+                          requestData.weight ||
+                          requestData.weight_kg ||
+                          requestData.request_id?.verification?.actual_weight ||
+                          requestData.request_id?.weight ||
+                          requestData.request_id?.weight_kg ||
+                          requestData.request_id?.shipment?.weight ||
+                          requestData.shipment?.weight
+                        )}
                       </p>
                     </div>
                     <div>
