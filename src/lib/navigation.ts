@@ -17,6 +17,7 @@ import {
   Truck,
   ClipboardCheck,
   XCircle,
+  DollarSign,
 } from 'lucide-react';
 import type { Department, DepartmentData } from './types';
 
@@ -69,6 +70,12 @@ const allLinks: NavLink[] = [
     label: 'Cash Flow',
     icon: Landmark,
     departments: ['Finance', 'Auditor'],
+  },
+  {
+    href: '/dashboard/price-brackets',
+    label: 'Price Brackets',
+    icon: DollarSign,
+    departments: ['Finance'],
   },
   {
     href: '/dashboard/delivery-assignments',

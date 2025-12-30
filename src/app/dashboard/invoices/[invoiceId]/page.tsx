@@ -212,7 +212,8 @@ export default function InvoicePage() {
     });
     
     // Get shipping, pickup, delivery, and insurance charges
-    let shippingCharge = baseAmount; // Base amount is shipping only
+    // Initialize from invoice fields (fallback)
+    let shippingCharge = baseAmount; // Base amount is shipping only (fallback)
     let pickupCharge = parseDecimal(invoice.pickup_charge || 0, 2);
     let deliveryCharge = 0;
     let insuranceCharge = 0;
@@ -224,8 +225,58 @@ export default function InvoicePage() {
         '';
     const isPhToUae = isPhToUaeService(serviceCodeRaw);
     
-    // Get weight and number of boxes for PH TO UAE tax invoice recalculation and shipment details
-    const weight = parseDecimal(invoice.weight_kg || invoice.request_id?.shipment?.weight || invoice.request_id?.verification?.actual_weight || 0, 2);
+    // Get weight for calculations (use chargeable weight or actual weight)
+    const weightForCalculation = parseDecimal(
+        invoice.weight_kg || 
+        invoice.request_id?.shipment?.weight || 
+        invoice.request_id?.verification?.chargeable_weight ||
+        invoice.request_id?.verification?.actual_weight ||
+        0, 
+        2
+    );
+    
+    // Get total_kg for display (CRITICAL: This is what Operations entered manually)
+    // Priority: verification.total_kg (highest priority for display in invoice)
+    let totalKg = 0;
+    const verificationTotalKg = 
+        invoice.request_id?.verification?.total_kg ||
+        invoice.request_id?.verification?.chargeable_weight ||
+        invoice.request_id?.verification?.actual_weight;
+    
+    if (verificationTotalKg !== undefined && verificationTotalKg !== null) {
+        if (typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal) {
+            totalKg = parseDecimal(verificationTotalKg.$numberDecimal, 2);
+        } else if (typeof verificationTotalKg === 'number') {
+            totalKg = parseDecimal(verificationTotalKg, 2);
+        } else {
+            totalKg = parseDecimal(verificationTotalKg.toString(), 2);
+        }
+    }
+    
+    // Fallback: If total_kg is 0 or not found, use weightForCalculation for display
+    // This ensures we always show a weight value
+    if (totalKg <= 0) {
+        totalKg = weightForCalculation;
+        console.log('⚠️ total_kg not found or 0, using weightForCalculation for display', {
+            totalKgFromVerification: invoice.request_id?.verification?.total_kg,
+            weightForCalculation
+        });
+    }
+    
+    // Use total_kg for display, weightForCalculation for rate calculations
+    const weight = weightForCalculation; // Keep for backward compatibility in calculations
+    const displayWeight = totalKg; // Use total_kg for display (or weightForCalculation as fallback)
+    
+    // Debug logging for weight extraction
+    console.log('📊 Weight values for invoice display', {
+        totalKg,
+        weightForCalculation,
+        displayWeight,
+        verificationTotalKg: invoice.request_id?.verification?.total_kg,
+        hasVerification: !!invoice.request_id?.verification,
+        requestIdKeys: invoice.request_id ? Object.keys(invoice.request_id) : [],
+        verificationKeys: invoice.request_id?.verification ? Object.keys(invoice.request_id.verification) : []
+    });
     // Derive number of boxes with additional fallback to verification boxes array (summing quantities)
     const verificationBoxes = invoice.request_id?.verification?.boxes;
     const boxesCountFromArray = Array.isArray(verificationBoxes) && verificationBoxes.length > 0
@@ -245,11 +296,16 @@ export default function InvoicePage() {
     const numberOfBoxes = validNumberOfBoxes; // Use for shipment details display
     
     // Calculate charges from line items (preferred source)
+    // CRITICAL: Extract shipping charge from line_items (it's the main charge)
+    let shippingChargeFromLineItems = 0;
     if (invoice.line_items && invoice.line_items.length > 0) {
         invoice.line_items.forEach((item: any) => {
             const itemTotal = parseDecimal(item.total || item.unit_price, 2);
             const description = item.description?.toLowerCase() || '';
-            if (description.includes('pickup')) {
+            if (description.includes('shipping')) {
+                // Shipping charge from line_items (preferred source)
+                shippingChargeFromLineItems += itemTotal; // Sum all shipping items
+            } else if (description.includes('pickup')) {
                 pickupCharge += itemTotal;
             } else if (description.includes('delivery')) {
                 deliveryCharge += itemTotal; // Sum all delivery charge line items
@@ -257,6 +313,15 @@ export default function InvoicePage() {
                 insuranceCharge += itemTotal; // Sum all insurance charge line items
             }
         });
+        
+        // Use shipping charge from line_items if found, otherwise use baseAmount
+        if (shippingChargeFromLineItems > 0) {
+            shippingCharge = parseDecimal(shippingChargeFromLineItems, 2);
+        } else {
+            // No shipping in line_items, use baseAmount as fallback
+            shippingCharge = baseAmount;
+        }
+        
         pickupCharge = parseDecimal(pickupCharge, 2);
         deliveryCharge = parseDecimal(deliveryCharge, 2);
         insuranceCharge = parseDecimal(insuranceCharge, 2);
@@ -317,6 +382,11 @@ export default function InvoicePage() {
       return topClass === 'PERSONAL' || topClass === 'FLOWMIC';
     })();
     
+    // PH TO UAE: Check if backend has stored both totals (COD and Tax Invoice)
+    // Priority: Use stored totals from backend if available, otherwise recalculate
+    const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
+    const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
+    
     // Prioritize database values for tax_amount and total_amount
     // Only recalculate if database values are missing or invalid
     let taxRate = parseDecimal(invoice.tax_rate || 0, 2);
@@ -324,8 +394,9 @@ export default function InvoicePage() {
     let total = parseDecimal(invoice.total_amount || 0, 2);
     
     // Check if database has valid tax_amount and total_amount
+    // For PH TO UAE COD invoices, if total is 0, we need to recalculate (don't trust 0 from DB)
     const hasValidTaxAmount = taxAmount > 0 || (taxAmount === 0 && taxRate === 0);
-    const hasValidTotal = total > 0;
+    const hasValidTotal = total > 0 && !(isPhToUae && taxRate === 0 && total === 0); // Don't trust 0 total for PH TO UAE COD
     
     // Only recalculate if database values are missing or invalid
     if (!hasValidTaxAmount || !hasValidTotal) {
@@ -333,31 +404,80 @@ export default function InvoicePage() {
         taxAmount,
         total,
         hasValidTaxAmount,
-        hasValidTotal
+        hasValidTotal,
+        totalAmountCod,
+        totalAmountTaxInvoice
       });
+      
+      // Determine invoice type from tax_rate
+      const isTaxInvoice = taxRate === 5;
+      const isCodInvoice = taxRate === 0;
       
       if (isFlowmicOrPersonal && isUaeToPh) {
         // Flowmic/Personal UAE_TO_PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
         taxRate = 5;
         taxAmount = parseDecimal((subtotal * taxRate) / 100, 2);
         total = parseDecimal(subtotal, 2); // Total = subtotal (VAT already included)
-      } else if (deliveryCharge > 0 && isPhToUae) {
-        // PH_TO_UAE: 5% VAT on delivery charge only
+      } else if (isPhToUae && isTaxInvoice && deliveryCharge > 0) {
+        // PH_TO_UAE Tax Invoice: Use stored total_amount_tax_invoice if available, otherwise calculate
         taxRate = 5;
         taxAmount = parseDecimal((deliveryCharge * taxRate) / 100, 2);
-        total = parseDecimal(subtotal + taxAmount, 2);
+        total = totalAmountTaxInvoice ? parseDecimal(totalAmountTaxInvoice, 2) : parseDecimal(deliveryCharge + taxAmount, 2);
+      } else if (isPhToUae && isCodInvoice) {
+        // PH_TO_UAE COD Invoice: Use stored total_amount_cod if available, otherwise calculate
+        taxRate = 0;
+        taxAmount = 0;
+        // Calculate total: Shipping + Delivery (for COD invoice)
+        const calculatedCodTotal = shippingCharge + deliveryCharge;
+        total = totalAmountCod && totalAmountCod > 0 
+          ? parseDecimal(totalAmountCod, 2) 
+          : (calculatedCodTotal > 0 ? parseDecimal(calculatedCodTotal, 2) : parseDecimal(subtotal, 2));
+        
+        console.log('📊 PH TO UAE COD Invoice total calculation:', {
+          totalAmountCod,
+          shippingCharge,
+          deliveryCharge,
+          calculatedCodTotal,
+          subtotal,
+          finalTotal: total
+        });
       } else {
-        // No tax
-        taxRate = taxRate || 0;
+        // Other routes COD Invoice or no tax: No tax applied
+        taxRate = 0;
         taxAmount = 0;
         total = subtotal;
       }
     } else {
       // Database has valid values - use them directly
+      // For PH TO UAE, prefer stored totals if available
+      if (isPhToUae) {
+        const isTaxInvoice = taxRate === 5;
+        if (isTaxInvoice && totalAmountTaxInvoice && totalAmountTaxInvoice > 0) {
+          total = parseDecimal(totalAmountTaxInvoice, 2);
+        } else if (!isTaxInvoice && totalAmountCod && totalAmountCod > 0) {
+          total = parseDecimal(totalAmountCod, 2);
+        } else if (!isTaxInvoice && total === 0) {
+          // If total is 0 and we don't have stored COD total, recalculate
+          const calculatedCodTotal = shippingCharge + deliveryCharge;
+          if (calculatedCodTotal > 0) {
+            total = parseDecimal(calculatedCodTotal, 2);
+            console.log('⚠️ PH TO UAE COD: Database total is 0, using calculated total:', {
+              calculatedCodTotal,
+              shippingCharge,
+              deliveryCharge
+            });
+          }
+        }
+      }
       console.log('✅ Using database tax/total values:', {
         taxRate,
         taxAmount,
-        total
+        total,
+        totalAmountCod,
+        totalAmountTaxInvoice,
+        shippingCharge,
+        deliveryCharge,
+        subtotal
       });
     }
 
@@ -376,16 +496,30 @@ export default function InvoicePage() {
     // Get shipment details - use direct fields first
     // Note: weight and numberOfBoxes are already defined above for tax invoice recalculation
     const volume = parseDecimal(invoice.volume_cbm || invoice.request_id?.shipment?.volume, 2);
-    // Use weight already defined above, but ensure it's the correct format for display
-    const displayWeight = parseDecimal(weight, 2);
-    const weightType = invoice.request_id?.shipment?.weight_type || 'ACTUAL';
+    // displayWeight is already set to totalKg above (from verification.total_kg)
+    // This is what Operations entered manually and should be displayed in invoice
+    const weightType = invoice.request_id?.shipment?.weight_type || 
+                      invoice.request_id?.verification?.weight_type || 
+                      'ACTUAL';
     
-    // Calculate rate from amount and weight if not provided
+    // Calculate rate from shipping charge and weight if not provided
+    // Priority: base_rate from invoice > calculated_rate from verification > calculated from shippingCharge/weight > default
     let rate = 25.00;
     if (invoice.base_rate) {
         rate = parseDecimal(invoice.base_rate, 2);
-    } else if (weight > 0 && baseAmount > 0) {
-        rate = parseDecimal(baseAmount / weight, 2);
+    } else if (invoice.request_id?.verification?.calculated_rate) {
+        // Use calculated rate from verification (Operations calculated this based on weight brackets)
+        const calculatedRate = invoice.request_id.verification.calculated_rate;
+        rate = parseDecimal(
+            typeof calculatedRate === 'object' && calculatedRate.$numberDecimal
+                ? calculatedRate.$numberDecimal
+                : calculatedRate,
+            2
+        );
+    } else if (weightForCalculation > 0 && shippingCharge > 0) {
+        // Calculate rate from shipping charge and weight (shippingCharge = weight × rate)
+        // Use weightForCalculation (chargeable/actual) for rate calculation, not total_kg
+        rate = parseDecimal(shippingCharge / weightForCalculation, 2);
     }
 
     const senderName =
@@ -459,29 +593,45 @@ export default function InvoicePage() {
             url: qrCodeData.qr_url || '',
             code: qrCodeData.qr_code || ''
         } : undefined,
-        isUaeToPh: isUaeToPh
+        isUaeToPh: isUaeToPh,
+        isPhToUae: isPhToUae,
+        serviceCode: serviceCodeRaw
     };
 
-    // For tax invoice: PH_TO_UAE shows delivery only (unless flowmic/personal)
-    // Flowmic/Personal UAE_TO_PH shows full subtotal with tax
-    const shouldShowDeliveryOnlyInTaxInvoice = isPhToUae && !isFlowmicOrPersonal;
-    const deliveryOnlyTaxAmount = parseDecimal((deliveryCharge * taxRate) / 100, 2);
-    // For tax invoice showing delivery only, include insurance charge in subtotal
-    const deliveryOnlySubtotal = parseDecimal(deliveryCharge + insuranceCharge, 2);
-    const deliveryOnlyTotal = parseDecimal(deliveryOnlySubtotal + deliveryOnlyTaxAmount, 2);
+    // PH TO UAE Invoice Display Logic:
+    // - COD Invoice (normal): Show shipping + base delivery (no tax)
+    // - Tax Invoice: Show only delivery (calculated with boxes) + tax on delivery (NO shipping, NO insurance)
+    const shouldShowDeliveryOnlyInTaxInvoice = isPhToUae && invoiceType === 'tax';
+    const deliveryOnlyTaxAmount = shouldShowDeliveryOnlyInTaxInvoice 
+        ? parseDecimal((deliveryCharge * taxRate) / 100, 2)
+        : taxAmount;
+    // For PH TO UAE tax invoice: subtotal = delivery charge only (no shipping, no insurance)
+    const deliveryOnlySubtotal = shouldShowDeliveryOnlyInTaxInvoice
+        ? parseDecimal(deliveryCharge, 2)
+        : subtotal;
+    const deliveryOnlyTotal = shouldShowDeliveryOnlyInTaxInvoice
+        ? parseDecimal(deliveryCharge + deliveryOnlyTaxAmount, 2)
+        : total;
     const taxInvoiceData = shouldShowDeliveryOnlyInTaxInvoice
         ? {
             ...invoiceData,
+            isPhToUae: true, // Flag for PH TO UAE invoices
+            serviceCode: serviceCodeRaw, // Pass service code for identification
             charges: {
                 ...invoiceData.charges,
-                pickupCharge: pickupCharge > 0 ? pickupCharge : undefined,
-                shippingCharge: 0,
-                subtotal: deliveryOnlySubtotal,
-                taxAmount: deliveryOnlyTaxAmount,
-                total: deliveryOnlyTotal
+                shippingCharge: 0, // Hide shipping in tax invoice
+                pickupCharge: undefined, // No pickup in PH TO UAE
+                insuranceCharge: undefined, // No insurance in PH TO UAE
+                subtotal: deliveryOnlySubtotal, // Delivery charge only
+                taxAmount: deliveryOnlyTaxAmount, // Tax on delivery only
+                total: deliveryOnlyTotal // Delivery + tax
             }
         }
-        : invoiceData;
+        : {
+            ...invoiceData,
+            isPhToUae: isPhToUae, // Pass isPhToUae flag for all invoices
+            serviceCode: serviceCodeRaw // Pass service code for identification
+        };
 
     // Debug: Log mapped invoice data
     console.log('📊 Mapped invoiceData:', invoiceData);

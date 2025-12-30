@@ -748,8 +748,17 @@ class ApiClient {
 
   // Get invoice request with full details including all verification and booking data
   // This endpoint should return complete invoice request data with all nested information
+  // CRITICAL: Must include verification object with total_kg, number_of_boxes, and all verification fields
+  // useCache should be false to ensure fresh data from database
   async getInvoiceRequestDetails(id: string, useCache: boolean = false) {
-    return this.request(`/invoice-requests/${id}/details`, {}, useCache, 0); // No cache for details
+    // Always bypass cache for details to ensure we get latest verification data from database
+    // The endpoint should return: request, verification (with total_kg), shipment, booking, etc.
+    return this.request(`/invoice-requests/${id}/details`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }, false, 0); // Force no cache (false) to get fresh data from database
   }
 
   // Invoices
@@ -1385,6 +1394,28 @@ class ApiClient {
   // Health check
   async healthCheck() {
     return this.request('/health');
+  }
+
+  // Price Brackets Management
+  async getPriceBrackets(route: 'PH_TO_UAE' | 'UAE_TO_PH', useCache: boolean = false) {
+    // Don't use cache for price brackets to ensure real-time updates
+    return this.request(`/price-brackets/${route}`, {}, useCache, 0);
+  }
+
+  async updatePriceBrackets(route: 'PH_TO_UAE' | 'UAE_TO_PH', brackets: any[]) {
+    // Invalidate cache after update to ensure fresh data
+    this.invalidateCache('/price-brackets');
+    return this.request(
+      `/price-brackets/${route}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ brackets }),
+      },
+      false // Don't cache PUT requests
+    );
   }
 }
 

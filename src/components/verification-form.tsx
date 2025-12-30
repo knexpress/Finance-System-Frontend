@@ -43,7 +43,8 @@ interface WeightBracket {
   label: string;
 }
 
-const PH_TO_UAE_BRACKETS: WeightBracket[] = [
+// Default brackets (fallback if API fails)
+const DEFAULT_PH_TO_UAE_BRACKETS: WeightBracket[] = [
   { min: 1, max: 15, rate: 39, label: '1-15 KG' },
   { min: 16, max: 29, rate: 38, label: '16-29 KG' },
   { min: 30, max: 69, rate: 36, label: '30-69 KG' },
@@ -53,7 +54,7 @@ const PH_TO_UAE_BRACKETS: WeightBracket[] = [
   { min: 0, max: null, rate: 29, label: 'SPECIAL RATE' }, // Special rate (can be manually selected)
 ];
 
-const UAE_TO_PH_BRACKETS: WeightBracket[] = [
+const DEFAULT_UAE_TO_PH_BRACKETS: WeightBracket[] = [
   { min: 1, max: 15, rate: 39, label: '1-15 KG' },
   { min: 16, max: 29, rate: 38, label: '16-29 KG' },
   { min: 30, max: 69, rate: 36, label: '30-69 KG' },
@@ -63,6 +64,47 @@ const UAE_TO_PH_BRACKETS: WeightBracket[] = [
   { min: 0, max: null, rate: 29, label: 'SPECIAL RATE' }, // Special rate (can be manually selected)
   { min: 1000, max: null, rate: 28, label: '1 TON UP' }, // 1 ton = 1000 kg
 ];
+
+// Global brackets state (will be fetched from API)
+let PH_TO_UAE_BRACKETS: WeightBracket[] = [...DEFAULT_PH_TO_UAE_BRACKETS];
+let UAE_TO_PH_BRACKETS: WeightBracket[] = [...DEFAULT_UAE_TO_PH_BRACKETS];
+
+// Function to fetch and update brackets from API
+export const fetchBracketsFromAPI = async () => {
+  try {
+    const [phResult, uaeResult] = await Promise.all([
+      apiClient.getPriceBrackets('PH_TO_UAE', false), // Don't use cache for real-time updates
+      apiClient.getPriceBrackets('UAE_TO_PH', false)
+    ]);
+
+    if (phResult.success && phResult.data) {
+      const data = phResult.data as any;
+      const brackets = Array.isArray(data) ? data : (data?.brackets || []);
+      if (brackets.length > 0) {
+        PH_TO_UAE_BRACKETS = brackets;
+        secureLog.debug('Loaded PH_TO_UAE brackets from API', { count: brackets.length });
+      }
+    }
+
+    if (uaeResult.success && uaeResult.data) {
+      const data = uaeResult.data as any;
+      const brackets = Array.isArray(data) ? data : (data?.brackets || []);
+      if (brackets.length > 0) {
+        UAE_TO_PH_BRACKETS = brackets;
+        secureLog.debug('Loaded UAE_TO_PH brackets from API', { count: brackets.length });
+      }
+    }
+  } catch (error) {
+    secureLog.warn('Failed to fetch brackets from API, using defaults', error);
+  }
+};
+
+// Fetch brackets on module load
+if (typeof window !== 'undefined') {
+  fetchBracketsFromAPI();
+  // Also fetch periodically to ensure real-time updates (every 30 seconds)
+  setInterval(fetchBracketsFromAPI, 30000);
+}
 
 // Function to get rate based on weight and route
 const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | string): { rate: number; bracket: WeightBracket | null } => {
@@ -154,6 +196,11 @@ export default function VerificationForm({ request, onVerificationComplete, curr
   const [isLoadingFullData, setIsLoadingFullData] = useState(false);
   const [fullRequestData, setFullRequestData] = useState<any>(null);
   const { toast } = useToast();
+  
+  // Fetch brackets when component mounts and when route changes
+  useEffect(() => {
+    fetchBracketsFromAPI();
+  }, [request?.service_code]);
   
   // Fetch full request data when dialog opens (lazy loading)
   useEffect(() => {
@@ -534,28 +581,49 @@ export default function VerificationForm({ request, onVerificationComplete, curr
   }, [route, verificationData.shipment_classification]);
 
 
-  // Auto-calculate amount per kg based on chargeable weight and route
+  // Auto-calculate amount per kg based on total_kg (user input) and route
+  // CRITICAL: Weight bracket is determined by total_kg, not chargeable weight
   const { calculatedRate, rateBracket } = useMemo(() => {
     // Use the route from the useMemo above
     const currentRoute = route;
     
-    secureLog.debug('Calculating rate', { chargeableWeight, route: currentRoute?.substring(0, 20) });
+    // Get total_kg from user input (this is the weight that determines the bracket)
+    const totalKg = parseFloat(verificationData.total_kg || '0');
     
-    // Only calculate if we have both chargeable weight > 0 AND a valid route
-    if (chargeableWeight > 0 && currentRoute) {
-      const result = getRateForWeight(chargeableWeight, currentRoute);
+    secureLog.debug('Calculating rate based on total_kg', { 
+      totalKg, 
+      chargeableWeight, 
+      route: currentRoute?.substring(0, 20) 
+    });
+    
+    // Only calculate if we have both total_kg > 0 AND a valid route
+    // Priority: Use total_kg if available, otherwise fallback to chargeableWeight
+    const weightForBracket = totalKg > 0 ? totalKg : chargeableWeight;
+    
+    if (weightForBracket > 0 && currentRoute) {
+      const result = getRateForWeight(weightForBracket, currentRoute);
       
       if (result.rate > 0 && result.bracket) {
-        secureLog.debug('Rate calculated', { rate: result.rate, bracket: result.bracket.label, weight: chargeableWeight });
+        secureLog.debug('Rate calculated', { 
+          rate: result.rate, 
+          bracket: result.bracket.label, 
+          weight: weightForBracket,
+          source: totalKg > 0 ? 'total_kg' : 'chargeableWeight'
+        });
         return { calculatedRate: result.rate, rateBracket: result.bracket };
       } else {
         secureLog.warn('Rate calculation returned invalid result', { rate: result.rate });
       }
     }
     
-    secureLog.debug('Rate calculation returning 0', { chargeableWeight, route: currentRoute?.substring(0, 20) });
+    secureLog.debug('Rate calculation returning 0', { 
+      totalKg, 
+      chargeableWeight, 
+      weightForBracket,
+      route: currentRoute?.substring(0, 20) 
+    });
     return { calculatedRate: 0, rateBracket: null };
-  }, [chargeableWeight, route]);
+  }, [verificationData.total_kg, chargeableWeight, route]);
   
   // Compute the input value directly from calculatedRate or fallback to verificationData
   // This ensures the input always displays the correct value
@@ -904,13 +972,17 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                   </SelectContent>
                 </Select>
                 {/* Show bracket information */}
-                {route && chargeableWeight > 0 && rateBracket && (
+                {route && (parseFloat(verificationData.total_kg || '0') > 0 || chargeableWeight > 0) && rateBracket && (
                   <div className="mt-2 p-2 bg-blue-50 rounded-md border border-blue-200">
                     <div className="flex items-center gap-2">
                       <CheckCircle className="h-4 w-4 text-blue-600 flex-shrink-0" />
                       <div className="text-xs text-blue-700">
                         <span className="font-semibold">Active Bracket:</span> {rateBracket.label} 
-                        <span className="ml-2">({chargeableWeight.toFixed(2)} kg)</span>
+                        <span className="ml-2">
+                          ({parseFloat(verificationData.total_kg || '0') > 0 
+                            ? `${parseFloat(verificationData.total_kg).toFixed(2)} kg (Total KG)` 
+                            : `${chargeableWeight.toFixed(2)} kg (chargeable)`})
+                        </span>
                         <span className="ml-2">→</span>
                         <span className="font-bold ml-2">{calculatedRate} AED/kg</span>
                       </div>
@@ -1004,7 +1076,11 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                       <CheckCircle className="h-3 w-3 flex-shrink-0" />
                       <span>
                         <span className="font-semibold">Auto-calculated:</span> {rateBracket.label} bracket 
-                        <span className="mx-1">({chargeableWeight.toFixed(2)} kg)</span>
+                        <span className="mx-1">
+                          ({parseFloat(verificationData.total_kg || '0') > 0 
+                            ? `${parseFloat(verificationData.total_kg).toFixed(2)} kg (Total KG)` 
+                            : `${chargeableWeight.toFixed(2)} kg (chargeable)`})
+                        </span>
                         <span>→</span>
                         <span className="font-bold ml-1">{calculatedRate.toFixed(2)} AED/kg</span>
                         <span className="text-blue-500 ml-2">(Cannot be changed manually)</span>

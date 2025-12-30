@@ -322,6 +322,8 @@ export default function InvoiceRequestsPage() {
   const [selectedRequestForInvoice, setSelectedRequestForInvoice] = useState<any>(null);
   const hasInitializedRef = useRef(false); // Track if initial load has happened
   const isInitializingRef = useRef(false); // Prevent concurrent initialization
+  const isFetchingRef = useRef(false); // Track if a fetch is currently in progress
+  const pendingFilterChangeRef = useRef<string | null>(null); // Track pending filter changes
   const [showTaxInputDialog, setShowTaxInputDialog] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -337,6 +339,7 @@ export default function InvoiceRequestsPage() {
   const [pickupCharge, setPickupCharge] = useState(''); // Pickup charge when sender_delivery_option is "pickup"
   const [deliveryCharge, setDeliveryCharge] = useState(''); // Delivery charge when receiver_delivery_option is "delivery"
   const [deliveryBaseAmount, setDeliveryBaseAmount] = useState('20'); // Base delivery amount for PH_TO_UAE (default 20)
+  const [totalKgInput, setTotalKgInput] = useState(''); // Total kilograms input for Finance (PH TO UAE)
   const router = useRouter();
   const getRequestServiceCode = (request?: any) =>
     request?.service_code ||
@@ -474,6 +477,169 @@ export default function InvoiceRequestsPage() {
   // For PH TO UAE: Check if delivery is required (old method)
   const isPhToUaeSelected = isPhToUaeService(selectedServiceCode);
   
+  // Get weight from selected request for PH TO UAE delivery check (fallback if user hasn't entered)
+  const getRequestWeight = (request: any): number => {
+    if (!request) return 0;
+    
+    // Priority: total_kg > chargeable_weight > actual_weight > weight
+    if (request.verification?.total_kg) {
+      const totalKg = request.verification.total_kg;
+      return typeof totalKg === 'object' && totalKg.$numberDecimal 
+        ? parseFloat(totalKg.$numberDecimal) 
+        : parseFloat(totalKg.toString());
+    }
+    if (request.verification?.chargeable_weight) {
+      const chargeableWeight = request.verification.chargeable_weight;
+      return typeof chargeableWeight === 'object' && chargeableWeight.$numberDecimal 
+        ? parseFloat(chargeableWeight.$numberDecimal) 
+        : parseFloat(chargeableWeight.toString());
+    }
+    if (request.verification?.actual_weight) {
+      const actualWeight = request.verification.actual_weight;
+      return typeof actualWeight === 'object' && actualWeight.$numberDecimal 
+        ? parseFloat(actualWeight.$numberDecimal) 
+        : parseFloat(actualWeight.toString());
+    }
+    if (request.weight) {
+      return typeof request.weight === 'object' && request.weight.$numberDecimal 
+        ? parseFloat(request.weight.$numberDecimal) 
+        : parseFloat(request.weight.toString());
+    }
+    return 0;
+  };
+
+  // Get total_kg directly from verification object in database (for delivery disable check)
+  const getTotalKgFromDatabase = (request: any): number => {
+    if (!request) {
+      secureLog.debug('getTotalKgFromDatabase: No request provided');
+      return 0;
+    }
+    
+    // Priority: verification.total_kg (direct from database)
+    // Check multiple possible paths for the verification object
+    const verification = 
+      request.verification ||
+      request.request_id?.verification ||
+      request.booking?.verification ||
+      request.invoice_request?.verification;
+    
+    const verificationTotalKg = verification?.total_kg;
+    
+    secureLog.debug('getTotalKgFromDatabase: Checking weight', {
+      hasVerification: !!verification,
+      verificationTotalKg,
+      requestKeys: Object.keys(request),
+      verificationKeys: verification ? Object.keys(verification) : []
+    });
+    
+    if (verificationTotalKg !== undefined && verificationTotalKg !== null) {
+      let parsedValue = 0;
+      if (typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal) {
+        parsedValue = parseFloat(verificationTotalKg.$numberDecimal);
+      } else if (typeof verificationTotalKg === 'number') {
+        parsedValue = verificationTotalKg;
+      } else {
+        parsedValue = parseFloat(verificationTotalKg.toString());
+      }
+      
+      if (!isNaN(parsedValue) && isFinite(parsedValue)) {
+        secureLog.debug('getTotalKgFromDatabase: Found weight', { parsedValue });
+        return parsedValue;
+      }
+    }
+    
+    secureLog.debug('getTotalKgFromDatabase: No valid weight found, returning 0');
+    return 0;
+  };
+
+  // Use verification.total_kg directly from database for weight check
+  // NOTE: Delivery checkbox is always enabled, but weight check is applied during invoice creation
+  const requestWeight = selectedRequestForInvoice ? getTotalKgFromDatabase(selectedRequestForInvoice) : 0;
+  const isWeight15kgOrMore = requestWeight >= 15;
+  // Delivery checkbox is always enabled (no disabled state)
+  const isDeliveryDisabled = false;
+  
+  // Debug logging for delivery disable check (only when dialog is open)
+  useEffect(() => {
+    if (showTaxInputDialog && isPhToUaeSelected && selectedRequestForInvoice) {
+      const weight = getTotalKgFromDatabase(selectedRequestForInvoice);
+      secureLog.debug('Delivery disable check (Dialog Open)', {
+        requestWeight: weight,
+        isWeight15kgOrMore: weight >= 15,
+        isDeliveryDisabled: isPhToUaeSelected && weight >= 15,
+        hasVerification: !!selectedRequestForInvoice.verification,
+        totalKg: selectedRequestForInvoice.verification?.total_kg,
+        serviceCode: selectedServiceCode,
+        isPhToUaeSelected
+      });
+    }
+  }, [showTaxInputDialog, isPhToUaeSelected, selectedRequestForInvoice, selectedServiceCode]);
+
+  // PH TO UAE: Initialize total kg input with verification.total_kg from database
+  // This runs when dialog opens (showTaxInputDialog) and data is loaded
+  useEffect(() => {
+    // Only initialize when dialog is open and we have the request data
+    if (showTaxInputDialog && isPhToUaeSelected && selectedRequestForInvoice) {
+      // Get total_kg from verification (check all possible paths)
+      const verificationTotalKg = 
+        selectedRequestForInvoice.verification?.total_kg ||
+        selectedRequestForInvoice.request_id?.verification?.total_kg ||
+        selectedRequestForInvoice.booking?.verification?.total_kg;
+      
+      secureLog.debug('Initializing total kg input', {
+        hasVerification: !!selectedRequestForInvoice.verification,
+        verificationTotalKg,
+        type: typeof verificationTotalKg,
+        isObject: typeof verificationTotalKg === 'object',
+        hasDecimal: verificationTotalKg?.$numberDecimal,
+        fullVerification: selectedRequestForInvoice.verification
+      });
+      
+      let initialWeight = 0;
+      
+      if (verificationTotalKg !== undefined && verificationTotalKg !== null) {
+        // Handle Decimal128 or number format
+        if (typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal) {
+          initialWeight = parseFloat(verificationTotalKg.$numberDecimal);
+        } else if (typeof verificationTotalKg === 'number') {
+          initialWeight = verificationTotalKg;
+        } else {
+          const parsed = parseFloat(verificationTotalKg.toString());
+          if (!isNaN(parsed)) {
+            initialWeight = parsed;
+          }
+        }
+      }
+      
+      secureLog.debug('Parsed initial weight', { initialWeight, verificationTotalKg, isValid: initialWeight > 0 && !isNaN(initialWeight) });
+      
+      // Only set if we got a valid value from verification.total_kg
+      if (initialWeight > 0 && !isNaN(initialWeight)) {
+        const weightString = initialWeight.toString();
+        setTotalKgInput(weightString);
+        secureLog.debug('Set total kg input', { value: weightString });
+      } else {
+        // If no total_kg found, leave empty for user to enter
+        setTotalKgInput('');
+        secureLog.warn('No valid total_kg found, leaving input empty', { 
+          verificationTotalKg,
+          initialWeight 
+        });
+      }
+    } else if (!isPhToUaeSelected || !showTaxInputDialog) {
+      // Reset when not PH TO UAE or dialog is closed
+      setTotalKgInput('');
+    }
+  }, [showTaxInputDialog, isPhToUaeSelected, selectedRequestForInvoice]);
+
+  // PH TO UAE: Auto-disable delivery if weight >= 15kg
+  useEffect(() => {
+    if (isPhToUaeSelected && isWeight15kgOrMore) {
+      setHasDelivery(false);
+      setDeliveryBaseAmount('20'); // Reset to default
+    }
+  }, [isPhToUaeSelected, isWeight15kgOrMore]);
+
   // PH TO UAE: Always disable insurance (no insurance offered)
   useEffect(() => {
     if (isPhToUaeSelected) {
@@ -590,9 +756,11 @@ export default function InvoiceRequestsPage() {
   }, [userProfile, clearCount]);
 
   // Fetch data when status filter changes (after initial load)
+  // Note: This is a fallback - the Select's onValueChange handler also triggers fetches
+  // The isFetchingRef prevents duplicate fetches
   useEffect(() => {
-    // Only fetch if statusFilter is set and we've initialized
-    if (statusFilter !== '' && hasInitializedRef.current) {
+    // Only fetch if statusFilter is set, we've initialized, and no fetch is in progress
+    if (statusFilter !== '' && hasInitializedRef.current && !isFetchingRef.current) {
       fetchInvoiceRequests(1, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -677,18 +845,29 @@ export default function InvoiceRequestsPage() {
     'request_id'
   ];
 
-  const fetchInvoiceRequests = useCallback(async (page: number = currentPage, useCache: boolean = true) => {
+  const fetchInvoiceRequests = useCallback(async (page: number = currentPage, useCache: boolean = true, filterOverride?: string) => {
+    // If a fetch is already in progress, queue this request
+    if (isFetchingRef.current) {
+      // Store the pending request - use filterOverride if provided, otherwise use current statusFilter
+      pendingFilterChangeRef.current = filterOverride !== undefined ? filterOverride : statusFilter;
+      return;
+    }
+
     try {
+      isFetchingRef.current = true;
       setLoading(true);
       
       const essentialFields = getEssentialFields();
+      
+      // Use filterOverride if provided, otherwise use statusFilter
+      const activeFilter = filterOverride !== undefined ? filterOverride : statusFilter;
       
       // Determine filters based on user-selected status filter or department default
       let filters: { status?: string; search?: string } | undefined = undefined;
       
       // If user has selected a status filter, use that (overrides department default)
-      if (statusFilter && statusFilter !== 'all') {
-        filters = { status: statusFilter };
+      if (activeFilter && activeFilter !== 'all') {
+        filters = { status: activeFilter };
       } else {
         // Otherwise, use department defaults
         if (userProfile?.department?.name === 'Finance') {
@@ -742,6 +921,21 @@ export default function InvoiceRequestsPage() {
       }
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
+      
+      // If there's a pending filter change, process it now
+      if (pendingFilterChangeRef.current !== null) {
+        const pendingFilter = pendingFilterChangeRef.current;
+        pendingFilterChangeRef.current = null;
+        // Small delay to ensure backend has processed the previous update
+        setTimeout(() => {
+          // Only update statusFilter if it's different from current
+          if (pendingFilter !== statusFilter) {
+            setStatusFilter(pendingFilter);
+          }
+          fetchInvoiceRequests(1, false, pendingFilter);
+        }, 150);
+      }
     }
   }, [statusFilter, userProfile?.department?.name, pageLimit]); // Don't include toast or currentPage to prevent unnecessary re-renders
 
@@ -1070,6 +1264,17 @@ export default function InvoiceRequestsPage() {
   // Department-specific actions
   const handleOperationsAction = async (id: string, action: string) => {
     try {
+      // Optimistic UI update - immediately update the local state
+      if (action === 'start') {
+        setInvoiceRequests(prevRequests => 
+          prevRequests.map(request => 
+            request._id === id 
+              ? { ...request, status: 'IN_PROGRESS' }
+              : request
+          )
+        );
+      }
+      
       let result;
       if (action === 'start') {
         result = await apiClient.updateInvoiceRequestStatus(id, { status: 'IN_PROGRESS' });
@@ -1084,9 +1289,22 @@ export default function InvoiceRequestsPage() {
           description: 'Request updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
+        // Wait a bit before fetching to ensure backend has processed the update
+        // This prevents race conditions when filter is changed immediately after
+        setTimeout(() => {
+          fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
+        }, 200);
+      } else {
+        // Revert optimistic update on error
+        if (action === 'start') {
+          fetchInvoiceRequests(currentPage, false);
+        }
       }
     } catch (error) {
+      // Revert optimistic update on error
+      if (action === 'start') {
+        fetchInvoiceRequests(currentPage, false);
+      }
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -1207,22 +1425,170 @@ export default function InvoiceRequestsPage() {
 
   const handleFinanceAction = async (id: string) => {
     try {
-      // Find the request first
-      const request = invoiceRequests.find((req: any) => req._id === id);
-      if (request) {
+      // CRITICAL: Fetch full invoice request details from backend to ensure ALL data is up-to-date
+      // This MUST include verification object with total_kg, number_of_boxes, and all other fields
+      secureLog.debug('Fetching full invoice request details from database', { 
+        id: id?.substring(0, 20),
+        note: 'This call bypasses cache to get fresh data from database'
+      });
+      
+      // Force fresh fetch from database (no cache) to ensure we have latest verification data
+      const result = await apiClient.getInvoiceRequestDetails(id, false);
+      
+      if (result.success && result.data) {
+        const request = result.data as any; // Type assertion for API response
+        
+        // Validate that we have the essential data structure
+        if (!request) {
+          throw new Error('Invalid response: request data is null or undefined');
+        }
+        
+        secureLog.debug('Full invoice request details loaded from database', { 
+          hasVerification: !!request.verification,
+          hasTotalKg: !!request.verification?.total_kg,
+          totalKgValue: request.verification?.total_kg,
+          numberOfBoxes: request.verification?.number_of_boxes,
+          serviceCode: request.service_code || request.verification?.service_code,
+          requestId: request._id || request.id,
+          requestKeys: Object.keys(request),
+          verificationKeys: request.verification ? Object.keys(request.verification) : [],
+          // Check all possible paths for verification data
+          hasRequestIdVerification: !!request.request_id?.verification,
+          hasBookingVerification: !!request.booking?.verification,
+          hasInvoiceRequestVerification: !!request.invoice_request?.verification
+        });
+        
+        // Validate critical fields for PH TO UAE invoicing
+        const serviceCode = request.service_code || 
+                           request.verification?.service_code || 
+                           request.shipment?.service_code || 
+                           '';
+        const isPhToUae = isPhToUaeService(serviceCode);
+        
+        if (isPhToUae) {
+          // For PH TO UAE, we MUST have verification.total_kg from database
+          const verificationTotalKg = 
+            request.verification?.total_kg ||
+            request.request_id?.verification?.total_kg ||
+            request.booking?.verification?.total_kg ||
+            request.invoice_request?.verification?.total_kg;
+          
+          if (verificationTotalKg === undefined || verificationTotalKg === null) {
+            secureLog.warn('PH TO UAE invoice: verification.total_kg not found in database response', {
+              serviceCode,
+              requestId: request._id || request.id,
+              availablePaths: {
+                'request.verification': !!request.verification,
+                'request.request_id.verification': !!request.request_id?.verification,
+                'request.booking.verification': !!request.booking?.verification,
+                'request.invoice_request.verification': !!request.invoice_request?.verification
+              }
+            });
+          }
+        }
+        
         const existingBatch =
           request.batch_number ||
           request.invoice_number ||
           request.request_id?.batch_number ||
           '';
+        
+        // Set the full request data from database (this triggers re-render with fresh data)
         setSelectedRequestForInvoice(request);
+        
+        // Extract total_kg from verification - check all possible paths
+        const verificationTotalKg = 
+          request.verification?.total_kg ||
+          request.request_id?.verification?.total_kg ||
+          request.booking?.verification?.total_kg ||
+          request.invoice_request?.verification?.total_kg;
+        
+        let initialWeight = 0;
+        if (verificationTotalKg !== undefined && verificationTotalKg !== null) {
+          if (typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal) {
+            initialWeight = parseFloat(verificationTotalKg.$numberDecimal);
+          } else if (typeof verificationTotalKg === 'number') {
+            initialWeight = verificationTotalKg;
+          } else {
+            const parsed = parseFloat(verificationTotalKg.toString());
+            if (!isNaN(parsed)) {
+              initialWeight = parsed;
+            }
+          }
+        }
+        
+        secureLog.debug('Extracted weight from database', { 
+          verificationTotalKg, 
+          initialWeight,
+          isValid: initialWeight > 0 && !isNaN(initialWeight),
+          willDisableDelivery: initialWeight >= 15 && isPhToUae
+        });
+        
         setShowTaxInputDialog(true);
         setCustomerTRN('');
         setBatchNumber(existingBatch);
         setPickupCharge('');
         setDeliveryCharge('');
+        // Set total kg from database (used internally, not shown in UI)
+        setTotalKgInput(initialWeight > 0 && !isNaN(initialWeight) ? initialWeight.toString() : '');
+        // Reset delivery - will be disabled if weight >= 15kg (checked by isDeliveryDisabled)
+        setHasDelivery(false);
+        setDeliveryBaseAmount('20');
+      } else {
+        // Fallback to cached request if API fails
+        const request = invoiceRequests.find((req: any) => req._id === id);
+        if (request) {
+          secureLog.warn('Failed to fetch full details, using cached request', result.error);
+          toast({
+            variant: 'destructive',
+            title: 'Warning',
+            description: 'Could not fetch latest data. Using cached information.',
+          });
+          
+          const existingBatch =
+            request.batch_number ||
+            request.invoice_number ||
+            request.request_id?.batch_number ||
+            '';
+          // Get total_kg from cached request
+          const verificationTotalKg = 
+            request.verification?.total_kg ||
+            request.request_id?.verification?.total_kg ||
+            request.booking?.verification?.total_kg;
+          
+          let initialWeight = 0;
+          if (verificationTotalKg !== undefined && verificationTotalKg !== null) {
+            if (typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal) {
+              initialWeight = parseFloat(verificationTotalKg.$numberDecimal);
+            } else if (typeof verificationTotalKg === 'number') {
+              initialWeight = verificationTotalKg;
+            } else {
+              const parsed = parseFloat(verificationTotalKg.toString());
+              if (!isNaN(parsed)) {
+                initialWeight = parsed;
+              }
+            }
+          }
+          
+          setSelectedRequestForInvoice(request);
+          setShowTaxInputDialog(true);
+          setCustomerTRN('');
+          setBatchNumber(existingBatch);
+          setPickupCharge('');
+          setDeliveryCharge('');
+          setTotalKgInput(initialWeight > 0 && !isNaN(initialWeight) ? initialWeight.toString() : '');
+          setHasDelivery(false);
+          setDeliveryBaseAmount('20');
+        } else {
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: result.error || 'Failed to load invoice request details',
+          });
+        }
       }
     } catch (error) {
+      secureLog.error('Error in handleFinanceAction', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -1513,6 +1879,9 @@ export default function InvoiceRequestsPage() {
       }
     }
 
+    // For PH TO UAE, total_kg is automatically read from verification.total_kg in database
+    // No user input required - it's fetched from backend when dialog opens
+
     try {
       const serviceCode = getRequestServiceCode(selectedRequestForInvoice);
       const isUaeToPh = isUaeToPhService(serviceCode);
@@ -1557,20 +1926,64 @@ export default function InvoiceRequestsPage() {
           // If user selected "percent", pass the calculated value
           // This ensures user's choice is respected, not database insured flag
           insuranceCharge: insuranceChargeValue, // Always pass (0 or calculated value)
-          hasDelivery: isPhToUaeSelected ? hasDelivery : false, // Only for PH TO UAE
-          deliveryBaseAmount: isPhToUaeSelected && hasDelivery ? parseFloat(deliveryBaseAmount) || 20 : undefined, // Base delivery amount for PH_TO_UAE
-          customerTRN: customerTRN || undefined // Pass customer TRN to invoice data
+          hasDelivery: isPhToUaeSelected && !isDeliveryDisabled ? hasDelivery : false, // Only for PH TO UAE, disabled if weight >= 15kg
+          deliveryBaseAmount: isPhToUaeSelected && !isDeliveryDisabled && hasDelivery ? parseFloat(deliveryBaseAmount) || 20 : undefined, // Base delivery amount for PH_TO_UAE
+          customerTRN: customerTRN || undefined, // Pass customer TRN to invoice data
+          totalKg: isPhToUaeSelected && totalKgInput ? parseFloat(totalKgInput) : undefined // Pass user-entered total kg for PH TO UAE
         }
       );
       
+      // Get request ID for logging
+      const requestId = (selectedRequestForInvoice as any)?._id || 
+                       (selectedRequestForInvoice as any)?.id || 
+                       (selectedRequestForInvoice as any)?.request_id || 
+                       'unknown';
+      
       // Validate invoice data
       if (!invoiceData) {
+        secureLog.error('Invoice data is null or undefined', { requestId });
         throw new Error('Failed to convert request to invoice data');
       }
       
-      if (!invoiceData.lineItems || !Array.isArray(invoiceData.lineItems)) {
+      // Enhanced validation with detailed logging
+      if (!invoiceData.lineItems) {
+        secureLog.error('Invoice data lineItems is missing', {
+          requestId,
+          invoiceDataKeys: Object.keys(invoiceData),
+          invoiceData: JSON.stringify(invoiceData, null, 2)
+        });
         throw new Error('Invoice data line items are missing or invalid');
       }
+      
+      if (!Array.isArray(invoiceData.lineItems)) {
+        secureLog.error('Invoice data lineItems is not an array', {
+          requestId,
+          lineItemsType: typeof invoiceData.lineItems,
+          lineItemsValue: invoiceData.lineItems
+        });
+        throw new Error('Invoice data line items are missing or invalid');
+      }
+      
+      if (invoiceData.lineItems.length === 0) {
+        secureLog.error('Invoice data lineItems array is empty', {
+          requestId,
+          serviceCode: getRequestServiceCode(selectedRequestForInvoice),
+          isPhToUae: isPhToUaeService(getRequestServiceCode(selectedRequestForInvoice)),
+          invoiceData: JSON.stringify(invoiceData, null, 2)
+        });
+        throw new Error('Invoice data line items are missing or invalid');
+      }
+      
+      secureLog.debug('Invoice data validation passed', {
+        requestId,
+        lineItemsCount: invoiceData.lineItems.length,
+        lineItems: invoiceData.lineItems.map((item: any) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          total: item.total
+        }))
+      });
       
       // Create invoice in database
       console.log('Selected request for invoice:', selectedRequestForInvoice);
@@ -1668,26 +2081,97 @@ export default function InvoiceRequestsPage() {
       console.log('📦 Extracted shipment classification:', shipmentClassification);
       console.log('🚚 Service code (already extracted):', serviceCode);
       
+      // Calculate the invoice amount to send to backend
+      // CRITICAL: Backend requires amount to be truthy (non-zero)
+      // Extract shipping charge from line_items (backend uses this as fallback)
+      // For PH_TO_UAE Tax Invoice: Shipping is hidden in display but still needed in amount field
+      const isTaxInvoice = taxRateForRequest === 5;
+      
+      // Extract shipping charge from line_items
+      const shippingItem = invoiceData.lineItems.find((item: any) => 
+        item.description && item.description.toLowerCase().includes('shipping')
+      );
+      
+      // Get shipping charge from line_items or fallback to charges object
+      let invoiceAmountToSend = 0;
+      if (shippingItem) {
+        invoiceAmountToSend = shippingItem.total || shippingItem.unitPrice || 0;
+      } else {
+        // Fallback: Use shipping charge from charges object
+        invoiceAmountToSend = invoiceData.charges?.shippingCharge || invoiceData.baseAmount || invoiceData.charges?.subtotal || 0;
+      }
+      
+      // CRITICAL: Backend validation requires amount to be truthy (non-zero)
+      // This applies to ALL invoice types (COD and Tax)
+      if (invoiceAmountToSend <= 0) {
+        // Last resort fallback - should never happen in normal flow
+        invoiceAmountToSend = invoiceData.charges?.total || 0.01;
+        secureLog.warn('Invoice amount was 0, using fallback', {
+          shippingItem: shippingItem ? {
+            description: shippingItem.description,
+            total: shippingItem.total,
+            unitPrice: shippingItem.unitPrice
+          } : null,
+          originalBaseAmount: invoiceData.baseAmount,
+          originalSubtotal: invoiceData.charges?.subtotal,
+          shippingCharge: invoiceData.charges?.shippingCharge,
+          fallbackAmount: invoiceAmountToSend,
+          lineItems: invoiceData.lineItems.map((item: any) => ({
+            description: item.description,
+            total: item.total
+          }))
+        });
+      }
+      
+      // Determine has_delivery flag
+      // For PH_TO_UAE: Use checkbox state (hasDelivery) - checkbox is always enabled
+      // Weight check is applied during invoice calculation, not here
+      // For UAE_TO_PH: Use receiver_delivery_option
+      const hasDeliveryFlag = isPhToUaeSelected 
+        ? hasDelivery // PH_TO_UAE: checkbox state (always enabled, weight check in calculation)
+        : needsDeliveryCharge; // UAE_TO_PH: based on receiver_delivery_option
+      
+      // Determine delivery_base_amount
+      // Required if has_delivery = true for PH_TO_UAE
+      const deliveryBaseAmountValue = isPhToUaeSelected && hasDeliveryFlag
+        ? (parseFloat(deliveryBaseAmount) || 20) // PH_TO_UAE: user input or default 20
+        : undefined; // Not required for other routes
+      
+      secureLog.debug('Creating invoice with API-compliant data', {
+        invoiceAmountToSend,
+        taxRate: taxRateForRequest,
+        serviceCode,
+        hasDeliveryFlag,
+        deliveryBaseAmountValue,
+        lineItemsCount: invoiceData.lineItems.length,
+        isPhToUae: isPhToUaeSelected,
+        isTaxInvoice: isTaxInvoice
+      });
+      
       const invoiceResult = await apiClient.createInvoiceUnified({
         request_id: (selectedRequestForInvoice as any)._id,
         client_id: clientId,
-        amount: invoiceData.baseAmount || invoiceData.charges.subtotal, // Use base amount WITHOUT tax
+        amount: invoiceAmountToSend, // Shipping charge (fallback) - can be 0 for Tax Invoice
         line_items: invoiceData.lineItems.map(item => ({
-          description: item.description,
-          quantity: item.quantity,
-          unit_price: item.unitPrice,
-          total: item.total
+          description: item.description, // REQUIRED - Used by backend to categorize charges
+          quantity: item.quantity || 1, // REQUIRED - Default: 1
+          unit_price: item.unitPrice, // REQUIRED - Price per unit
+          total: item.total // REQUIRED - Total amount (quantity × unit_price)
         })),
-        tax_rate: taxRateForRequest,
-        service_code: serviceCode, // Send service code for backend route detection and tax calculation
-        shipment_classification: shipmentClassification, // Send classification for backend tax calculation
-        has_delivery: needsDeliveryCharge, // Pass delivery flag based on receiver_delivery_option
-        delivery_base_amount: isPhToUaeSelected && hasDelivery ? (parseFloat(deliveryBaseAmount) || 20) : undefined, // Base delivery amount for PH_TO_UAE
+        tax_rate: taxRateForRequest, // REQUIRED - 0 for COD, 5 for Tax
+        service_code: serviceCode, // REQUIRED for PH_TO_UAE
+        has_delivery: hasDeliveryFlag, // REQUIRED - Boolean indicating if delivery is enabled
+        delivery_base_amount: deliveryBaseAmountValue, // REQUIRED if has_delivery = true for PH_TO_UAE
         customer_trn: customerTRN || undefined,
-        batch_number: batchNumber || undefined,
+        batch_number: batchNumber || undefined, // REQUIRED
         notes: invoiceData.notes,
-        created_by: (userProfile as any)?.employee_id || (userProfile as any)?._id,
-        due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
+        created_by: (userProfile as any)?.employee_id || (userProfile as any)?._id, // REQUIRED
+        due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+        // PH TO UAE: Send both totals for backend storage
+        ...(isPhToUaeSelected && {
+          total_amount_cod: (invoiceData as any).totalAmountCod || 0, // COD Invoice total: Shipping + Delivery
+          total_amount_tax_invoice: (invoiceData as any).totalAmountTaxInvoice || 0 // Tax Invoice total: Delivery + Tax
+        })
       });
       
       secureLog.debug('Invoice creation result', { success: invoiceResult.success });
@@ -1696,9 +2180,9 @@ export default function InvoiceRequestsPage() {
         // Automatically create delivery assignment with QR code for the invoice
         secureLog.debug('Creating delivery assignment with QR code');
         
-        // Extract IDs properly
-        const invoiceData = invoiceResult.data as any;
-        const invoiceId = invoiceData?._id || invoiceData?.invoice_id;
+        // Extract IDs properly (use different variable name to avoid conflict)
+        const createdInvoiceData = invoiceResult.data as any;
+        const invoiceId = createdInvoiceData?._id || createdInvoiceData?.invoice_id;
         
         // Get request_id from the invoice request (which links to shipment request)
         let requestId = (selectedRequestForInvoice as any)?.request_id;
@@ -1710,7 +2194,26 @@ export default function InvoiceRequestsPage() {
           requestId = (selectedRequestForInvoice as any)._id;
         }
         
-        secureLog.debug('Invoice creation data', { invoiceId, requestId, clientId, hasAmount: !!invoiceData.totalAmount });
+        // Get the total amount - use the original invoiceData (before API call) or response
+        // Priority: response total_amount > response amount > original invoiceData totalAmount > original charges.total
+        const invoiceTotalAmount = 
+          createdInvoiceData?.total_amount || 
+          createdInvoiceData?.amount || 
+          createdInvoiceData?.totalAmount ||
+          invoiceData?.totalAmount || 
+          invoiceData?.charges?.total || 
+          0;
+        
+        secureLog.debug('Invoice creation data', { 
+          invoiceId, 
+          requestId, 
+          clientId, 
+          invoiceTotalAmount,
+          originalTotalAmount: invoiceData?.totalAmount,
+          originalChargesTotal: invoiceData?.charges?.total,
+          responseAmount: createdInvoiceData?.amount,
+          responseTotalAmount: createdInvoiceData?.total_amount
+        });
         
         // Validate IDs
         if (!invoiceId) {
@@ -1733,8 +2236,21 @@ export default function InvoiceRequestsPage() {
           return;
         }
         
-        // Get the actual total amount from the created invoice
-        const invoiceTotalAmount = invoiceData?.total_amount || invoiceData?.amount || invoiceData?.totalAmount || 0;
+        // Validate amount is greater than 0
+        if (invoiceTotalAmount <= 0) {
+          secureLog.error('Invoice total amount is 0 or negative', {
+            invoiceTotalAmount,
+            originalTotalAmount: invoiceData?.totalAmount,
+            originalChargesTotal: invoiceData?.charges?.total,
+            responseAmount: createdInvoiceData?.amount
+          });
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: 'Invoice amount is invalid. Please check the charges.'
+          });
+          return;
+        }
         
         const deliveryAssignmentData = {
           request_id: requestId,
@@ -1757,9 +2273,13 @@ export default function InvoiceRequestsPage() {
 
           // Create collection entry for payment tracking
           try {
+            // Get client name from selected request or invoice data
+            const clientName = (selectedRequestForInvoice as any)?.customer_name || 
+                              (selectedRequestForInvoice as any)?.client_id?.company_name ||
+                              'Unknown Client';
             const collectionResult = await apiClient.createCollection({
               invoice_id: invoiceId,
-              client_name: invoiceData?.client_id?.company_name || 'Unknown Client',
+              client_name: clientName,
               amount: invoiceData?.totalAmount || invoiceTotalAmount,
               due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days from now
               invoice_request_id: (selectedRequestForInvoice as any)?._id
@@ -1816,6 +2336,7 @@ export default function InvoiceRequestsPage() {
             setBatchNumber('');
             setPickupCharge('');
             setDeliveryCharge('');
+            setTotalKgInput(''); // Reset total kg input
             fetchInvoiceRequests(currentPage, false); // Skip cache to get fresh data after invoice generation
             // Redirect to invoice page
             router.push(`/dashboard/invoices/${invoiceId}`);
@@ -1830,6 +2351,7 @@ export default function InvoiceRequestsPage() {
             setBatchNumber('');
             setPickupCharge('');
             setDeliveryCharge('');
+            setTotalKgInput(''); // Reset total kg input
             fetchInvoiceRequests(currentPage, false); // Skip cache to get fresh data after invoice generation
           }
         }
@@ -1873,6 +2395,7 @@ export default function InvoiceRequestsPage() {
       hasDelivery?: boolean; // For PH TO UAE automatic calculation
       deliveryBaseAmount?: number; // Base delivery amount for PH_TO_UAE (default 20)
       customerTRN?: string; // Customer TRN from invoice generation
+      totalKg?: number; // User-entered total kilograms for PH TO UAE (overrides verification weight)
     } = {}
   ) => {
     console.log('🔄 Converting request to invoice data...');
@@ -1920,21 +2443,25 @@ export default function InvoiceRequestsPage() {
     // Convert Decimal128 to number if needed
     let weight = 0;
     
-    // First priority: Use manual total_kg from verification (for Finance invoice generation)
-    if (request.verification?.total_kg) {
+    // First priority: Use user-entered totalKg from options (for Finance invoice generation - PH TO UAE)
+    if (options.totalKg !== undefined && options.totalKg > 0) {
+      weight = options.totalKg;
+    }
+    // Second priority: Use manual total_kg from verification
+    else if (request.verification?.total_kg) {
       const totalKg = request.verification.total_kg;
       weight = typeof totalKg === 'object' && totalKg.$numberDecimal ? 
         parseFloat(totalKg.$numberDecimal) : 
         parseFloat(totalKg.toString());
     }
-    // Second priority: Use chargeable_weight (system-calculated)
+    // Third priority: Use chargeable_weight (system-calculated)
     else if (request.verification?.chargeable_weight) {
       const chargeableWeight = request.verification.chargeable_weight;
       weight = typeof chargeableWeight === 'object' && chargeableWeight.$numberDecimal ? 
         parseFloat(chargeableWeight.$numberDecimal) : 
         parseFloat(chargeableWeight.toString());
     }
-    // Third priority: Use actual_weight
+    // Fourth priority: Use actual_weight
     else if (request.verification?.actual_weight) {
       const actualWeight = request.verification.actual_weight;
       weight = typeof actualWeight === 'object' && actualWeight.$numberDecimal ? 
@@ -1953,7 +2480,28 @@ export default function InvoiceRequestsPage() {
     const mode = options.mode || 'normal';
     const providedBatchNumber = options.batchNumber;
     const isTaxMode = mode === 'tax';
-    const rate = 31.00; // Default rate, you might want to make this configurable
+    
+    // Get rate from verification (calculated by Operations based on weight brackets)
+    // Priority: verification.calculated_rate > verification.amount > base_rate > default 31.00
+    let rate = 31.00; // Default fallback rate
+    if (request.verification?.calculated_rate) {
+      const calculatedRate = request.verification.calculated_rate;
+      rate = typeof calculatedRate === 'object' && calculatedRate.$numberDecimal ? 
+        parseFloat(calculatedRate.$numberDecimal) : 
+        parseFloat(calculatedRate.toString());
+    } else if (request.verification?.amount) {
+      // verification.amount stores the rate per kg (from Operations verification)
+      const amountRate = request.verification.amount;
+      rate = typeof amountRate === 'object' && amountRate.$numberDecimal ? 
+        parseFloat(amountRate.$numberDecimal) : 
+        parseFloat(amountRate.toString());
+    } else if (request.base_rate) {
+      const baseRate = request.base_rate;
+      rate = typeof baseRate === 'object' && baseRate.$numberDecimal ? 
+        parseFloat(baseRate.$numberDecimal) : 
+        parseFloat(baseRate.toString());
+    }
+    
     const shippingCharge = weight * rate;
     // Priority: verification.number_of_boxes (manual input) > shipment.number_of_boxes > request.number_of_boxes
     let numberOfBoxes = request.verification?.number_of_boxes || 
@@ -1974,29 +2522,70 @@ export default function InvoiceRequestsPage() {
     // Delivery charge calculation:
     // - UAE TO PH: Manual entry only (from user input)
     // - PH TO UAE: 
-    //   * Normal Invoice: Fixed 25 AED
-    //   * Tax Invoice: Automatic calculation based on weight and boxes with custom base amount
+    //   * COD Invoice (Normal): Base amount only (user input, no box calculation)
+    //     BUT: If verification.total_kg >= 15kg, delivery charge = 0 (free delivery)
+    //   * Tax Invoice: Always calculate with boxes (base + (boxes-1) × 5) regardless of weight
     const hasDeliveryFlag = options.hasDelivery || false;
     const baseDeliveryAmount = options.deliveryBaseAmount || 20; // Default to 20 if not provided
+    
+    // Get total_kg directly from verification object for weight check (>= 15kg)
+    // This is the PRIMARY source for weight check, not the calculated weight
+    const verificationTotalKg = 
+      request.verification?.total_kg ||
+      request.request_id?.verification?.total_kg ||
+      request.booking?.verification?.total_kg;
+    
+    let dbTotalKg = 0;
+    if (verificationTotalKg !== undefined && verificationTotalKg !== null) {
+      if (typeof verificationTotalKg === 'object' && verificationTotalKg.$numberDecimal) {
+        dbTotalKg = parseFloat(verificationTotalKg.$numberDecimal);
+      } else if (typeof verificationTotalKg === 'number') {
+        dbTotalKg = verificationTotalKg;
+      } else {
+        const parsed = parseFloat(verificationTotalKg.toString());
+        if (!isNaN(parsed)) {
+          dbTotalKg = parsed;
+        }
+      }
+    }
+    
+    // Use verification.total_kg from database for weight check
+    const isWeight15kgOrMore = dbTotalKg >= 15;
     let deliveryCharge = 0;
+    let calculatedDeliveryCharge = 0; // For tax invoice calculation with boxes
+    
     if (isUaeToPh) {
       // UAE TO PH: Use manual entry
       deliveryCharge = deliveryChargeValue;
+      calculatedDeliveryCharge = deliveryChargeValue;
     } else if (isPhToUae) {
       // PH TO UAE: Different calculation based on invoice mode
       if (isTaxMode) {
-        // Tax Invoice: Box-based calculation with custom base amount (only if delivery is required)
+        // Tax Invoice: ALWAYS calculate delivery charge with boxes (regardless of weight)
+        // Weight check does NOT apply to Tax Invoice
         if (hasDeliveryFlag) {
-          deliveryCharge = weight > 30 ? 0 : (numberOfBoxes <= 1 ? baseDeliveryAmount : baseDeliveryAmount + ((numberOfBoxes - 1) * 5));
+          calculatedDeliveryCharge = baseDeliveryAmount + ((numberOfBoxes - 1) * 5);
+          deliveryCharge = calculatedDeliveryCharge; // Use calculated for tax invoice
         } else {
           deliveryCharge = 0;
+          calculatedDeliveryCharge = 0;
         }
       } else {
-        // Normal Invoice: Use custom base amount (only if delivery is required)
+        // COD Invoice (Normal): Check weight - if >= 15kg, delivery = 0 (free delivery)
+        // Otherwise, use base amount only (no box calculation)
         if (hasDeliveryFlag) {
-          deliveryCharge = baseDeliveryAmount;
+          if (isWeight15kgOrMore) {
+            // Weight >= 15kg: Free delivery for COD Invoice
+            deliveryCharge = 0;
+            calculatedDeliveryCharge = 0;
+          } else {
+            // Weight < 15kg: Use base amount only (no box calculation)
+            deliveryCharge = baseDeliveryAmount;
+            calculatedDeliveryCharge = baseDeliveryAmount; // Same for consistency
+          }
         } else {
           deliveryCharge = 0;
+          calculatedDeliveryCharge = 0;
         }
       }
     }
@@ -2026,9 +2615,10 @@ export default function InvoiceRequestsPage() {
       }
     }
     
-    const subtotal = shippingCharge + pickupChargeValue + deliveryCharge + insuranceCharge;
-    const fallbackTaxRate = isPhToUae ? 5 : 0;
-    const effectiveTaxRate = typeof taxRateOverride === 'number' ? taxRateOverride : fallbackTaxRate;
+    // PH TO UAE Special Logic:
+    // - COD Invoice: shipping + base delivery (no tax)
+    // - Tax Invoice: calculated delivery + tax on delivery only (no shipping shown)
+    // IMPORTANT: For PH TO UAE, calculate BOTH totals (COD and Tax) regardless of current mode
     
     // Check if shipment is flowmic
     const boxes = request.verification?.boxes || request.request_id?.verification?.boxes || [];
@@ -2038,48 +2628,82 @@ export default function InvoiceRequestsPage() {
         return classification === 'FLOWMIC';
       });
     
-    // Calculate tax:
-    // - If flowmic UAE to PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
-    // - Otherwise: Tax on delivery charge only (if present and PH to UAE)
+    // Calculate tax and totals based on invoice type and route
     let taxAmount = 0;
     let taxRateForDelivery = 0;
+    let displayShippingCharge = shippingCharge;
+    let displaySubtotal = 0;
+    let displayTaxAmount = 0;
+    let displayTotal = 0;
     
-    if (isFlowmic && isUaeToPh && effectiveTaxRate > 0) {
-      // Flowmic UAE to PH: VAT is included in subtotal
-      // Calculate VAT amount for display (5% of subtotal), but total = subtotal (VAT already included)
-      taxAmount = (subtotal * effectiveTaxRate) / 100;
-      taxRateForDelivery = effectiveTaxRate; // Store the rate for display
-    } else if (isFlowmic && effectiveTaxRate > 0) {
-      // Flowmic (non-UAE to PH): Apply 5% VAT on subtotal (add to total)
-      taxAmount = (subtotal * effectiveTaxRate) / 100;
-      taxRateForDelivery = effectiveTaxRate; // Store the rate for display
+    // PH TO UAE: Calculate BOTH COD and Tax Invoice totals (for backend storage)
+    let totalAmountCod = 0; // COD Invoice total: Shipping + Delivery (no tax)
+    let totalAmountTaxInvoice = 0; // Tax Invoice total: Delivery + Tax (shipping hidden)
+    
+    if (isPhToUae) {
+      // Calculate COD Invoice total (always, regardless of current mode)
+      // COD: Shipping + Base Delivery (no tax, no box calculation)
+      totalAmountCod = shippingCharge + deliveryCharge; // Base delivery only
+      
+      // Calculate Tax Invoice total (always, regardless of current mode)
+      // Tax: Calculated Delivery (with boxes) + Tax on Delivery
+      const taxOnDelivery = calculatedDeliveryCharge > 0 ? (calculatedDeliveryCharge * 5) / 100 : 0;
+      totalAmountTaxInvoice = calculatedDeliveryCharge + taxOnDelivery;
+      
+      // PH TO UAE specific logic for current display mode
+      if (isTaxMode) {
+        // Tax Invoice: Show only delivery (calculated) + tax on delivery (NO shipping shown)
+        taxRateForDelivery = 5; // 5% VAT on delivery only
+        taxAmount = calculatedDeliveryCharge > 0 ? (calculatedDeliveryCharge * taxRateForDelivery) / 100 : 0;
+        displayShippingCharge = 0; // Hide shipping in tax invoice
+        displaySubtotal = calculatedDeliveryCharge; // Subtotal = delivery charge only
+        displayTaxAmount = taxAmount;
+        displayTotal = totalAmountTaxInvoice; // Use pre-calculated Tax Invoice total
+      } else {
+        // COD Invoice: Show shipping + base delivery (NO tax)
+        taxRateForDelivery = 0; // No tax on COD invoice
+        taxAmount = 0;
+        displayShippingCharge = shippingCharge; // Show shipping
+        displaySubtotal = shippingCharge + deliveryCharge; // Subtotal = shipping + base delivery
+        displayTaxAmount = 0;
+        displayTotal = totalAmountCod; // Use pre-calculated COD total
+      }
     } else {
-      // Normal: Calculate tax on delivery charge only (pickup charge is typically not taxed)
-      taxRateForDelivery = deliveryCharge > 0 ? effectiveTaxRate : 0;
-      taxAmount = deliveryCharge > 0 && taxRateForDelivery > 0 ? (deliveryCharge * taxRateForDelivery) / 100 : 0;
+      // UAE TO PH or other routes (existing logic)
+      const subtotal = shippingCharge + pickupChargeValue + deliveryCharge + insuranceCharge;
+      const fallbackTaxRate = isPhToUae ? 5 : 0;
+      const effectiveTaxRate = typeof taxRateOverride === 'number' ? taxRateOverride : fallbackTaxRate;
+      
+      // Calculate tax:
+      // - If flowmic UAE to PH: 5% VAT included in subtotal (total = subtotal, VAT shown for display)
+      // - Otherwise: Tax on delivery charge only (if present and PH to UAE)
+      if (isFlowmic && isUaeToPh && effectiveTaxRate > 0) {
+        // Flowmic UAE to PH: VAT is included in subtotal
+        // Calculate VAT amount for display (5% of subtotal), but total = subtotal (VAT already included)
+        taxAmount = (subtotal * effectiveTaxRate) / 100;
+        taxRateForDelivery = effectiveTaxRate; // Store the rate for display
+      } else if (isFlowmic && effectiveTaxRate > 0) {
+        // Flowmic (non-UAE to PH): Apply 5% VAT on subtotal (add to total)
+        taxAmount = (subtotal * effectiveTaxRate) / 100;
+        taxRateForDelivery = effectiveTaxRate; // Store the rate for display
+      } else {
+        // Normal: Calculate tax on delivery charge only (pickup charge is typically not taxed)
+        taxRateForDelivery = deliveryCharge > 0 ? effectiveTaxRate : 0;
+        taxAmount = deliveryCharge > 0 && taxRateForDelivery > 0 ? (deliveryCharge * taxRateForDelivery) / 100 : 0;
+      }
+      
+      // For flowmic UAE to PH: total = subtotal (VAT already included)
+      // For others: total = subtotal + taxAmount
+      const total = (isFlowmic && isUaeToPh) ? subtotal : (subtotal + taxAmount);
+      
+      displayShippingCharge = shippingCharge;
+      displaySubtotal = subtotal;
+      displayTaxAmount = taxAmount;
+      displayTotal = total;
     }
     
-    // For flowmic UAE to PH: total = subtotal (VAT already included)
-    // For others: total = subtotal + taxAmount
-    const total = (isFlowmic && isUaeToPh) ? subtotal : (subtotal + taxAmount);
-
-    const shouldShowDeliveryOnly = isTaxMode && isPhToUae && !isFlowmic; // Don't show delivery only for flowmic
-    const displayShippingCharge = shouldShowDeliveryOnly ? 0 : shippingCharge;
-    // For tax mode showing delivery only, insurance charge should still be included in subtotal
-    const displaySubtotal = shouldShowDeliveryOnly ? (deliveryCharge + insuranceCharge) : subtotal;
-    // For flowmic UAE to PH, tax is included in subtotal (total = subtotal)
-    // For other flowmic, tax is calculated on subtotal (total = subtotal + tax)
-    // For tax mode (non-flowmic), calculate tax on delivery charge only
-    const displayTaxAmount = shouldShowDeliveryOnly 
-      ? (deliveryCharge > 0 ? (deliveryCharge * taxRateForDelivery) / 100 : 0) 
-      : taxAmount;
-    // For flowmic UAE to PH: displayTotal = displaySubtotal (VAT already included)
-    // For others: use the calculated total
-    const displayTotal = (isFlowmic && isUaeToPh) 
-      ? displaySubtotal 
-      : (shouldShowDeliveryOnly ? (deliveryCharge + insuranceCharge) + displayTaxAmount : total);
-    
-    return {
+    // Create base invoice data object (don't return yet - we need to add lineItems)
+    const invoiceData = {
       invoiceNumber,
       awbNumber,
       batchNumber: providedBatchNumber || request.batch_number || request.request_id?.batch_number || '',
@@ -2138,38 +2762,174 @@ export default function InvoiceRequestsPage() {
       } : undefined,
       
       // Debug log
-      _debugQR: qrCodeData ? 'QR data available' : 'QR data missing',
-      // Additional properties for invoice creation
-      lineItems: [
-        {
+      _debugQR: qrCodeData ? 'QR data available' : 'QR data missing'
+    };
+    
+    // Additional properties for invoice creation - lineItems MUST be created before return
+    // PH TO UAE: Different line items based on invoice type
+    let lineItems: any[] = [];
+    
+    if (isPhToUae) {
+      if (isTaxMode) {
+        // Tax Invoice: Only delivery charge (calculated with boxes) - NO shipping shown
+        if (calculatedDeliveryCharge > 0) {
+          lineItems.push({
+            description: 'Delivery Charge',
+            quantity: numberOfBoxes,
+            unitPrice: parseFloat((calculatedDeliveryCharge / numberOfBoxes).toFixed(2)),
+            total: calculatedDeliveryCharge
+          });
+        } else {
+          // Fallback: If no delivery charge, add shipping charge as minimum
+          // This should not happen in normal flow, but ensures lineItems is never empty
+          lineItems.push({
+            description: `Shipping - ${request.verification?.weight_type || 'ACTUAL'} weight`,
+            quantity: 1,
+            unitPrice: shippingCharge > 0 ? shippingCharge : 0,
+            total: shippingCharge > 0 ? shippingCharge : 0
+          });
+        }
+      } else {
+        // COD Invoice: Shipping + base delivery (no tax, no box calculation)
+        // Always include shipping charge (even if 0, to ensure lineItems is never empty)
+        lineItems.push({
           description: `Shipping - ${request.verification?.weight_type || 'ACTUAL'} weight`,
           quantity: 1,
           unitPrice: shippingCharge,
           total: shippingCharge
-        },
-        ...(pickupChargeValue > 0 ? [{
+        });
+        if (deliveryCharge > 0) {
+          lineItems.push({
+            description: 'Delivery Charge',
+            quantity: 1,
+            unitPrice: deliveryCharge, // Base amount only (user input, no box calculation)
+            total: deliveryCharge
+          });
+        }
+      }
+    } else {
+      // UAE TO PH or other routes (existing logic)
+      // Always include shipping charge (even if 0, to ensure lineItems is never empty)
+      lineItems.push({
+        description: `Shipping - ${request.verification?.weight_type || 'ACTUAL'} weight`,
+        quantity: 1,
+        unitPrice: shippingCharge,
+        total: shippingCharge
+      });
+      if (pickupChargeValue > 0) {
+        lineItems.push({
           description: 'Pickup Charge',
           quantity: 1,
           unitPrice: pickupChargeValue,
           total: pickupChargeValue
-        }] : []),
-        ...(deliveryCharge > 0 ? [{
+        });
+      }
+      if (deliveryCharge > 0) {
+        lineItems.push({
           description: 'Delivery Charge',
-          quantity: isUaeToPh ? 1 : (isPhToUae && !isTaxMode ? 1 : numberOfBoxes), // PH TO UAE Normal Invoice: 1, Tax Invoice: numberOfBoxes
-          unitPrice: isUaeToPh ? deliveryCharge : (isPhToUae && !isTaxMode ? deliveryCharge : parseFloat((deliveryCharge / numberOfBoxes).toFixed(2))), // PH TO UAE Normal Invoice: fixed 25, Tax Invoice: divides by boxes
+          quantity: isUaeToPh ? 1 : numberOfBoxes,
+          unitPrice: isUaeToPh ? deliveryCharge : parseFloat((deliveryCharge / numberOfBoxes).toFixed(2)),
           total: deliveryCharge
-        }] : []),
-        ...(insuranceCharge > 0 ? [{
+        });
+      }
+      if (insuranceCharge > 0) {
+        lineItems.push({
           description: 'Insurance Charge',
           quantity: 1,
           unitPrice: insuranceCharge,
           total: insuranceCharge
-        }] : [])
-      ],
-      baseAmount: shippingCharge, // Base shipping amount (for invoice.amount field)
-      totalAmount: shouldShowDeliveryOnly ? displayTotal : total, // Total amount with tax (for display)
+        });
+      }
+    }
+    
+    // CRITICAL: Ensure lineItems is never empty (validation requirement)
+    if (lineItems.length === 0) {
+      secureLog.warn('Line items array is empty, adding fallback shipping charge', {
+        serviceCode,
+        isPhToUae,
+        isTaxMode,
+        shippingCharge,
+        deliveryCharge,
+        calculatedDeliveryCharge
+      });
+      lineItems.push({
+        description: `Shipping - ${request.verification?.weight_type || 'ACTUAL'} weight`,
+        quantity: 1,
+        unitPrice: 0,
+        total: 0
+      });
+    }
+    
+    // Base amount calculation for invoice.amount field (sent to backend)
+    // IMPORTANT: This is the amount BEFORE tax that goes to invoice.amount
+    let baseAmount = 0;
+    if (isPhToUae) {
+      if (isTaxMode) {
+        // Tax Invoice: Base amount = delivery charge (if > 0), otherwise shipping charge
+        // Even if delivery is disabled (weight >= 15kg), we still need to charge shipping
+        baseAmount = calculatedDeliveryCharge > 0 ? calculatedDeliveryCharge : shippingCharge;
+      } else {
+        // COD Invoice: Base amount = shipping + delivery (if delivery > 0)
+        baseAmount = shippingCharge + (deliveryCharge > 0 ? deliveryCharge : 0);
+      }
+    } else {
+      baseAmount = shippingCharge; // Base shipping amount (for invoice.amount field)
+    }
+    
+    // Ensure baseAmount is never 0 (at minimum, use shipping charge)
+    if (baseAmount <= 0 && shippingCharge > 0) {
+      baseAmount = shippingCharge;
+    }
+    
+    // Final fallback: if everything is 0, set to 0.01 to prevent validation errors
+    // (This should never happen in normal flow, but prevents backend validation errors)
+    if (baseAmount <= 0) {
+      secureLog.warn('Base amount is 0 or negative, setting to 0.01 as fallback', {
+        serviceCode,
+        isPhToUae,
+        isTaxMode,
+        shippingCharge,
+        deliveryCharge,
+        calculatedDeliveryCharge
+      });
+      baseAmount = 0.01;
+    }
+    
+    // Ensure lineItems is set correctly (don't let invoiceData override it)
+    const finalInvoiceData = {
+      ...invoiceData,
+      lineItems, // Explicitly set lineItems after spread to ensure it's not overwritten
+      baseAmount,
+      totalAmount: displayTotal, // Total amount with tax (for display)
       notes: `Invoice for request ${request.request_id || request._id}`
     };
+    
+    // Final validation before returning
+    if (!finalInvoiceData.lineItems || !Array.isArray(finalInvoiceData.lineItems) || finalInvoiceData.lineItems.length === 0) {
+      secureLog.error('CRITICAL: lineItems is invalid after return object creation', {
+        serviceCode,
+        isPhToUae,
+        isTaxMode,
+        lineItemsBeforeReturn: lineItems,
+        invoiceDataKeys: Object.keys(invoiceData),
+        finalInvoiceDataKeys: Object.keys(finalInvoiceData)
+      });
+      // Force add a line item as last resort
+      finalInvoiceData.lineItems = [{
+        description: `Shipping - ${request.verification?.weight_type || 'ACTUAL'} weight`,
+        quantity: 1,
+        unitPrice: shippingCharge > 0 ? shippingCharge : 0,
+        total: shippingCharge > 0 ? shippingCharge : 0
+      }];
+    }
+    
+    secureLog.debug('Returning invoice data', {
+      serviceCode,
+      lineItemsCount: finalInvoiceData.lineItems.length,
+      hasLineItems: !!finalInvoiceData.lineItems && Array.isArray(finalInvoiceData.lineItems)
+    });
+    
+    return finalInvoiceData;
   };
 
   if (!userProfile) return null;
@@ -2216,7 +2976,16 @@ export default function InvoiceRequestsPage() {
                 onValueChange={(value) => {
                   setStatusFilter(value);
                   setCurrentPage(1); // Reset to first page when filter changes
-                  fetchInvoiceRequests(1, false); // Fetch with new filter
+                  // If a fetch is in progress, queue the filter change
+                  // Otherwise, fetch immediately with a small delay to allow any pending operations to complete
+                  if (!isFetchingRef.current) {
+                    setTimeout(() => {
+                      fetchInvoiceRequests(1, false, value); // Fetch with new filter
+                    }, 150);
+                  } else {
+                    // Queue the filter change - it will be processed after current fetch completes
+                    pendingFilterChangeRef.current = value;
+                  }
                 }}
               >
                 <SelectTrigger id="status-filter">
@@ -2514,20 +3283,20 @@ export default function InvoiceRequestsPage() {
               </div>
             )}
 
-            {/* PH TO UAE: Legacy Delivery Required checkbox (old method) */}
+            {/* PH TO UAE: Delivery Required checkbox */}
             {isPhToUaeSelected && (
               <div className="mb-4">
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={hasDelivery}
-                    onChange={(e) => handleDeliveryToggle(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <span className="text-sm font-medium text-gray-700">
-                    Delivery Required
-                  </span>
-                </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hasDelivery}
+                      onChange={(e) => handleDeliveryToggle(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">
+                      Delivery Required
+                    </span>
+                  </label>
                 {hasDelivery && (
                   <div className="mt-3 ml-6 p-3 bg-blue-50 border border-blue-200 rounded-md">
                     <Label className="block text-sm font-medium text-gray-700 mb-2">
@@ -2551,12 +3320,24 @@ export default function InvoiceRequestsPage() {
                     </p>
                   </div>
                 )}
-                <p className="text-xs text-gray-500 mt-1 ml-6">
-                  {hasDelivery 
-                    ? `Delivery charge will be calculated based on weight and number of boxes (FREE if weight > 30kg, otherwise ${deliveryBaseAmount || 20} AED + 5 AED per additional box)`
-                    : "No delivery charge will be applied"}
-                </p>
-              </div>
+                  <p className="text-xs text-gray-500 mt-1 ml-6">
+                    {hasDelivery 
+                      ? (
+                        <>
+                          <span>For Tax Invoice: Delivery = {deliveryBaseAmount || 20} AED base + 5 AED per additional box (always calculated).</span>
+                          <br />
+                          <span>For COD Invoice: Fixed {deliveryBaseAmount || 20} AED (no box calculation). {isWeight15kgOrMore && <span className="text-amber-600 font-medium">Note: Will be free (0 AED) if weight ≥ 15kg.</span>}</span>
+                        </>
+                      )
+                      : "No delivery charge will be applied"}
+                  </p>
+                  {/* Debug info - remove in production */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <p className="text-xs text-gray-400 mt-1 ml-6">
+                      Debug: Service={selectedServiceCode}, Weight={requestWeight}, Disabled={isDeliveryDisabled ? 'Yes' : 'No'}, HasRequest={!!selectedRequestForInvoice}
+                    </p>
+                  )}
+                </div>
             )}
 
             <div className="mb-4">
@@ -2650,6 +3431,7 @@ export default function InvoiceRequestsPage() {
                   setPickupCharge('');
                   setDeliveryCharge('');
                   setDeliveryBaseAmount('20'); // Reset to default
+                  setTotalKgInput(''); // Reset total kg input
                   setInsuranceOption('none');
                   setFixedInsuranceType('mobile');
                   setInsuranceManualAmount('');

@@ -49,6 +49,9 @@ interface InvoiceData {
     url: string;
     code: string;
   };
+  isUaeToPh?: boolean; // Flag to identify UAE TO PH invoices
+  isPhToUae?: boolean; // Flag to identify PH TO UAE invoices
+  serviceCode?: string; // Service code for route identification
 }
 
 interface InvoiceTemplateProps {
@@ -173,9 +176,27 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
               <tr className="bg-gray-100">
                 <td className="border border-gray-300 px-4 py-2 text-left font-bold">
                   <div>Total Amount</div>
-                  <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
+                  {/* Show "Inclusive of Tax" for all UAE TO PH invoices (both COD and Tax) */}
+                  {(() => {
+                    const isUaeToPh = data.isUaeToPh || (data.serviceCode && data.serviceCode.toUpperCase().includes('UAE_TO_PH'));
+                    return isUaeToPh ? (
+                      <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
+                    ) : null;
+                  })()}
                 </td>
-                <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
+                <td className="border border-gray-300 px-4 py-2 text-right font-bold">
+                  {(() => {
+                    const totalValue = data.charges?.total;
+                    if (!totalValue) return null;
+                    // Convert to number and check - handle both string "0" and number 0
+                    const numValue = typeof totalValue === 'string' ? parseFloat(totalValue) : Number(totalValue);
+                    // Only render if it's a valid positive number
+                    if (isNaN(numValue) || !isFinite(numValue) || numValue <= 0) {
+                      return null; // Don't render anything if total is 0, NaN, or invalid
+                    }
+                    return `${numValue.toFixed(2)} AED`;
+                  })()}
+                </td>
               </tr>
             </tbody>
           </table>

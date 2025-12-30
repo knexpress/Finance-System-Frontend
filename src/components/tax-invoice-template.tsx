@@ -50,6 +50,8 @@ interface InvoiceData {
     code: string;
   };
   isUaeToPh?: boolean;
+  isPhToUae?: boolean; // Flag to identify PH TO UAE invoices
+  serviceCode?: string; // Service code for route identification
 }
 
 interface TaxInvoiceTemplateProps {
@@ -128,7 +130,12 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
             <tr className="bg-gray-50">
               <th className="border border-gray-300 px-4 py-2 text-left font-semibold">No of Boxes</th>
               <th className="border border-gray-300 px-4 py-2 text-left font-semibold">Weight</th>
-              <th className="border border-gray-300 px-4 py-2 text-left font-semibold">Delivery Charge</th>
+              <th className="border border-gray-300 px-4 py-2 text-left font-semibold">
+                {(() => {
+                  const isUaeToPh = data.isUaeToPh || (data.serviceCode && data.serviceCode.toUpperCase().includes('UAE_TO_PH'));
+                  return isUaeToPh ? 'Rate' : 'Delivery Charge';
+                })()}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -142,7 +149,15 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
                   </div>
                 </div>
               </td>
-              <td className="border border-gray-300 px-4 py-2">{data.charges.deliveryCharge.toFixed(2)}</td>
+              <td className="border border-gray-300 px-4 py-2">
+                {(() => {
+                  const isUaeToPh = data.isUaeToPh || (data.serviceCode && data.serviceCode.toUpperCase().includes('UAE_TO_PH'));
+                  // For UAE TO PH: Show rate, for PH TO UAE: Show delivery charge
+                  return isUaeToPh 
+                    ? data.shipmentDetails.rate.toFixed(2)
+                    : data.charges.deliveryCharge.toFixed(2);
+                })()}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -173,16 +188,36 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
                 <td className="border border-gray-300 px-4 py-2 text-left">Insurance Charge</td>
                 <td className="border border-gray-300 px-4 py-2 text-right">{(data.charges.insuranceCharge ?? 0).toFixed(2)}</td>
               </tr>
-              <tr className="bg-gray-100">
-                <td className="border border-gray-300 px-4 py-2 text-left font-bold">
-                  <div>Total Amount</div>
-                  <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
-                </td>
-                <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
-              </tr>
+              {(() => {
+                const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
+                // For PH TO UAE: Show Subtotal (Delivery + Insurance) before tax
+                if (isPhToUae) {
+                  const subtotal = (data.charges.deliveryCharge || 0) + (data.charges.insuranceCharge || 0);
+                  return (
+                    <tr>
+                      <td className="border border-gray-300 px-4 py-2 text-left font-semibold">Subtotal</td>
+                      <td className="border border-gray-300 px-4 py-2 text-right font-semibold">{subtotal.toFixed(2)}</td>
+                    </tr>
+                  );
+                }
+                return null;
+              })()}
               <tr>
                 <td className="border border-gray-300 px-4 py-2 text-left">VAT ({data.charges.taxRate}%)</td>
                 <td className="border border-gray-300 px-4 py-2 text-right">{data.charges.taxAmount.toFixed(2)}</td>
+              </tr>
+              <tr className="bg-gray-100">
+                <td className="border border-gray-300 px-4 py-2 text-left font-bold">
+                  <div>Total Amount</div>
+                  {/* Show "Inclusive of Tax" for PH TO UAE invoices */}
+                  {(() => {
+                    const isPhToUae = data.isPhToUae || (data.serviceCode && data.serviceCode.toUpperCase().includes('PH_TO_UAE'));
+                    return isPhToUae ? (
+                      <div className="text-xs font-normal text-gray-500 mt-1">Inclusive of Tax</div>
+                    ) : null;
+                  })()}
+                </td>
+                <td className="border border-gray-300 px-4 py-2 text-right font-bold">{data.charges.total.toFixed(2)} AED</td>
               </tr>
             </tbody>
           </table>

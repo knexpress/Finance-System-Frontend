@@ -72,7 +72,34 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
                             <TableCell className="font-mono text-xs">{invoice.batch_number || 'N/A'}</TableCell>
                             <TableCell>{invoice.client_id?.company_name || 'Unknown'}</TableCell>
                             <TableCell>
-                                AED {invoice.total_amount ? parseFloat(invoice.total_amount.toString()).toLocaleString() : '0.00'}
+                                {(() => {
+                                    // PH TO UAE: Use appropriate total based on invoice type
+                                    const serviceCode = (invoice.service_code || '').toString().toUpperCase().replace(/[\s-]+/g, '_');
+                                    const isPhToUae = serviceCode === 'PH_TO_UAE' || serviceCode.startsWith('PH_TO_UAE_');
+                                    const isTaxInvoice = invoice.tax_rate === 5;
+                                    
+                                    let displayAmount = 0;
+                                    
+                                    if (isPhToUae) {
+                                        // PH TO UAE: Use stored totals if available
+                                        const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
+                                        const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
+                                        
+                                        if (isTaxInvoice && totalAmountTaxInvoice) {
+                                            displayAmount = totalAmountTaxInvoice;
+                                        } else if (!isTaxInvoice && totalAmountCod) {
+                                            displayAmount = totalAmountCod;
+                                        } else {
+                                            // Fallback to total_amount if stored totals not available
+                                            displayAmount = invoice.total_amount || 0;
+                                        }
+                                    } else {
+                                        // Other services: Use total_amount
+                                        displayAmount = invoice.total_amount || 0;
+                                    }
+                                    
+                                    return `AED ${displayAmount ? parseFloat(displayAmount.toString()).toFixed(2) : '0.00'}`;
+                                })()}
                             </TableCell>
                             <TableCell className="font-mono text-xs">{invoice.service_code ?? 'N/A'}</TableCell>
                             <TableCell>{invoice.weight_kg != null ? invoice.weight_kg : 'N/A'}</TableCell>
