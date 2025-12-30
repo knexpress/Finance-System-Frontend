@@ -2643,7 +2643,10 @@ export default function InvoiceRequestsPage() {
     if (isPhToUae) {
       // Calculate COD Invoice total (always, regardless of current mode)
       // COD: Shipping + Base Delivery (no tax, no box calculation)
-      totalAmountCod = shippingCharge + deliveryCharge; // Base delivery only
+      // For weight < 15kg: Use baseDeliveryAmount (delivery_base_amount) directly
+      // For weight >= 15kg: deliveryCharge is already 0 (free delivery)
+      const codDeliveryAmount = isWeight15kgOrMore ? 0 : baseDeliveryAmount;
+      totalAmountCod = shippingCharge + codDeliveryAmount; // Shipping + delivery_base_amount (or 0 if weight >= 15kg)
       
       // Calculate Tax Invoice total (always, regardless of current mode)
       // Tax: Calculated Delivery (with boxes) + Tax on Delivery
@@ -2664,7 +2667,8 @@ export default function InvoiceRequestsPage() {
         taxRateForDelivery = 0; // No tax on COD invoice
         taxAmount = 0;
         displayShippingCharge = shippingCharge; // Show shipping
-        displaySubtotal = shippingCharge + deliveryCharge; // Subtotal = shipping + base delivery
+        // Use codDeliveryAmount for consistency with totalAmountCod calculation
+        displaySubtotal = shippingCharge + codDeliveryAmount; // Subtotal = shipping + delivery_base_amount (or 0 if weight >= 15kg)
         displayTaxAmount = 0;
         displayTotal = totalAmountCod; // Use pre-calculated COD total
       }
