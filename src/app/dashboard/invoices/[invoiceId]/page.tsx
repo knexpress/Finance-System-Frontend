@@ -7,7 +7,8 @@ import TaxInvoiceTemplate from "@/components/tax-invoice-template";
 import { apiClient } from "@/lib/api-client";
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer } from 'lucide-react';
+import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Card } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -57,6 +58,8 @@ export default function InvoicePage() {
     const [error, setError] = useState<string | null>(null);
     const [qrCodeData, setQrCodeData] = useState<any>(null);
     const [showEditDialog, setShowEditDialog] = useState(false);
+    const [showCodEditDialog, setShowCodEditDialog] = useState(false);
+    const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
     const [editForm, setEditForm] = useState({
         receiver_name: '',
@@ -69,7 +72,53 @@ export default function InvoicePage() {
         due_date: '',
         notes: ''
     });
+    // Separate edit forms for PH TO UAE COD and Tax invoices
+    const [codEditForm, setCodEditForm] = useState({
+        receiver_name: '',
+        receiver_address: '',
+        receiver_phone: '',
+        amount: '', // Shipping charge for COD
+        delivery_base_amount: '', // Base delivery amount for COD
+        total_amount_cod: '', // Total amount for COD invoice
+        notes: ''
+    });
+    const [taxEditForm, setTaxEditForm] = useState({
+        receiver_name: '',
+        receiver_address: '',
+        receiver_phone: '',
+        delivery_charge: '', // Delivery charge for Tax invoice
+        tax_rate: '5', // Always 5% for PH TO UAE tax invoices
+        tax_amount: '', // Tax amount
+        total_amount_tax_invoice: '', // Total amount for Tax invoice
+        notes: ''
+    });
     const { toast } = useToast();
+
+    // Helper function to parse and round decimals (handles Decimal128, numbers, strings)
+    // Must be defined before useEffect to avoid initialization errors
+    const parseDecimal = (value: any, decimals: number = 2): number => {
+        let num = 0;
+        if (value === null || value === undefined || value === '') {
+            return 0;
+        }
+        if (typeof value === 'number') {
+            num = value;
+        } else if (typeof value === 'string') {
+            num = parseFloat(value) || 0;
+        } else if (value && typeof value === 'object') {
+            // Handle Decimal128 objects or objects with toString method
+            if (value.toString && typeof value.toString === 'function') {
+                num = parseFloat(value.toString()) || 0;
+            } else if (value.$numberDecimal) {
+                // MongoDB Decimal128 format
+                num = parseFloat(value.$numberDecimal) || 0;
+            } else {
+                num = 0;
+            }
+        }
+        // Round to specified decimal places
+        return Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
+    };
 
     useEffect(() => {
         const fetchInvoice = async () => {
@@ -101,6 +150,36 @@ export default function InvoicePage() {
                         due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
                         notes: invoiceData.notes || ''
                     });
+                    
+                    // Initialize COD and Tax edit forms for PH TO UAE invoices
+                    if (isPhToUaeService(invoiceData.service_code || invoiceData.request_id?.service_code)) {
+                        const totalAmountCod = (invoiceData as any).total_amount_cod || (invoiceData as any).totalAmountCod || 0;
+                        const totalAmountTaxInvoice = (invoiceData as any).total_amount_tax_invoice || (invoiceData as any).totalAmountTaxInvoice || 0;
+                        const deliveryBaseAmount = parseDecimal((invoiceData as any).delivery_base_amount || 0, 2);
+                        const deliveryCharge = parseDecimal(invoiceData.delivery_charge || 0, 2);
+                        const taxAmount = parseDecimal(invoiceData.tax_amount || 0, 2);
+                        
+                        setCodEditForm({
+                            receiver_name: invoiceData.receiver_name || '',
+                            receiver_address: invoiceData.receiver_address || '',
+                            receiver_phone: invoiceData.receiver_phone || '',
+                            amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
+                            delivery_base_amount: deliveryBaseAmount > 0 ? deliveryBaseAmount.toString() : '',
+                            total_amount_cod: totalAmountCod > 0 ? parseFloat(totalAmountCod.toString()).toFixed(2) : '',
+                            notes: invoiceData.notes || ''
+                        });
+                        
+                        setTaxEditForm({
+                            receiver_name: invoiceData.receiver_name || '',
+                            receiver_address: invoiceData.receiver_address || '',
+                            receiver_phone: invoiceData.receiver_phone || '',
+                            delivery_charge: deliveryCharge > 0 ? deliveryCharge.toString() : '',
+                            tax_rate: '5',
+                            tax_amount: taxAmount > 0 ? taxAmount.toString() : '',
+                            total_amount_tax_invoice: totalAmountTaxInvoice > 0 ? parseFloat(totalAmountTaxInvoice.toString()).toFixed(2) : '',
+                            notes: invoiceData.notes || ''
+                        });
+                    }
 
                     // Fetch delivery assignment with QR code
                     try {
@@ -170,31 +249,6 @@ export default function InvoicePage() {
         console.error('❌ Invoice is null or undefined');
         return null;
     }
-
-    // Helper function to parse and round decimals (handles Decimal128, numbers, strings)
-    const parseDecimal = (value: any, decimals: number = 2): number => {
-        let num = 0;
-        if (value === null || value === undefined || value === '') {
-            return 0;
-        }
-        if (typeof value === 'number') {
-            num = value;
-        } else if (typeof value === 'string') {
-            num = parseFloat(value) || 0;
-        } else if (value && typeof value === 'object') {
-            // Handle Decimal128 objects or objects with toString method
-            if (value.toString && typeof value.toString === 'function') {
-                num = parseFloat(value.toString()) || 0;
-            } else if (value.$numberDecimal) {
-                // MongoDB Decimal128 format
-                num = parseFloat(value.$numberDecimal) || 0;
-            } else {
-                num = 0;
-            }
-        }
-        // Round to specified decimal places
-        return Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
-    };
 
     // Parse amounts from API (round to 2 decimals)
     console.log('💰 Raw invoice amount:', invoice.amount, typeof invoice.amount);
@@ -296,40 +350,29 @@ export default function InvoicePage() {
     const validNumberOfBoxes = (!isNaN(parsedNumberOfBoxes) && parsedNumberOfBoxes >= 1) ? parsedNumberOfBoxes : 1;
     const numberOfBoxes = validNumberOfBoxes; // Use for shipment details display
     
-    // Calculate charges from line items (preferred source)
-    // CRITICAL: Extract shipping charge from line_items (it's the main charge)
-    let shippingChargeFromLineItems = 0;
+    // Calculate charges - ALWAYS use direct invoice fields (they reflect latest edits)
+    // Direct fields (amount, pickup_charge, delivery_charge) are updated when editing,
+    // so they should always take priority over line_items
+    shippingCharge = baseAmount; // Always use invoice.amount (baseAmount is parsed from it)
+    pickupCharge = parseDecimal(invoice.pickup_charge || 0, 2);
+    deliveryCharge = deliveryChargeFromInvoice; // Always use invoice.delivery_charge
+    
+    // Only use line_items for insurance charge if not set in direct fields
+    // (insurance is typically not directly editable, so get from line_items or request)
     if (invoice.line_items && invoice.line_items.length > 0) {
         invoice.line_items.forEach((item: any) => {
             const itemTotal = parseDecimal(item.total || item.unit_price, 2);
             const description = item.description?.toLowerCase() || '';
-            if (description.includes('shipping')) {
-                // Shipping charge from line_items (preferred source)
-                shippingChargeFromLineItems += itemTotal; // Sum all shipping items
-            } else if (description.includes('pickup')) {
-                pickupCharge += itemTotal;
-            } else if (description.includes('delivery')) {
-                deliveryCharge += itemTotal; // Sum all delivery charge line items
-            } else if (description.includes('insurance')) {
-                insuranceCharge += itemTotal; // Sum all insurance charge line items
+            // Only use line_items for insurance (other charges come from direct fields)
+            if (description.includes('insurance')) {
+                insuranceCharge += itemTotal;
             }
         });
-        
-        // Use shipping charge from line_items if found, otherwise use baseAmount
-        if (shippingChargeFromLineItems > 0) {
-            shippingCharge = parseDecimal(shippingChargeFromLineItems, 2);
-        } else {
-            // No shipping in line_items, use baseAmount as fallback
-            shippingCharge = baseAmount;
-        }
-        
-        pickupCharge = parseDecimal(pickupCharge, 2);
-        deliveryCharge = parseDecimal(deliveryCharge, 2);
         insuranceCharge = parseDecimal(insuranceCharge, 2);
-    } else {
-        // Fallback to invoice.delivery_charge if no line items
-        deliveryCharge = deliveryChargeFromInvoice;
-        // Try to get insurance charge from invoice or request
+    }
+    
+    // Get insurance charge from invoice or request (if not already set)
+    if (insuranceCharge === 0) {
         const request = invoice.request_id;
         if (request) {
             const insured = request.insured || request.booking?.insured || request.sender?.insured || false;
@@ -421,6 +464,48 @@ export default function InvoicePage() {
     const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
     const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
     const deliveryBaseAmount = parseDecimal((invoice as any).delivery_base_amount || 0, 2); // Base delivery amount for PH TO UAE
+    
+    // For PH TO UAE: Update charges based on invoice type (after deliveryBaseAmount is defined)
+    // This ensures edited values are reflected correctly in the frontend
+    if (isPhToUae) {
+        // No pickup charge for PH TO UAE
+        pickupCharge = 0;
+        // Update delivery charge based on invoice type
+        if (invoiceType === 'normal') {
+            // COD invoice: Use delivery_base_amount if available (from edit), otherwise delivery_charge
+            deliveryCharge = deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice;
+            console.log('📊 PH TO UAE COD delivery charge:', { 
+                deliveryBaseAmount, 
+                deliveryChargeFromInvoice, 
+                finalDeliveryCharge: deliveryCharge,
+                invoiceDeliveryBaseAmount: (invoice as any).delivery_base_amount
+            });
+        } else {
+            // Tax invoice: Always use delivery_charge (updated after Tax edit)
+            deliveryCharge = deliveryChargeFromInvoice;
+            console.log('📊 PH TO UAE Tax delivery charge:', { 
+                deliveryChargeFromInvoice, 
+                finalDeliveryCharge: deliveryCharge,
+                invoiceDeliveryCharge: invoice.delivery_charge
+            });
+        }
+        
+        // Debug: Log all PH TO UAE values for troubleshooting
+        console.log('📊 PH TO UAE Invoice Values:', {
+            invoiceType,
+            amount: invoice.amount,
+            baseAmount,
+            delivery_charge: invoice.delivery_charge,
+            deliveryChargeFromInvoice,
+            delivery_base_amount: (invoice as any).delivery_base_amount,
+            deliveryBaseAmount,
+            total_amount_cod: totalAmountCod,
+            total_amount_tax_invoice: totalAmountTaxInvoice,
+            tax_rate: invoice.tax_rate,
+            tax_amount: invoice.tax_amount,
+            total_amount: invoice.total_amount
+        });
+    }
     
     // Prioritize database values for tax_amount and total_amount
     // Only recalculate if database values are missing or invalid
@@ -661,50 +746,109 @@ export default function InvoicePage() {
             rate: rate
         },
         charges: {
-            shippingCharge: shippingCharge,
-            pickupCharge: pickupCharge > 0 ? pickupCharge : undefined,
-            // For PH TO UAE COD invoice when weight < 15kg: Use delivery_base_amount
-            // For other cases: Use deliveryCharge as calculated
-            deliveryCharge: (isPhToUae && taxRate === 0 && totalKg < 15 && deliveryBaseAmount > 0) 
-                ? deliveryBaseAmount 
-                : deliveryCharge,
-            insuranceCharge: insuranceCharge > 0 ? insuranceCharge : undefined,
-            // For PH TO UAE normal invoice: Subtotal should be shipping + delivery (573)
+            // For PH TO UAE COD: Always use direct invoice fields (amount, delivery_base_amount)
+            // For PH TO UAE Tax: Always use direct invoice fields (delivery_charge)
+            shippingCharge: isPhToUae && invoiceType === 'tax' ? 0 : shippingCharge, // Hide shipping in tax invoice
+            pickupCharge: isPhToUae ? undefined : (pickupCharge > 0 ? pickupCharge : undefined), // No pickup in PH TO UAE
+            // For PH TO UAE COD: Use delivery_base_amount if available, otherwise deliveryCharge
+            // For PH TO UAE Tax: Use delivery_charge directly
+            // For other invoices: Use deliveryCharge as calculated
+            deliveryCharge: (() => {
+                if (isPhToUae) {
+                    if (invoiceType === 'normal') {
+                        // COD invoice: Use delivery_base_amount if available, otherwise deliveryCharge
+                        return (deliveryBaseAmount > 0) ? deliveryBaseAmount : deliveryCharge;
+                    } else {
+                        // Tax invoice: Always use delivery_charge from invoice
+                        return deliveryChargeFromInvoice;
+                    }
+                }
+                // Other invoices: Use deliveryCharge as calculated
+                return (isPhToUae && taxRate === 0 && totalKg < 15 && deliveryBaseAmount > 0) 
+                    ? deliveryBaseAmount 
+                    : deliveryCharge;
+            })(),
+            insuranceCharge: isPhToUae ? undefined : (insuranceCharge > 0 ? insuranceCharge : undefined), // No insurance in PH TO UAE
+            // For PH TO UAE normal invoice: Subtotal should be shipping + delivery
             // For PH TO UAE tax invoice: Subtotal is delivery only
-            subtotal: (isPhToUae && invoiceType === 'tax') 
-                ? parseDecimal(deliveryCharge, 2)  // Tax invoice: delivery only
-                : parseDecimal(subtotal, 2),  // Normal invoice: shipping + delivery (573)
+            subtotal: (() => {
+                if (isPhToUae && invoiceType === 'tax') {
+                    // Tax invoice: delivery only
+                    return parseDecimal(deliveryChargeFromInvoice, 2);
+                } else if (isPhToUae && invoiceType === 'normal') {
+                    // COD invoice: shipping + delivery_base_amount
+                    const codSubtotal = shippingCharge + (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
+                    return parseDecimal(codSubtotal, 2);
+                }
+                // Other invoices: Use calculated subtotal
+                return parseDecimal(subtotal, 2);
+            })(),
             taxRate: taxRate,
             taxAmount: taxAmount,
             // For PH TO UAE: Use invoiceType to determine which total to use
-            // - Normal (COD) invoice: Use totalAmountCod (573)
-            // - Tax invoice: Use totalAmountTaxInvoice (38.85)
+            // - Normal (COD) invoice: Use totalAmountCod (from invoice object, updated after edit)
+            // - Tax invoice: Use totalAmountTaxInvoice (from invoice object, updated after edit)
             // For other invoices: Use calculated total
             total: (() => {
-                // For PH TO UAE invoices, use invoiceType to determine which total to display
+                // For PH TO UAE invoices, ALWAYS prioritize stored totals from invoice object
+                // These values are updated by the backend after editing and should be used directly
                 if (isPhToUae) {
-                    if (invoiceType === 'normal' && totalAmountCod && totalAmountCod > 0) {
-                        // Normal (COD) invoice: Use totalAmountCod
-                        const codTotal = parseDecimal(totalAmountCod, 2);
-                        console.log('✅ Using totalAmountCod for Normal (COD) invoice:', {
-                            invoiceType,
-                            totalAmountCod,
-                            codTotal
-                        });
-                        return codTotal;
-                    } else if (invoiceType === 'tax' && totalAmountTaxInvoice && totalAmountTaxInvoice > 0) {
-                        // Tax invoice: Use totalAmountTaxInvoice
-                        const taxTotal = parseDecimal(totalAmountTaxInvoice, 2);
-                        console.log('✅ Using totalAmountTaxInvoice for Tax invoice:', {
-                            invoiceType,
-                            totalAmountTaxInvoice,
-                            taxTotal
-                        });
-                        return taxTotal;
+                    if (invoiceType === 'normal') {
+                        // COD invoice: Use totalAmountCod from invoice (updated after COD edit)
+                        // First check if totalAmountCod exists in invoice object (highest priority)
+                        const invoiceTotalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
+                        if (invoiceTotalAmountCod && parseDecimal(invoiceTotalAmountCod, 2) > 0) {
+                            const codTotal = parseDecimal(invoiceTotalAmountCod, 2);
+                            console.log('✅ PH TO UAE COD: Using totalAmountCod from invoice object:', {
+                                invoiceType,
+                                invoiceTotalAmountCod,
+                                codTotal,
+                                rawInvoice: {
+                                    total_amount_cod: (invoice as any).total_amount_cod,
+                                    totalAmountCod: (invoice as any).totalAmountCod
+                                }
+                            });
+                            return codTotal;
+                        } else {
+                            // Fallback: Calculate from current charges (should match what was sent)
+                            const calculatedCod = shippingCharge + (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
+                            console.log('⚠️ PH TO UAE COD: totalAmountCod not in invoice, calculating from charges:', {
+                                shippingCharge,
+                                deliveryBaseAmount,
+                                deliveryCharge,
+                                calculatedCod
+                            });
+                            return parseDecimal(calculatedCod, 2);
+                        }
+                    } else if (invoiceType === 'tax') {
+                        // Tax invoice: Use totalAmountTaxInvoice from invoice (updated after Tax edit)
+                        // First check if totalAmountTaxInvoice exists in invoice object (highest priority)
+                        const invoiceTotalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
+                        if (invoiceTotalAmountTaxInvoice && parseDecimal(invoiceTotalAmountTaxInvoice, 2) > 0) {
+                            const taxTotal = parseDecimal(invoiceTotalAmountTaxInvoice, 2);
+                            console.log('✅ PH TO UAE Tax: Using totalAmountTaxInvoice from invoice object:', {
+                                invoiceType,
+                                invoiceTotalAmountTaxInvoice,
+                                taxTotal,
+                                rawInvoice: {
+                                    total_amount_tax_invoice: (invoice as any).total_amount_tax_invoice,
+                                    totalAmountTaxInvoice: (invoice as any).totalAmountTaxInvoice
+                                }
+                            });
+                            return taxTotal;
+                        } else {
+                            // Fallback: Calculate from delivery + tax
+                            const calculatedTax = deliveryChargeFromInvoice + (deliveryChargeFromInvoice * 5 / 100);
+                            console.log('⚠️ PH TO UAE Tax: totalAmountTaxInvoice not in invoice, calculating:', {
+                                deliveryChargeFromInvoice,
+                                calculatedTax
+                            });
+                            return parseDecimal(calculatedTax, 2);
+                        }
                     }
                 }
                 // Use calculated total for other cases
-                console.log('⚠️ Using calculated total:', {
+                console.log('⚠️ Using calculated total (non-PH TO UAE):', {
                     isPhToUae,
                     invoiceType,
                     taxRate,
@@ -838,8 +982,184 @@ export default function InvoicePage() {
         }
     };
 
+    // Download as Excel function
+    const handleDownloadExcel = () => {
+        if (!invoiceData || !invoice) {
+            toast({
+                variant: 'destructive',
+                title: 'Error',
+                description: 'Invoice data is not available for export.',
+            });
+            return;
+        }
+
+        try {
+            // Prepare Excel data
+            const excelData: any[] = [];
+
+            // Header Section
+            excelData.push(['INVOICE DETAILS']);
+            excelData.push([]);
+            excelData.push(['Invoice Number', invoiceData.invoiceNumber || 'N/A']);
+            excelData.push(['Batch Number', invoiceData.batchNumber || 'N/A']);
+            excelData.push(['AWB Number', invoiceData.awbNumber || 'N/A']);
+            excelData.push(['Date', invoiceData.date || 'N/A']);
+            excelData.push(['Invoice Type', invoiceType === 'tax' ? 'Tax Invoice' : 'Normal Invoice']);
+            excelData.push([]);
+
+            // Receiver Information
+            excelData.push(['RECEIVER INFORMATION']);
+            excelData.push([]);
+            excelData.push(['Name', invoiceData.receiverInfo?.name || 'N/A']);
+            excelData.push(['Address', invoiceData.receiverInfo?.address || 'N/A']);
+            excelData.push(['Emirate', invoiceData.receiverInfo?.emirate || 'N/A']);
+            excelData.push(['Mobile', invoiceData.receiverInfo?.mobile || 'N/A']);
+            if (invoiceData.receiverInfo?.trn) {
+                excelData.push(['TRN', invoiceData.receiverInfo.trn]);
+            }
+            excelData.push([]);
+
+            // Sender Information
+            excelData.push(['SENDER INFORMATION']);
+            excelData.push([]);
+            excelData.push(['Name', invoiceData.senderInfo?.name || 'N/A']);
+            excelData.push(['Address', invoiceData.senderInfo?.address || 'N/A']);
+            excelData.push(['Phone', invoiceData.senderInfo?.phone || 'N/A']);
+            if (invoiceData.senderInfo?.email) {
+                excelData.push(['Email', invoiceData.senderInfo.email]);
+            }
+            excelData.push([]);
+
+            // Shipment Details
+            excelData.push(['SHIPMENT DETAILS']);
+            excelData.push([]);
+            excelData.push(['Number of Boxes', invoiceData.shipmentDetails?.numberOfBoxes || 'N/A']);
+            excelData.push(['Weight (kg)', invoiceData.shipmentDetails?.weight || 'N/A']);
+            excelData.push(['Weight Type', invoiceData.shipmentDetails?.weightType || 'N/A']);
+            excelData.push(['Rate (AED/kg)', invoiceData.shipmentDetails?.rate || 'N/A']);
+            excelData.push([]);
+
+            // Charges Breakdown
+            excelData.push(['CHARGES BREAKDOWN']);
+            excelData.push([]);
+            if (invoiceData.charges?.shippingCharge !== undefined && invoiceData.charges.shippingCharge > 0) {
+                excelData.push(['Shipping Charge (AED)', invoiceData.charges.shippingCharge.toFixed(2)]);
+            }
+            if (invoiceData.charges?.pickupCharge !== undefined && invoiceData.charges.pickupCharge > 0) {
+                excelData.push(['Pickup Charge (AED)', invoiceData.charges.pickupCharge.toFixed(2)]);
+            }
+            if (invoiceData.charges?.deliveryCharge !== undefined && invoiceData.charges.deliveryCharge > 0) {
+                excelData.push(['Delivery Charge (AED)', invoiceData.charges.deliveryCharge.toFixed(2)]);
+            }
+            if (invoiceData.charges?.insuranceCharge !== undefined && invoiceData.charges.insuranceCharge > 0) {
+                excelData.push(['Insurance Charge (AED)', invoiceData.charges.insuranceCharge.toFixed(2)]);
+            }
+            excelData.push(['Subtotal (AED)', invoiceData.charges?.subtotal?.toFixed(2) || '0.00']);
+            excelData.push([]);
+
+            // Tax and Total
+            if (invoiceData.charges?.taxRate !== undefined && invoiceData.charges.taxRate > 0) {
+                excelData.push(['Tax Rate (%)', invoiceData.charges.taxRate.toFixed(2)]);
+                excelData.push(['Tax Amount (AED)', invoiceData.charges.taxAmount?.toFixed(2) || '0.00']);
+            }
+            excelData.push(['Total Amount (AED)', invoiceData.charges?.total?.toFixed(2) || '0.00']);
+            excelData.push([]);
+
+            // Additional Information
+            if (invoice.notes) {
+                excelData.push(['NOTES']);
+                excelData.push([]);
+                excelData.push([invoice.notes]);
+                excelData.push([]);
+            }
+
+            // PH TO UAE specific fields
+            if (isPhToUae) {
+                excelData.push(['PH TO UAE SPECIFIC INFORMATION']);
+                excelData.push([]);
+                if (invoiceType === 'normal') {
+                    const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
+                    const deliveryBaseAmount = (invoice as any).delivery_base_amount;
+                    if (totalAmountCod) {
+                        excelData.push(['Total Amount COD (AED)', parseDecimal(totalAmountCod, 2).toFixed(2)]);
+                    }
+                    if (deliveryBaseAmount) {
+                        excelData.push(['Delivery Base Amount (AED)', parseDecimal(deliveryBaseAmount, 2).toFixed(2)]);
+                    }
+                } else {
+                    const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
+                    if (totalAmountTaxInvoice) {
+                        excelData.push(['Total Amount Tax Invoice (AED)', parseDecimal(totalAmountTaxInvoice, 2).toFixed(2)]);
+                    }
+                }
+                excelData.push([]);
+            }
+
+            // Create workbook and worksheet
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(excelData);
+
+            // Set column widths
+            const colWidths = [
+                { wch: 30 }, // Column A
+                { wch: 40 }  // Column B
+            ];
+            ws['!cols'] = colWidths;
+
+            // Add worksheet to workbook
+            XLSX.utils.book_append_sheet(wb, ws, 'Invoice Details');
+
+            // Generate filename
+            const invoiceTypeLabel = invoiceType === 'tax' ? 'Tax-Invoice' : 'Invoice';
+            const filename = `${invoiceTypeLabel}-${invoiceData.invoiceNumber || invoiceId}.xlsx`;
+
+            // Download file
+            XLSX.writeFile(wb, filename);
+
+            toast({
+                title: 'Excel Export Successful',
+                description: `Invoice exported to ${filename}`,
+            });
+        } catch (error) {
+            console.error('Error generating Excel:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Export Failed',
+                description: 'Unable to generate Excel file. Please try again.',
+            });
+        }
+    };
+
     const handleEditChange = (field: string, value: string) => {
         setEditForm((prev) => ({ ...prev, [field]: value }));
+    };
+    
+    const handleCodEditChange = (field: string, value: string) => {
+        setCodEditForm((prev) => {
+            const updated = { ...prev, [field]: value };
+            // Auto-calculate total_amount_cod when amount or delivery_base_amount changes
+            if (field === 'amount' || field === 'delivery_base_amount') {
+                const shipping = parseFloat(updated.amount || '0');
+                const delivery = parseFloat(updated.delivery_base_amount || '0');
+                updated.total_amount_cod = (shipping + delivery).toFixed(2);
+            }
+            return updated;
+        });
+    };
+    
+    const handleTaxEditChange = (field: string, value: string) => {
+        setTaxEditForm((prev) => {
+            const updated = { ...prev, [field]: value };
+            // Auto-calculate tax_amount and total when delivery_charge changes
+            if (field === 'delivery_charge') {
+                const delivery = parseFloat(value || '0');
+                const taxRate = 5; // Always 5% for PH TO UAE tax invoices
+                const taxAmount = (delivery * taxRate) / 100;
+                updated.tax_amount = taxAmount.toFixed(2);
+                updated.total_amount_tax_invoice = (delivery + taxAmount).toFixed(2);
+            }
+            return updated;
+        });
     };
 
     const handleSaveEdit = async () => {
@@ -876,8 +1196,9 @@ export default function InvoicePage() {
             payload.total = total;
 
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
-            if (result.success && result.data) {
-                setInvoice(result.data);
+            if (result.success) {
+                // Re-fetch the invoice to ensure we have the latest data from backend
+                await refreshInvoiceAfterEdit();
                 toast({
                     title: 'Invoice updated',
                     description: 'Changes have been saved successfully.',
@@ -898,6 +1219,176 @@ export default function InvoicePage() {
             });
         } finally {
             setSavingEdit(false);
+        }
+    };
+    
+    // Save handler for PH TO UAE COD Invoice
+    const handleSaveCodEdit = async () => {
+        const invoiceIdentifier = invoice?._id || invoiceId;
+        if (!invoiceIdentifier) return;
+        setSavingEdit(true);
+        try {
+            const payload: any = {
+                receiver_name: codEditForm.receiver_name.trim(),
+                receiver_address: codEditForm.receiver_address.trim(),
+                receiver_phone: codEditForm.receiver_phone.trim(),
+                notes: codEditForm.notes?.trim() || '',
+                invoice_type: 'COD' // Mark as COD invoice edit
+            };
+
+            // COD Invoice fields
+            if (codEditForm.amount) payload.amount = parseFloat(codEditForm.amount);
+            if (codEditForm.delivery_base_amount) payload.delivery_base_amount = parseFloat(codEditForm.delivery_base_amount);
+            if (codEditForm.total_amount_cod) payload.total_amount_cod = parseFloat(codEditForm.total_amount_cod);
+            
+            // For COD invoice: tax_rate = 0, tax_amount = 0
+            payload.tax_rate = 0;
+            payload.tax_amount = 0;
+            payload.total = parseFloat(codEditForm.total_amount_cod || '0');
+            payload.subtotal = parseFloat(codEditForm.total_amount_cod || '0');
+
+            const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
+            if (result.success) {
+                await refreshInvoiceAfterEdit();
+                toast({
+                    title: 'COD Invoice updated',
+                    description: 'COD invoice changes have been saved successfully.',
+                });
+                setShowCodEditDialog(false);
+            } else {
+                toast({
+                    variant: 'destructive',
+                    title: 'Update failed',
+                    description: result.error || 'Unable to update COD invoice.',
+                });
+            }
+        } catch (err: any) {
+            toast({
+                variant: 'destructive',
+                title: 'Update failed',
+                description: err.message || 'Unable to update COD invoice.',
+            });
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+    
+    // Save handler for PH TO UAE Tax Invoice
+    const handleSaveTaxEdit = async () => {
+        const invoiceIdentifier = invoice?._id || invoiceId;
+        if (!invoiceIdentifier) return;
+        setSavingEdit(true);
+        try {
+            const payload: any = {
+                receiver_name: taxEditForm.receiver_name.trim(),
+                receiver_address: taxEditForm.receiver_address.trim(),
+                receiver_phone: taxEditForm.receiver_phone.trim(),
+                notes: taxEditForm.notes?.trim() || '',
+                invoice_type: 'TAX' // Mark as Tax invoice edit
+            };
+
+            // Tax Invoice fields
+            if (taxEditForm.delivery_charge) payload.delivery_charge = parseFloat(taxEditForm.delivery_charge);
+            if (taxEditForm.tax_amount) payload.tax_amount = parseFloat(taxEditForm.tax_amount);
+            if (taxEditForm.total_amount_tax_invoice) payload.total_amount_tax_invoice = parseFloat(taxEditForm.total_amount_tax_invoice);
+            
+            // For Tax invoice: tax_rate = 5%, shipping is hidden (0)
+            payload.tax_rate = 5;
+            payload.amount = 0; // Hide shipping in tax invoice
+            payload.total = parseFloat(taxEditForm.total_amount_tax_invoice || '0');
+            payload.subtotal = parseFloat(taxEditForm.delivery_charge || '0');
+
+            const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
+            if (result.success) {
+                await refreshInvoiceAfterEdit();
+                toast({
+                    title: 'Tax Invoice updated',
+                    description: 'Tax invoice changes have been saved successfully.',
+                });
+                setShowTaxEditDialog(false);
+            } else {
+                toast({
+                    variant: 'destructive',
+                    title: 'Update failed',
+                    description: result.error || 'Unable to update Tax invoice.',
+                });
+            }
+        } catch (err: any) {
+            toast({
+                variant: 'destructive',
+                title: 'Update failed',
+                description: err.message || 'Unable to update Tax invoice.',
+            });
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+    
+    // Helper function to refresh invoice after edit
+    const refreshInvoiceAfterEdit = async () => {
+        try {
+            const refreshResult = await apiClient.getInvoiceUnified(invoiceId);
+            if (refreshResult.success && refreshResult.data) {
+                const invoiceData = refreshResult.data as any;
+                // Debug: Log the refreshed invoice data to verify updated values
+                console.log('🔄 Refreshed invoice after edit:', {
+                    amount: invoiceData.amount,
+                    delivery_charge: invoiceData.delivery_charge,
+                    delivery_base_amount: invoiceData.delivery_base_amount,
+                    total_amount_cod: invoiceData.total_amount_cod || invoiceData.totalAmountCod,
+                    total_amount_tax_invoice: invoiceData.total_amount_tax_invoice || invoiceData.totalAmountTaxInvoice,
+                    tax_rate: invoiceData.tax_rate,
+                    tax_amount: invoiceData.tax_amount,
+                    total_amount: invoiceData.total_amount,
+                    subtotal: invoiceData.subtotal
+                });
+                setInvoice(refreshResult.data);
+                
+                // Update all edit forms with fresh data
+                setEditForm({
+                    receiver_name: invoiceData.receiver_name || '',
+                    receiver_address: invoiceData.receiver_address || '',
+                    receiver_phone: invoiceData.receiver_phone || '',
+                    amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
+                    pickup_charge: invoiceData.pickup_charge ? parseFloat(invoiceData.pickup_charge).toString() : '',
+                    delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
+                    tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
+                    due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
+                    notes: invoiceData.notes || ''
+                });
+                
+                // Update COD and Tax forms if PH TO UAE
+                if (isPhToUaeService(invoiceData.service_code || invoiceData.request_id?.service_code)) {
+                    const totalAmountCod = (invoiceData as any).total_amount_cod || (invoiceData as any).totalAmountCod || 0;
+                    const totalAmountTaxInvoice = (invoiceData as any).total_amount_tax_invoice || (invoiceData as any).totalAmountTaxInvoice || 0;
+                    const deliveryBaseAmount = parseDecimal((invoiceData as any).delivery_base_amount || 0, 2);
+                    const deliveryCharge = parseDecimal(invoiceData.delivery_charge || 0, 2);
+                    const taxAmount = parseDecimal(invoiceData.tax_amount || 0, 2);
+                    
+                    setCodEditForm({
+                        receiver_name: invoiceData.receiver_name || '',
+                        receiver_address: invoiceData.receiver_address || '',
+                        receiver_phone: invoiceData.receiver_phone || '',
+                        amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
+                        delivery_base_amount: deliveryBaseAmount > 0 ? deliveryBaseAmount.toString() : '',
+                        total_amount_cod: totalAmountCod > 0 ? parseFloat(totalAmountCod.toString()).toFixed(2) : '',
+                        notes: invoiceData.notes || ''
+                    });
+                    
+                    setTaxEditForm({
+                        receiver_name: invoiceData.receiver_name || '',
+                        receiver_address: invoiceData.receiver_address || '',
+                        receiver_phone: invoiceData.receiver_phone || '',
+                        delivery_charge: deliveryCharge > 0 ? deliveryCharge.toString() : '',
+                        tax_rate: '5',
+                        tax_amount: taxAmount > 0 ? taxAmount.toString() : '',
+                        total_amount_tax_invoice: totalAmountTaxInvoice > 0 ? parseFloat(totalAmountTaxInvoice.toString()).toFixed(2) : '',
+                        notes: invoiceData.notes || ''
+                    });
+                }
+            }
+        } catch (refreshError) {
+            console.error('Error refreshing invoice after update:', refreshError);
         }
     };
 
@@ -943,11 +1434,37 @@ export default function InvoicePage() {
                             <Printer className="h-4 w-4 mr-2" />
                             Print
                         </Button>
+                        {isPhToUae ? (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setShowCodEditDialog(true)}
+                                    className="bg-blue-50 hover:bg-blue-100"
+                                >
+                                    Edit COD Invoice
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setShowTaxEditDialog(true)}
+                                    className="bg-green-50 hover:bg-green-100"
+                                >
+                                    Edit Tax Invoice
+                                </Button>
+                            </>
+                        ) : (
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowEditDialog(true)}
+                            >
+                                Edit Invoice
+                            </Button>
+                        )}
                         <Button
                             variant="outline"
-                            onClick={() => setShowEditDialog(true)}
+                            onClick={handleDownloadExcel}
                         >
-                            Edit Invoice
+                            <FileSpreadsheet className="h-4 w-4 mr-2" />
+                            Download Excel
                         </Button>
                         <Button
                             onClick={handleDownloadPDF}
@@ -990,7 +1507,220 @@ export default function InvoicePage() {
                 )}
             </div>
 
-            <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+            {/* PH TO UAE COD Invoice Edit Dialog */}
+            {isPhToUae && (
+                <Dialog open={showCodEditDialog} onOpenChange={setShowCodEditDialog}>
+                    <DialogContent className="max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>Edit COD Invoice (PH TO UAE)</DialogTitle>
+                            <DialogDescription>
+                                Edit COD invoice details. Changes will update amount, delivery_base_amount, and total_amount_cod.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <Label>Receiver Name</Label>
+                                    <Input
+                                        value={codEditForm.receiver_name}
+                                        onChange={(e) => handleCodEditChange('receiver_name', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <Label>Receiver Phone</Label>
+                                    <Input
+                                        value={codEditForm.receiver_phone}
+                                        onChange={(e) => handleCodEditChange('receiver_phone', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <Label>Receiver Address</Label>
+                                <Textarea
+                                    value={codEditForm.receiver_address}
+                                    onChange={(e) => handleCodEditChange('receiver_address', e.target.value)}
+                                    rows={3}
+                                />
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <Label>Shipping Charge (AED) *</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={codEditForm.amount}
+                                        onChange={(e) => handleCodEditChange('amount', e.target.value)}
+                                        required
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Main shipping charge</p>
+                                </div>
+                                <div>
+                                    <Label>Base Delivery Amount (AED) *</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={codEditForm.delivery_base_amount}
+                                        onChange={(e) => handleCodEditChange('delivery_base_amount', e.target.value)}
+                                        required
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Base delivery charge</p>
+                                </div>
+                                <div>
+                                    <Label>Total Amount COD (AED) *</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={codEditForm.total_amount_cod}
+                                        onChange={(e) => handleCodEditChange('total_amount_cod', e.target.value)}
+                                        required
+                                        readOnly
+                                        className="bg-gray-100"
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Auto-calculated: Shipping + Delivery</p>
+                                </div>
+                            </div>
+                            <div>
+                                <Label>Notes</Label>
+                                <Textarea
+                                    value={codEditForm.notes}
+                                    rows={3}
+                                    onChange={(e) => handleCodEditChange('notes', e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowCodEditDialog(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={handleSaveCodEdit}
+                                disabled={savingEdit}
+                                className="bg-blue-600 hover:bg-blue-700"
+                            >
+                                {savingEdit ? 'Saving...' : 'Save COD Invoice'}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+            
+            {/* PH TO UAE Tax Invoice Edit Dialog */}
+            {isPhToUae && (
+                <Dialog open={showTaxEditDialog} onOpenChange={setShowTaxEditDialog}>
+                    <DialogContent className="max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>Edit Tax Invoice (PH TO UAE)</DialogTitle>
+                            <DialogDescription>
+                                Edit Tax invoice details. Changes will update delivery_charge, tax_amount, and total_amount_tax_invoice.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <Label>Receiver Name</Label>
+                                    <Input
+                                        value={taxEditForm.receiver_name}
+                                        onChange={(e) => handleTaxEditChange('receiver_name', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <Label>Receiver Phone</Label>
+                                    <Input
+                                        value={taxEditForm.receiver_phone}
+                                        onChange={(e) => handleTaxEditChange('receiver_phone', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <Label>Receiver Address</Label>
+                                <Textarea
+                                    value={taxEditForm.receiver_address}
+                                    onChange={(e) => handleTaxEditChange('receiver_address', e.target.value)}
+                                    rows={3}
+                                />
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <Label>Delivery Charge (AED) *</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={taxEditForm.delivery_charge}
+                                        onChange={(e) => handleTaxEditChange('delivery_charge', e.target.value)}
+                                        required
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Delivery charge (calculated with boxes)</p>
+                                </div>
+                                <div>
+                                    <Label>Tax Rate (%)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={taxEditForm.tax_rate}
+                                        readOnly
+                                        className="bg-gray-100"
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Fixed at 5% VAT</p>
+                                </div>
+                                <div>
+                                    <Label>Tax Amount (AED)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={taxEditForm.tax_amount}
+                                        readOnly
+                                        className="bg-gray-100"
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Auto-calculated: 5% of delivery</p>
+                                </div>
+                            </div>
+                            <div>
+                                <Label>Total Amount Tax Invoice (AED) *</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={taxEditForm.total_amount_tax_invoice}
+                                    onChange={(e) => handleTaxEditChange('total_amount_tax_invoice', e.target.value)}
+                                    required
+                                    readOnly
+                                    className="bg-gray-100"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">Auto-calculated: Delivery + Tax</p>
+                            </div>
+                            <div>
+                                <Label>Notes</Label>
+                                <Textarea
+                                    value={taxEditForm.notes}
+                                    rows={3}
+                                    onChange={(e) => handleTaxEditChange('notes', e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowTaxEditDialog(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={handleSaveTaxEdit}
+                                disabled={savingEdit}
+                                className="bg-green-600 hover:bg-green-700"
+                            >
+                                {savingEdit ? 'Saving...' : 'Save Tax Invoice'}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+
+            {/* Regular Invoice Edit Dialog (for non-PH TO UAE invoices) */}
+            {!isPhToUae && (
+                <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Edit Invoice</DialogTitle>
@@ -1094,6 +1824,7 @@ export default function InvoicePage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            )}
         </div>
     );
 }

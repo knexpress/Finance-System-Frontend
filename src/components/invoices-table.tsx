@@ -13,8 +13,9 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Eye, TrendingUp } from 'lucide-react';
+import { Eye, TrendingUp, FileSpreadsheet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
+import * as XLSX from 'xlsx';
 
 interface InvoicesTableProps {
     invoices: any[];
@@ -28,12 +29,200 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
     // Ensure invoices is always an array
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
 
+    // Download invoices as Excel
+    const handleDownloadExcel = (invoiceList: any[]) => {
+        if (!invoiceList || invoiceList.length === 0) {
+            toast({
+                variant: 'destructive',
+                title: 'Error',
+                description: 'No invoices available to export.',
+            });
+            return;
+        }
+
+        try {
+            // Prepare Excel data
+            const excelData: any[] = [];
+
+            // Header row
+            excelData.push([
+                'Invoice ID',
+                'AWB Number',
+                'Batch Number',
+                'Client',
+                'Receiver Name',
+                'Receiver Address',
+                'Receiver Phone',
+                'Service Code',
+                'Weight (KG)',
+                'Number of Boxes',
+                'Volume (CBM)',
+                'Shipping Charge (AED)',
+                'Pickup Charge (AED)',
+                'Delivery Charge (AED)',
+                'Insurance Charge (AED)',
+                'Subtotal (AED)',
+                'Tax Rate (%)',
+                'Tax Amount (AED)',
+                'Total Amount (AED)',
+                'Total Amount COD (AED)',
+                'Total Amount Tax Invoice (AED)',
+                'Issue Date',
+                'Status',
+                'Notes'
+            ]);
+
+            // Data rows
+            invoiceList.forEach((invoice) => {
+                // Determine service type
+                const serviceCode = (invoice.service_code || '').toString().toUpperCase().replace(/[\s-]+/g, '_');
+                const isPhToUae = serviceCode === 'PH_TO_UAE' || serviceCode.startsWith('PH_TO_UAE_');
+                const isTaxInvoice = invoice.tax_rate === 5;
+
+                // Calculate amounts
+                let displayAmount = 0;
+                const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
+                const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
+
+                if (isPhToUae) {
+                    if (isTaxInvoice && totalAmountTaxInvoice) {
+                        displayAmount = totalAmountTaxInvoice;
+                    } else if (!isTaxInvoice && totalAmountCod) {
+                        displayAmount = totalAmountCod;
+                    } else {
+                        displayAmount = invoice.total_amount || 0;
+                    }
+                } else {
+                    displayAmount = invoice.total_amount || 0;
+                }
+
+                // Parse amounts
+                const parseAmount = (value: any): number => {
+                    if (!value) return 0;
+                    if (typeof value === 'object' && value.$numberDecimal) {
+                        return parseFloat(value.$numberDecimal);
+                    }
+                    return parseFloat(value) || 0;
+                };
+
+                const shippingCharge = parseAmount(invoice.amount);
+                const pickupCharge = parseAmount(invoice.pickup_charge);
+                const deliveryCharge = parseAmount(invoice.delivery_charge);
+                const insuranceCharge = invoice.line_items?.find((item: any) => 
+                    item.description?.toLowerCase().includes('insurance')
+                )?.total || 0;
+                const subtotal = parseAmount(invoice.subtotal);
+                const taxRate = parseAmount(invoice.tax_rate);
+                const taxAmount = parseAmount(invoice.tax_amount);
+
+                // Format date
+                const issueDate = invoice.issue_date 
+                    ? new Date(invoice.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                    : 'N/A';
+
+                excelData.push([
+                    invoice.invoice_id || 'N/A',
+                    invoice.awb_number || 'N/A',
+                    invoice.batch_number || 'N/A',
+                    invoice.client_id?.company_name || 'Unknown',
+                    invoice.receiver_name || 'N/A',
+                    invoice.receiver_address || 'N/A',
+                    invoice.receiver_phone || 'N/A',
+                    invoice.service_code || 'N/A',
+                    invoice.request_id?.verification?.total_kg || invoice.request_id?.verification?.weight || 'N/A',
+                    invoice.request_id?.verification?.number_of_boxes || 'N/A',
+                    invoice.volume_cbm || invoice.request_id?.shipment?.volume || 'N/A',
+                    shippingCharge.toFixed(2),
+                    pickupCharge.toFixed(2),
+                    deliveryCharge.toFixed(2),
+                    parseAmount(insuranceCharge).toFixed(2),
+                    subtotal.toFixed(2),
+                    taxRate.toFixed(2),
+                    taxAmount.toFixed(2),
+                    displayAmount.toFixed(2),
+                    totalAmountCod ? parseAmount(totalAmountCod).toFixed(2) : '',
+                    totalAmountTaxInvoice ? parseAmount(totalAmountTaxInvoice).toFixed(2) : '',
+                    issueDate,
+                    invoice.status || 'N/A',
+                    invoice.notes || ''
+                ]);
+            });
+
+            // Create workbook and worksheet
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(excelData);
+
+            // Set column widths
+            const colWidths = [
+                { wch: 15 }, // Invoice ID
+                { wch: 15 }, // AWB
+                { wch: 12 }, // Batch
+                { wch: 20 }, // Client
+                { wch: 20 }, // Receiver Name
+                { wch: 30 }, // Receiver Address
+                { wch: 15 }, // Receiver Phone
+                { wch: 15 }, // Service Code
+                { wch: 12 }, // Weight
+                { wch: 12 }, // Boxes
+                { wch: 12 }, // Volume
+                { wch: 18 }, // Shipping Charge
+                { wch: 18 }, // Pickup Charge
+                { wch: 18 }, // Delivery Charge
+                { wch: 18 }, // Insurance Charge
+                { wch: 15 }, // Subtotal
+                { wch: 12 }, // Tax Rate
+                { wch: 15 }, // Tax Amount
+                { wch: 18 }, // Total Amount
+                { wch: 20 }, // Total Amount COD
+                { wch: 25 }, // Total Amount Tax Invoice
+                { wch: 15 }, // Issue Date
+                { wch: 15 }, // Status
+                { wch: 30 }  // Notes
+            ];
+            ws['!cols'] = colWidths;
+
+            // Add worksheet to workbook
+            XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+
+            // Generate filename with timestamp
+            const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+            const filename = `Invoices-${timestamp}.xlsx`;
+
+            // Download file
+            XLSX.writeFile(wb, filename);
+
+            toast({
+                title: 'Excel Export Successful',
+                description: `${invoiceList.length} invoice(s) exported to ${filename}`,
+            });
+        } catch (error) {
+            console.error('Error generating Excel:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Export Failed',
+                description: 'Unable to generate Excel file. Please try again.',
+            });
+        }
+    };
+
     return (
         <div className="space-y-8">
             <Card>
                 <CardHeader>
-                    <CardTitle>Invoices</CardTitle>
-                    <CardDescription>A list of all generated invoices.</CardDescription>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <CardTitle>Invoices</CardTitle>
+                            <CardDescription>A list of all generated invoices.</CardDescription>
+                        </div>
+                        <Button
+                            variant="outline"
+                            onClick={() => handleDownloadExcel(invoices)}
+                            className="ml-auto"
+                        >
+                            <FileSpreadsheet className="h-4 w-4 mr-2" />
+                            Download Excel
+                        </Button>
+                    </div>
                 </CardHeader>
                 <CardContent>
                     <div className="relative">

@@ -776,12 +776,50 @@ export default function VerificationForm({ request, onVerificationComplete, curr
       (req.request_id?.booking_id && typeof req.request_id.booking_id === 'object' && checkInsured(req.request_id.booking_id.insured)) ||
       (req.booking_id && typeof req.booking_id === 'object' && checkInsured(req.booking_id.insured));
       
+      // Calculate estimated dimensions based on chargeable weight
+      // Formula: Volume (cm³) = chargeable_weight × 5000, Cube side = ³√(Volume)
+      const calculateEstimatedDimensions = (weightKg: number): { length: number; width: number; height: number } => {
+        if (weightKg <= 0) {
+          return { length: 0, width: 0, height: 0 };
+        }
+        const volumeCm3 = weightKg * 5000; // Volume in cm³
+        const cubeSide = Math.cbrt(volumeCm3); // Cube root to get side length
+        // Round to 2 decimal places
+        const roundedSide = Math.round(cubeSide * 100) / 100;
+        return {
+          length: roundedSide,
+          width: roundedSide,
+          height: roundedSide
+        };
+      };
+
+      // Generate estimated boxes array based on chargeable weight and number of boxes
+      const numberOfBoxes = parseInt(verificationData.number_of_boxes) || 1;
+      const estimatedBoxes: any[] = [];
+      
+      if (chargeableWeight > 0) {
+        // Create boxes array with estimated dimensions
+        // If multiple boxes, divide weight per box and calculate dimensions for each
+        const weightPerBox = chargeableWeight / numberOfBoxes;
+        const dimensionsPerBox = calculateEstimatedDimensions(weightPerBox);
+        
+        for (let i = 0; i < numberOfBoxes; i++) {
+          estimatedBoxes.push({
+            length: dimensionsPerBox.length,
+            width: dimensionsPerBox.width,
+            height: dimensionsPerBox.height,
+            weight: weightPerBox,
+            classification: verificationData.shipment_classification || 'GENERAL'
+          });
+        }
+      }
+
       // Prepare update data
       const updateData: any = {
         ...verificationData,
         shipment_classification: verificationData.shipment_classification, // Use selected classification
         amount: finalAmount, // Use auto-calculated amount
-        boxes: [], // Box list is disregarded for now
+        boxes: estimatedBoxes, // Estimated dimensions based on chargeable weight
         total_vm: volumetricWeight, // Use volumetric weight input
         actual_weight: actualWeight,
         volumetric_weight: volumetricWeight,
@@ -789,7 +827,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
         weight_type: determinedWeightType, // Auto-determined weight type
         rate_bracket: rateBracket?.label || '', // Store the bracket label
         calculated_rate: calculatedRate, // Store the calculated rate
-        number_of_boxes: parseInt(verificationData.number_of_boxes) || 1,
+        number_of_boxes: numberOfBoxes,
         total_kg: parseFloat(verificationData.total_kg) || 0, // Manual total kilograms input
         weight: chargeableWeight, // Store the chargeable weight (higher of actual or volumetric)
         listed_commodities: '', // Empty for now since boxes are disregarded
