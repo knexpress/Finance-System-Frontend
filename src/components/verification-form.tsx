@@ -580,6 +580,23 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     }
   }, [route, verificationData.shipment_classification]);
 
+  // Auto-set total_kg to chargeable weight whenever chargeable weight changes
+  useEffect(() => {
+    // Always set total_kg to chargeable weight (even if 0)
+    const chargeableWeightStr = chargeableWeight > 0 ? chargeableWeight.toFixed(2) : '';
+    // Use functional update to avoid dependency on verificationData.total_kg
+    setVerificationData(prev => {
+      // Only update if the current value is different to avoid unnecessary updates
+      if (prev.total_kg !== chargeableWeightStr) {
+        return {
+          ...prev,
+          total_kg: chargeableWeightStr
+        };
+      }
+      return prev;
+    });
+  }, [chargeableWeight]);
+
 
   // Auto-calculate amount per kg based on total_kg (user input) and route
   // CRITICAL: Weight bracket is determined by total_kg, not chargeable weight
@@ -1492,10 +1509,12 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                 placeholder="0.00"
                 value={verificationData.total_kg}
                 onChange={(e) => setVerificationData({ ...verificationData, total_kg: e.target.value })}
+                readOnly
+                className="bg-gray-100 cursor-not-allowed"
                 required
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Enter the total weight in kilograms manually. This will be used by Finance for invoice generation.
+                Automatically set to chargeable weight ({chargeableWeight > 0 ? `${chargeableWeight.toFixed(2)} kg` : '0.00 kg'}). This value is used by Finance for invoice generation.
               </p>
             </div>
           </div>
