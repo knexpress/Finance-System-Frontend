@@ -61,6 +61,8 @@ export default function InvoicePage() {
     const [showCodEditDialog, setShowCodEditDialog] = useState(false);
     const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
+    // Local state for COD invoice edits (frontend-only, does not affect backend)
+    const [localCodEdits, setLocalCodEdits] = useState<any>(null);
     const [editForm, setEditForm] = useState({
         receiver_name: '',
         receiver_address: '',
@@ -78,6 +80,7 @@ export default function InvoicePage() {
         receiver_address: '',
         receiver_phone: '',
         amount: '', // Shipping charge for COD
+        pickup_charge: '', // Pickup charge for COD
         delivery_base_amount: '', // Base delivery amount for COD
         total_amount_cod: '', // Total amount for COD invoice
         notes: ''
@@ -159,11 +162,25 @@ export default function InvoicePage() {
                         const deliveryCharge = parseDecimal(invoiceData.delivery_charge || 0, 2);
                         const taxAmount = parseDecimal(invoiceData.tax_amount || 0, 2);
                         
+                        // Get pickup charge from invoice or line_items
+                        let pickupChargeValue = 0;
+                        if (invoiceData.pickup_charge) {
+                            pickupChargeValue = parseDecimal(invoiceData.pickup_charge, 2);
+                        } else if (invoiceData.line_items && invoiceData.line_items.length > 0) {
+                            invoiceData.line_items.forEach((item: any) => {
+                                const description = item.description?.toLowerCase() || '';
+                                if (description.includes('pickup')) {
+                                    pickupChargeValue += parseDecimal(item.total || item.unit_price, 2);
+                                }
+                            });
+                        }
+                        
                         setCodEditForm({
                             receiver_name: invoiceData.receiver_name || '',
                             receiver_address: invoiceData.receiver_address || '',
                             receiver_phone: invoiceData.receiver_phone || '',
                             amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
+                            pickup_charge: pickupChargeValue > 0 ? pickupChargeValue.toFixed(2) : '',
                             delivery_base_amount: deliveryBaseAmount > 0 ? deliveryBaseAmount.toString() : '',
                             total_amount_cod: totalAmountCod > 0 ? parseFloat(totalAmountCod.toString()).toFixed(2) : '',
                             notes: invoiceData.notes || ''
@@ -269,16 +286,29 @@ export default function InvoicePage() {
     // Get shipping, pickup, delivery, and insurance charges
     // Initialize from invoice fields (fallback)
     let shippingCharge = baseAmount; // Base amount is shipping only (fallback)
-    let pickupCharge = parseDecimal(invoice.pickup_charge || 0, 2);
-    let deliveryCharge = 0;
-    let insuranceCharge = 0;
     
+    // For PH TO UAE: Try pickup_charge first, then pickup_base_amount as fallback
+    // For other routes: Use pickup_charge only
     const serviceCodeRaw =
         invoice.service_code ||
         invoice.request_id?.service_code ||
         invoice.request_id?.verification?.service_code ||
         '';
     const isPhToUae = isPhToUaeService(serviceCodeRaw);
+    
+    // Read pickup charge: For PH TO UAE, also check pickup_base_amount
+    let pickupCharge = parseDecimal(invoice.pickup_charge || 0, 2);
+    if (isPhToUae && pickupCharge === 0) {
+        // Fallback to pickup_base_amount for PH TO UAE if pickup_charge is not set
+        const pickupBaseAmount = parseDecimal((invoice as any).pickup_base_amount || 0, 2);
+        if (pickupBaseAmount > 0) {
+            pickupCharge = pickupBaseAmount;
+            console.log('📦 PH TO UAE: Using pickup_base_amount as pickup charge:', pickupCharge);
+        }
+    }
+    
+    let deliveryCharge = 0;
+    let insuranceCharge = 0;
     
     // Get weight for calculations (use chargeable weight or actual weight)
     const weightForCalculation = parseDecimal(
@@ -359,16 +389,45 @@ export default function InvoicePage() {
     
     // Only use line_items for insurance charge if not set in direct fields
     // (insurance is typically not directly editable, so get from line_items or request)
+    // Also use line_items as fallback for pickup_charge if not in invoice object (for backward compatibility)
     if (invoice.line_items && invoice.line_items.length > 0) {
         invoice.line_items.forEach((item: any) => {
             const itemTotal = parseDecimal(item.total || item.unit_price, 2);
             const description = item.description?.toLowerCase() || '';
-            // Only use line_items for insurance (other charges come from direct fields)
+            // Use line_items for insurance (other charges come from direct fields)
             if (description.includes('insurance')) {
                 insuranceCharge += itemTotal;
             }
+            // Fallback: If pickup_charge is not in invoice object or is 0, read from line_items
+            // This is especially important for PH TO UAE COD invoices where pickup charge should be visible
+            // Check for various pickup charge descriptions (case-insensitive)
+            const isPickupCharge = description.includes('pickup') || 
+                                  description.includes('pick-up') ||
+                                  description.includes('pick_up');
+            if ((pickupCharge === 0 || !invoice.pickup_charge) && isPickupCharge) {
+                pickupCharge += itemTotal; // Use += in case there are multiple pickup line items
+                console.log('✅ Found pickup charge in line_items:', {
+                    description: item.description,
+                    itemTotal,
+                    accumulatedPickupCharge: pickupCharge
+                });
+            }
         });
         insuranceCharge = parseDecimal(insuranceCharge, 2);
+        pickupCharge = parseDecimal(pickupCharge, 2);
+    }
+    
+    // Debug: Log pickup charge for PH TO UAE COD invoices
+    if (isPhToUae && invoiceType === 'normal') {
+        console.log('📦 PH TO UAE COD - Pickup Charge Debug:', {
+            invoicePickupCharge: invoice.pickup_charge,
+            parsedPickupCharge: pickupCharge,
+            hasLineItems: !!invoice.line_items,
+            lineItemsCount: invoice.line_items?.length || 0,
+            pickupLineItems: invoice.line_items?.filter((item: any) => 
+                item.description?.toLowerCase().includes('pickup')
+            ) || []
+        });
     }
     
     // Get insurance charge from invoice or request (if not already set)
@@ -468,17 +527,48 @@ export default function InvoicePage() {
     // For PH TO UAE: Update charges based on invoice type (after deliveryBaseAmount is defined)
     // This ensures edited values are reflected correctly in the frontend
     if (isPhToUae) {
-        // No pickup charge for PH TO UAE
-        pickupCharge = 0;
+        // For PH TO UAE Tax invoices: No pickup charge (it should not appear in tax invoices)
+        // For PH TO UAE COD invoices: Keep pickup charge if it exists (read from database or line_items)
+        if (invoiceType === 'tax') {
+            pickupCharge = 0; // Hide pickup charge in Tax invoices
+        } else if (invoiceType === 'normal' && pickupCharge === 0) {
+            // For PH TO UAE COD: If pickup charge is still 0, try to calculate it from totalAmountCod
+            // Total COD = Shipping + Pickup + Delivery
+            // Pickup = Total COD - Shipping - Delivery
+            if (totalAmountCod && totalAmountCod > 0) {
+                const parsedTotalAmountCod = parseDecimal(totalAmountCod, 2);
+                const codDeliveryAmount = totalKg >= 15 ? 0 : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice);
+                const calculatedPickupCharge = parsedTotalAmountCod - shippingCharge - codDeliveryAmount;
+                if (calculatedPickupCharge > 0) {
+                    pickupCharge = parseDecimal(calculatedPickupCharge, 2);
+                    console.log('📦 PH TO UAE COD: Calculated pickup charge from total:', {
+                        totalAmountCod: parsedTotalAmountCod,
+                        shippingCharge,
+                        codDeliveryAmount,
+                        calculatedPickupCharge: pickupCharge
+                    });
+                }
+            }
+        }
         // Update delivery charge based on invoice type
         if (invoiceType === 'normal') {
-            // COD invoice: Use delivery_base_amount if available (from edit), otherwise delivery_charge
-            deliveryCharge = deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice;
+            // COD invoice: 
+            // - If weight >= 15kg: Show 0 (free delivery) but keep delivery_base_amount in DB
+            // - If weight < 15kg: Use delivery_base_amount if available (from edit), otherwise delivery_charge
+            // Note: delivery_base_amount stays in database even when weight >= 15kg (for record keeping)
+            if (totalKg >= 15) {
+                deliveryCharge = 0; // Display 0 for free delivery, but delivery_base_amount remains in DB
+            } else {
+                deliveryCharge = deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice;
+            }
             console.log('📊 PH TO UAE COD delivery charge:', { 
+                totalKg,
+                isWeight15kgOrMore: totalKg >= 15,
                 deliveryBaseAmount, 
                 deliveryChargeFromInvoice, 
                 finalDeliveryCharge: deliveryCharge,
-                invoiceDeliveryBaseAmount: (invoice as any).delivery_base_amount
+                invoiceDeliveryBaseAmount: (invoice as any).delivery_base_amount,
+                note: totalKg >= 15 ? 'Free delivery (weight >= 15kg), but delivery_base_amount preserved in DB' : 'Normal delivery charge'
             });
         } else {
             // Tax invoice: Always use delivery_charge (updated after Tax edit)
@@ -499,6 +589,8 @@ export default function InvoicePage() {
             deliveryChargeFromInvoice,
             delivery_base_amount: (invoice as any).delivery_base_amount,
             deliveryBaseAmount,
+            pickup_charge: invoice.pickup_charge,
+            pickupCharge,
             total_amount_cod: totalAmountCod,
             total_amount_tax_invoice: totalAmountTaxInvoice,
             tax_rate: invoice.tax_rate,
@@ -656,10 +748,17 @@ export default function InvoicePage() {
     // Get AWB number - check direct field first, then request_id
     const awbNumber = invoice.awb_number || invoice.request_id?.awb_number || invoice.request_id?.request_id || 'N/A';
     
-    // Get receiver info - use direct fields first, then fallback to request_id
-    const receiverName = invoice.receiver_name || invoice.request_id?.receiver?.name || invoice.client_id?.contact_name || invoice.client_id?.company_name || 'N/A';
-    const receiverAddress = invoice.receiver_address || invoice.request_id?.receiver?.address || 'Address not provided';
-    const receiverPhone = invoice.receiver_phone || invoice.request_id?.receiver?.phone || '+971XXXXXXXXX';
+    // Get receiver info - use local COD edits if available (frontend-only), otherwise use direct fields, then fallback to request_id
+    // For COD invoices: Apply local edits if they exist (frontend-only changes)
+    const receiverName = (isPhToUae && invoiceType === 'normal' && localCodEdits?.receiver_name) 
+        ? localCodEdits.receiver_name 
+        : (invoice.receiver_name || invoice.request_id?.receiver?.name || invoice.client_id?.contact_name || invoice.client_id?.company_name || 'N/A');
+    const receiverAddress = (isPhToUae && invoiceType === 'normal' && localCodEdits?.receiver_address) 
+        ? localCodEdits.receiver_address 
+        : (invoice.receiver_address || invoice.request_id?.receiver?.address || 'Address not provided');
+    const receiverPhone = (isPhToUae && invoiceType === 'normal' && localCodEdits?.receiver_phone) 
+        ? localCodEdits.receiver_phone 
+        : (invoice.receiver_phone || invoice.request_id?.receiver?.phone || '+971XXXXXXXXX');
     
     // Parse receiver address to extract city/emirate
     const addressParts = receiverAddress.split(',').map((p: string) => p.trim());
@@ -746,17 +845,44 @@ export default function InvoicePage() {
             rate: rate
         },
         charges: {
-            // For PH TO UAE COD: Always use direct invoice fields (amount, delivery_base_amount)
+            // For PH TO UAE COD: Use local edits if available (frontend-only), otherwise use direct invoice fields
             // For PH TO UAE Tax: Always use direct invoice fields (delivery_charge)
-            shippingCharge: isPhToUae && invoiceType === 'tax' ? 0 : shippingCharge, // Hide shipping in tax invoice
-            pickupCharge: isPhToUae ? undefined : (pickupCharge > 0 ? pickupCharge : undefined), // No pickup in PH TO UAE
+            shippingCharge: isPhToUae && invoiceType === 'tax' 
+                ? 0 
+                : (isPhToUae && invoiceType === 'normal' && localCodEdits?.amount 
+                    ? parseDecimal(localCodEdits.amount, 2) 
+                    : shippingCharge), // Use local COD edit if available, otherwise use invoice amount
+            // For PH TO UAE COD: Always show pickup charge if it exists (even if 0, to ensure visibility)
+            // For PH TO UAE Tax: Hide pickup charge (it should not appear in tax invoices)
+            // For other routes: Show pickup charge if > 0
+            pickupCharge: isPhToUae && invoiceType === 'tax' 
+                ? undefined 
+                : (isPhToUae && invoiceType === 'normal' 
+                    ? (() => {
+                        // PH TO UAE COD: Use local edit if available, otherwise use pickupCharge from invoice
+                        if (localCodEdits?.pickup_charge !== undefined) {
+                            const localPickup = parseDecimal(localCodEdits.pickup_charge, 2);
+                            return localPickup > 0 ? localPickup : undefined;
+                        }
+                        return pickupCharge > 0 ? pickupCharge : undefined;
+                    })()
+                    : (pickupCharge > 0 ? pickupCharge : undefined)), // Other routes: Show if > 0
             // For PH TO UAE COD: Use delivery_base_amount if available, otherwise deliveryCharge
             // For PH TO UAE Tax: Use delivery_charge directly
             // For other invoices: Use deliveryCharge as calculated
             deliveryCharge: (() => {
                 if (isPhToUae) {
                     if (invoiceType === 'normal') {
-                        // COD invoice: Use delivery_base_amount if available, otherwise deliveryCharge
+                        // COD invoice: Use local edits if available (frontend-only)
+                        // - If weight >= 15kg: Show 0 (free delivery) but keep delivery_base_amount in DB
+                        // - If weight < 15kg: Use local edit or delivery_base_amount if available, otherwise deliveryCharge
+                        if (totalKg >= 15) {
+                            return 0; // Show 0 for free delivery, but delivery_base_amount stays in DB
+                        }
+                        // Use local COD edit if available, otherwise use delivery_base_amount
+                        if (localCodEdits?.delivery_base_amount !== undefined) {
+                            return parseDecimal(localCodEdits.delivery_base_amount, 2);
+                        }
                         return (deliveryBaseAmount > 0) ? deliveryBaseAmount : deliveryCharge;
                     } else {
                         // Tax invoice: Always use delivery_charge from invoice
@@ -776,8 +902,19 @@ export default function InvoicePage() {
                     // Tax invoice: delivery only
                     return parseDecimal(deliveryChargeFromInvoice, 2);
                 } else if (isPhToUae && invoiceType === 'normal') {
-                    // COD invoice: shipping + delivery_base_amount
-                    const codSubtotal = shippingCharge + (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
+                    // COD invoice: Use local edits if available (frontend-only)
+                    // shipping + pickup + delivery (0 if weight >= 15kg, otherwise delivery_base_amount)
+                    // Note: delivery_base_amount stays in DB even when weight >= 15kg, but we show 0 in invoice
+                    const localShipping = localCodEdits?.amount ? parseDecimal(localCodEdits.amount, 2) : shippingCharge;
+                    const localPickup = localCodEdits?.pickup_charge !== undefined 
+                        ? parseDecimal(localCodEdits.pickup_charge, 2) 
+                        : pickupCharge;
+                    const codDeliveryAmount = totalKg >= 15 
+                        ? 0 
+                        : (localCodEdits?.delivery_base_amount !== undefined 
+                            ? parseDecimal(localCodEdits.delivery_base_amount, 2)
+                            : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge));
+                    const codSubtotal = localShipping + localPickup + codDeliveryAmount;
                     return parseDecimal(codSubtotal, 2);
                 }
                 // Other invoices: Use calculated subtotal
@@ -794,32 +931,32 @@ export default function InvoicePage() {
                 // These values are updated by the backend after editing and should be used directly
                 if (isPhToUae) {
                     if (invoiceType === 'normal') {
-                        // COD invoice: Use totalAmountCod from invoice (updated after COD edit)
-                        // First check if totalAmountCod exists in invoice object (highest priority)
-                        const invoiceTotalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
-                        if (invoiceTotalAmountCod && parseDecimal(invoiceTotalAmountCod, 2) > 0) {
-                            const codTotal = parseDecimal(invoiceTotalAmountCod, 2);
-                            console.log('✅ PH TO UAE COD: Using totalAmountCod from invoice object:', {
-                                invoiceType,
-                                invoiceTotalAmountCod,
-                                codTotal,
-                                rawInvoice: {
-                                    total_amount_cod: (invoice as any).total_amount_cod,
-                                    totalAmountCod: (invoice as any).totalAmountCod
-                                }
-                            });
-                            return codTotal;
-                        } else {
-                            // Fallback: Calculate from current charges (should match what was sent)
-                            const calculatedCod = shippingCharge + (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
-                            console.log('⚠️ PH TO UAE COD: totalAmountCod not in invoice, calculating from charges:', {
-                                shippingCharge,
-                                deliveryBaseAmount,
-                                deliveryCharge,
-                                calculatedCod
-                            });
-                            return parseDecimal(calculatedCod, 2);
-                        }
+                        // COD invoice: Always calculate from displayed charges (shipping + pickup + delivery)
+                        // This ensures the total matches what's shown in the charges table
+                        // If weight >= 15kg: delivery is 0 (free delivery), but delivery_base_amount stays in DB
+                        const localShipping = localCodEdits?.amount ? parseDecimal(localCodEdits.amount, 2) : shippingCharge;
+                        const localPickup = localCodEdits?.pickup_charge !== undefined 
+                            ? parseDecimal(localCodEdits.pickup_charge, 2) 
+                            : pickupCharge;
+                        const codDeliveryAmount = totalKg >= 15 
+                            ? 0 
+                            : (localCodEdits?.delivery_base_amount !== undefined 
+                                ? parseDecimal(localCodEdits.delivery_base_amount, 2)
+                                : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge));
+                        const calculatedCod = localShipping + localPickup + codDeliveryAmount;
+                        console.log('✅ PH TO UAE COD: Calculating total from displayed charges:', {
+                            totalKg,
+                            isWeight15kgOrMore: totalKg >= 15,
+                            localShipping,
+                            shippingCharge,
+                            localPickup,
+                            pickupCharge,
+                            deliveryBaseAmount,
+                            deliveryCharge,
+                            codDeliveryAmount,
+                            calculatedCod
+                        });
+                        return parseDecimal(calculatedCod, 2);
                     } else if (invoiceType === 'tax') {
                         // Tax invoice: Use totalAmountTaxInvoice from invoice (updated after Tax edit)
                         // First check if totalAmountTaxInvoice exists in invoice object (highest priority)
@@ -1137,11 +1274,12 @@ export default function InvoicePage() {
     const handleCodEditChange = (field: string, value: string) => {
         setCodEditForm((prev) => {
             const updated = { ...prev, [field]: value };
-            // Auto-calculate total_amount_cod when amount or delivery_base_amount changes
-            if (field === 'amount' || field === 'delivery_base_amount') {
+            // Auto-calculate total_amount_cod when amount, pickup_charge, or delivery_base_amount changes
+            if (field === 'amount' || field === 'pickup_charge' || field === 'delivery_base_amount') {
                 const shipping = parseFloat(updated.amount || '0');
+                const pickup = parseFloat(updated.pickup_charge || '0');
                 const delivery = parseFloat(updated.delivery_base_amount || '0');
-                updated.total_amount_cod = (shipping + delivery).toFixed(2);
+                updated.total_amount_cod = (shipping + pickup + delivery).toFixed(2);
             }
             return updated;
         });
@@ -1223,50 +1361,34 @@ export default function InvoicePage() {
     };
     
     // Save handler for PH TO UAE COD Invoice
+    // IMPORTANT: COD invoice edits are frontend-only and do NOT affect the backend
     const handleSaveCodEdit = async () => {
-        const invoiceIdentifier = invoice?._id || invoiceId;
-        if (!invoiceIdentifier) return;
         setSavingEdit(true);
         try {
-            const payload: any = {
+            // Save COD edits to local state only (frontend-only, no backend update)
+            const localEdits = {
                 receiver_name: codEditForm.receiver_name.trim(),
                 receiver_address: codEditForm.receiver_address.trim(),
                 receiver_phone: codEditForm.receiver_phone.trim(),
                 notes: codEditForm.notes?.trim() || '',
-                invoice_type: 'COD' // Mark as COD invoice edit
+                amount: codEditForm.amount ? parseFloat(codEditForm.amount) : undefined,
+                pickup_charge: codEditForm.pickup_charge ? parseFloat(codEditForm.pickup_charge) : undefined,
+                delivery_base_amount: codEditForm.delivery_base_amount ? parseFloat(codEditForm.delivery_base_amount) : undefined,
+                total_amount_cod: codEditForm.total_amount_cod ? parseFloat(codEditForm.total_amount_cod) : undefined,
             };
-
-            // COD Invoice fields
-            if (codEditForm.amount) payload.amount = parseFloat(codEditForm.amount);
-            if (codEditForm.delivery_base_amount) payload.delivery_base_amount = parseFloat(codEditForm.delivery_base_amount);
-            if (codEditForm.total_amount_cod) payload.total_amount_cod = parseFloat(codEditForm.total_amount_cod);
             
-            // For COD invoice: tax_rate = 0, tax_amount = 0
-            payload.tax_rate = 0;
-            payload.tax_amount = 0;
-            payload.total = parseFloat(codEditForm.total_amount_cod || '0');
-            payload.subtotal = parseFloat(codEditForm.total_amount_cod || '0');
-
-            const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
-            if (result.success) {
-                await refreshInvoiceAfterEdit();
-                toast({
-                    title: 'COD Invoice updated',
-                    description: 'COD invoice changes have been saved successfully.',
-                });
-                setShowCodEditDialog(false);
-            } else {
-                toast({
-                    variant: 'destructive',
-                    title: 'Update failed',
-                    description: result.error || 'Unable to update COD invoice.',
-                });
-            }
+            setLocalCodEdits(localEdits);
+            
+            toast({
+                title: 'COD Invoice updated (Frontend Only)',
+                description: 'COD invoice changes are saved locally and will only affect the display. Backend remains unchanged.',
+            });
+            setShowCodEditDialog(false);
         } catch (err: any) {
             toast({
                 variant: 'destructive',
                 title: 'Update failed',
-                description: err.message || 'Unable to update COD invoice.',
+                description: err.message || 'Unable to save COD invoice changes.',
             });
         } finally {
             setSavingEdit(false);
@@ -1287,16 +1409,21 @@ export default function InvoicePage() {
                 invoice_type: 'TAX' // Mark as Tax invoice edit
             };
 
-            // Tax Invoice fields
+            // Tax Invoice fields ONLY - do NOT update COD invoice fields
             if (taxEditForm.delivery_charge) payload.delivery_charge = parseFloat(taxEditForm.delivery_charge);
             if (taxEditForm.tax_amount) payload.tax_amount = parseFloat(taxEditForm.tax_amount);
             if (taxEditForm.total_amount_tax_invoice) payload.total_amount_tax_invoice = parseFloat(taxEditForm.total_amount_tax_invoice);
             
             // For Tax invoice: tax_rate = 5%, shipping is hidden (0)
             payload.tax_rate = 5;
-            payload.amount = 0; // Hide shipping in tax invoice
+            payload.amount = 0; // Hide shipping in tax invoice (this is for Tax invoice display only)
             payload.total = parseFloat(taxEditForm.total_amount_tax_invoice || '0');
             payload.subtotal = parseFloat(taxEditForm.delivery_charge || '0');
+            
+            // IMPORTANT: Do NOT update COD invoice fields (amount, delivery_base_amount, total_amount_cod)
+            // These should remain unchanged when editing Tax invoice
+            // Note: We set amount=0 for Tax invoice display, but the original amount should be preserved
+            // in the backend for COD invoice calculations
 
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
             if (result.success) {
@@ -1365,11 +1492,25 @@ export default function InvoicePage() {
                     const deliveryCharge = parseDecimal(invoiceData.delivery_charge || 0, 2);
                     const taxAmount = parseDecimal(invoiceData.tax_amount || 0, 2);
                     
+                    // Get pickup charge from invoice or line_items
+                    let pickupChargeValueForForm = 0;
+                    if (invoiceData.pickup_charge) {
+                        pickupChargeValueForForm = parseDecimal(invoiceData.pickup_charge, 2);
+                    } else if (invoiceData.line_items && invoiceData.line_items.length > 0) {
+                        invoiceData.line_items.forEach((item: any) => {
+                            const description = item.description?.toLowerCase() || '';
+                            if (description.includes('pickup')) {
+                                pickupChargeValueForForm += parseDecimal(item.total || item.unit_price, 2);
+                            }
+                        });
+                    }
+                    
                     setCodEditForm({
                         receiver_name: invoiceData.receiver_name || '',
                         receiver_address: invoiceData.receiver_address || '',
                         receiver_phone: invoiceData.receiver_phone || '',
                         amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
+                        pickup_charge: pickupChargeValueForForm > 0 ? pickupChargeValueForForm.toFixed(2) : '',
                         delivery_base_amount: deliveryBaseAmount > 0 ? deliveryBaseAmount.toString() : '',
                         total_amount_cod: totalAmountCod > 0 ? parseFloat(totalAmountCod.toString()).toFixed(2) : '',
                         notes: invoiceData.notes || ''
@@ -1542,7 +1683,7 @@ export default function InvoicePage() {
                                     rows={3}
                                 />
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <Label>Shipping Charge (AED) *</Label>
                                     <Input
@@ -1554,6 +1695,18 @@ export default function InvoicePage() {
                                     />
                                     <p className="text-xs text-muted-foreground mt-1">Main shipping charge</p>
                                 </div>
+                                <div>
+                                    <Label>Pickup Charge (AED)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={codEditForm.pickup_charge}
+                                        onChange={(e) => handleCodEditChange('pickup_charge', e.target.value)}
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Pickup charge (optional)</p>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <Label>Base Delivery Amount (AED) *</Label>
                                     <Input
@@ -1576,7 +1729,7 @@ export default function InvoicePage() {
                                         readOnly
                                         className="bg-gray-100"
                                     />
-                                    <p className="text-xs text-muted-foreground mt-1">Auto-calculated: Shipping + Delivery</p>
+                                    <p className="text-xs text-muted-foreground mt-1">Auto-calculated: Shipping + Pickup + Delivery</p>
                                 </div>
                             </div>
                             <div>

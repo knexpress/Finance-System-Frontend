@@ -2376,6 +2376,9 @@ export default function InvoiceRequestsPage() {
         has_delivery: hasDeliveryFlag, // REQUIRED - Boolean indicating if delivery is enabled
         delivery_base_amount: deliveryBaseAmountValue, // REQUIRED if has_delivery = true for PH_TO_UAE
         pickup_base_amount: pickupBaseAmountValue, // REQUIRED if sender_delivery_option = "pickup" for PH_TO_UAE (pickup in Philippines)
+        // Save pickup_charge to invoice object for both UAE TO PH and PH TO UAE
+        // For PH TO UAE: Only save if > 0 (will only appear in COD invoice, not Tax invoice)
+        pickup_charge: pickupChargeValue > 0 ? pickupChargeValue : undefined,
         customer_trn: customerTRN || undefined,
         batch_number: batchNumber || undefined, // REQUIRED
         notes: invoiceData.notes,
@@ -2894,20 +2897,20 @@ export default function InvoiceRequestsPage() {
     
     if (isPhToUae) {
       // Calculate COD Invoice total (always, regardless of current mode)
-      // COD: Shipping + Base Delivery (no tax, no box calculation)
+      // COD: Shipping + Pickup + Base Delivery (no tax, no box calculation)
       // For weight < 15kg: Use baseDeliveryAmount (delivery_base_amount) directly
       // For weight >= 15kg: deliveryCharge is already 0 (free delivery)
       const codDeliveryAmount = isWeight15kgOrMore ? 0 : baseDeliveryAmount;
-      totalAmountCod = shippingCharge + codDeliveryAmount; // Shipping + delivery_base_amount (or 0 if weight >= 15kg)
+      totalAmountCod = shippingCharge + pickupChargeValue + codDeliveryAmount; // Shipping + pickup + delivery_base_amount (or 0 if weight >= 15kg)
       
       // Calculate Tax Invoice total (always, regardless of current mode)
-      // Tax: Calculated Delivery (with boxes) + Tax on Delivery
+      // Tax: Calculated Delivery (with boxes) + Tax on Delivery (NO pickup charge)
       const taxOnDelivery = calculatedDeliveryCharge > 0 ? (calculatedDeliveryCharge * 5) / 100 : 0;
       totalAmountTaxInvoice = calculatedDeliveryCharge + taxOnDelivery;
       
       // PH TO UAE specific logic for current display mode
       if (isTaxMode) {
-        // Tax Invoice: Show only delivery (calculated) + tax on delivery (NO shipping shown)
+        // Tax Invoice: Show only delivery (calculated) + tax on delivery (NO shipping shown, NO pickup shown)
         taxRateForDelivery = 5; // 5% VAT on delivery only
         taxAmount = calculatedDeliveryCharge > 0 ? (calculatedDeliveryCharge * taxRateForDelivery) / 100 : 0;
         displayShippingCharge = 0; // Hide shipping in tax invoice
@@ -2915,12 +2918,12 @@ export default function InvoiceRequestsPage() {
         displayTaxAmount = taxAmount;
         displayTotal = totalAmountTaxInvoice; // Use pre-calculated Tax Invoice total
       } else {
-        // COD Invoice: Show shipping + base delivery (NO tax)
+        // COD Invoice: Show shipping + pickup + base delivery (NO tax)
         taxRateForDelivery = 0; // No tax on COD invoice
         taxAmount = 0;
         displayShippingCharge = shippingCharge; // Show shipping
         // Use codDeliveryAmount for consistency with totalAmountCod calculation
-        displaySubtotal = shippingCharge + codDeliveryAmount; // Subtotal = shipping + delivery_base_amount (or 0 if weight >= 15kg)
+        displaySubtotal = shippingCharge + pickupChargeValue + codDeliveryAmount; // Subtotal = shipping + pickup + delivery_base_amount (or 0 if weight >= 15kg)
         displayTaxAmount = 0;
         displayTotal = totalAmountCod; // Use pre-calculated COD total
       }
@@ -3046,7 +3049,7 @@ export default function InvoiceRequestsPage() {
           });
         }
       } else {
-        // COD Invoice: Shipping + base delivery (no tax, no box calculation)
+        // COD Invoice: Shipping + pickup + base delivery (no tax, no box calculation)
         // Always include shipping charge (even if 0, to ensure lineItems is never empty)
         lineItems.push({
           description: `Shipping - ${request.verification?.weight_type || 'ACTUAL'} weight`,
@@ -3054,6 +3057,15 @@ export default function InvoiceRequestsPage() {
           unitPrice: shippingCharge,
           total: shippingCharge
         });
+        // Add pickup charge if provided (for PH TO UAE, pickup is in Philippines)
+        if (pickupChargeValue > 0) {
+          lineItems.push({
+            description: 'Pickup Charge',
+            quantity: 1,
+            unitPrice: pickupChargeValue,
+            total: pickupChargeValue
+          });
+        }
         if (deliveryCharge > 0) {
           lineItems.push({
             description: 'Delivery Charge',
