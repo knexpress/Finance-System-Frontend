@@ -773,6 +773,19 @@ export default function InvoicePage() {
             });
           }
         }
+      } else if (isUaeToPh && !isFlomicOrPersonal) {
+        // For UAE to PH commercial shipments: Always use subtotal (includes insurance) instead of database total
+        // This ensures insurance charge is included in the total
+        total = subtotal;
+        console.log('✅ UAE TO PH Commercial: Using subtotal (includes insurance) instead of database total:', {
+          databaseTotal: invoice.total_amount,
+          subtotal,
+          insuranceCharge,
+          shippingCharge,
+          pickupCharge,
+          deliveryCharge,
+          newTotal: total
+        });
       }
       console.log('✅ Using database tax/total values:', {
         taxRate,
@@ -782,7 +795,8 @@ export default function InvoicePage() {
         totalAmountTaxInvoice,
         shippingCharge,
         deliveryCharge,
-        subtotal
+        subtotal,
+        insuranceCharge
       });
     }
 
