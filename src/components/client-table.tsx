@@ -207,7 +207,6 @@ export default function ClientTable({ clients, onRefresh }: ClientTableProps) {
                 <Table>
                     <TableHeader>
                     <TableRow>
-                        <TableHead>Company Name</TableHead>
                         <TableHead>Contact Person</TableHead>
                         <TableHead>Email</TableHead>
                         <TableHead>Phone</TableHead>
@@ -217,7 +216,6 @@ export default function ClientTable({ clients, onRefresh }: ClientTableProps) {
                     <TableBody>
                     {clients.map((client) => (
                         <TableRow key={client.id}>
-                        <TableCell className="font-medium">{client.name}</TableCell>
                         <TableCell>{client.contactPerson}</TableCell>
                         <TableCell className="text-muted-foreground">{client.email}</TableCell>
                         <TableCell className="text-muted-foreground">{client.phone}</TableCell>

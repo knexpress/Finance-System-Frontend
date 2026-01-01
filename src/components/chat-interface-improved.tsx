@@ -122,12 +122,11 @@ export default function ChatInterface() {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<{ [roomId: string]: number }>({});
   const [employeeId, setEmployeeId] = useState<string | null>(null);
-  const [showUserList, setShowUserList] = useState(true); // Always show users by default
+  const [showUserList, setShowUserList] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ChatMessage[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -235,21 +234,14 @@ export default function ChatInterface() {
     const connectWebSocket = async () => {
       try {
         await chatWebSocket.connect();
-        // Check if actually connected (not just resolved)
-        if (chatWebSocket.isConnected()) {
-          setWsConnected(true);
-          secureLog.debug('WebSocket connected');
-        } else {
-          setWsConnected(false);
-          // Silently fall back to polling - don't show errors
-        }
+        setWsConnected(true);
+        secureLog.debug('WebSocket connected');
       } catch (error) {
-        // Silently handle connection failures - server may not be available
+        secureLog.error('Failed to connect WebSocket', error);
         setWsConnected(false);
       }
     };
 
-    // Attempt connection, but don't block if it fails
     connectWebSocket();
 
     // Subscribe to WebSocket messages
@@ -339,41 +331,30 @@ export default function ChatInterface() {
     }
   }, [selectedRoom, wsConnected]);
 
-  // Fetch available users - optimized for speed
+  // Fetch available users with retry
   useEffect(() => {
     const fetchAvailableUsers = async () => {
       if (!userProfile?._id) return;
       
       try {
         setLoadingUsers(true);
-        
-        // Direct API call with timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-        
-        const response = await apiClient.getAvailableUsers(userProfile._id);
-        clearTimeout(timeoutId);
-        
+        const response = await retryOperation(
+          () => apiClient.getAvailableUsers(userProfile._id),
+          'Fetch available users'
+        );
         if (response?.success && response.data) {
           const usersData = Array.isArray(response.data) ? response.data : [];
           setAvailableUsers(usersData);
-          secureLog.debug('Available users loaded', { count: usersData.length });
-        } else {
-          secureLog.debug('Failed to fetch available users', response?.error);
-          setAvailableUsers([]);
         }
-      } catch (error: any) {
-        if (error.name !== 'AbortError') {
-          secureLog.error('Error fetching available users', error);
-        }
-        setAvailableUsers([]);
+      } catch (error) {
+        secureLog.error('Error fetching available users', error);
       } finally {
         setLoadingUsers(false);
       }
     };
 
     fetchAvailableUsers();
-  }, [userProfile]);
+  }, [userProfile, retryOperation]);
 
   // Fetch chat rooms with retry
   useEffect(() => {
@@ -383,86 +364,53 @@ export default function ChatInterface() {
       try {
         setLoading(true);
         const departmentId = department?._id;
-        
-        // Try direct API call first (faster, no retry overhead)
-        const response = await apiClient.getChatRooms(userProfile._id, departmentId);
-        
+        const response = await retryOperation(
+          () => apiClient.getChatRooms(userProfile._id, departmentId),
+          'Fetch chat rooms'
+        );
         if (response?.success && response.data) {
           const roomsData = Array.isArray(response.data) ? response.data : [];
           setRooms(roomsData);
-          secureLog.debug('Chat rooms loaded', { count: roomsData.length });
           if (roomsData.length > 0 && !selectedRoom) {
             setSelectedRoom(roomsData[0]);
             setShowUserList(false);
           }
-        } else {
-          secureLog.debug('Failed to fetch chat rooms', response?.error);
-          setRooms([]);
         }
       } catch (error) {
         secureLog.error('Error fetching chat rooms', error);
-        setRooms([]);
       } finally {
         setLoading(false);
       }
     };
 
     fetchRooms();
-  }, [userProfile, department]);
+  }, [userProfile, department, retryOperation]);
 
-  // Fetch messages for selected room - optimized for instant opening
+  // Fetch messages for selected room with retry
   useEffect(() => {
-    if (!selectedRoom || !employeeId) {
-      setMessages([]); // Clear messages when no room selected
-      setLoadingMessages(false);
-      return;
-    }
-
-    // Clear messages immediately for instant UI update
-    setMessages([]);
-    setLoadingMessages(true);
+    if (!selectedRoom || !employeeId) return;
 
     const fetchMessages = async () => {
       try {
-        // Direct API call - no retry for faster initial load
-        const response = await apiClient.getChatMessages(selectedRoom._id, 50);
+        const response = await retryOperation(
+          () => apiClient.getChatMessages(selectedRoom._id, 50),
+          'Fetch messages'
+        );
         if (response?.success && response.data) {
           const messagesData = Array.isArray(response.data) ? response.data : [];
           setMessages(messagesData);
-          // Mark as read in background (don't wait for it)
-          apiClient.markRoomAsRead(selectedRoom._id, employeeId).catch(() => {
-            // Silently handle errors
-          });
-          // Scroll to bottom after messages load
+          await apiClient.markRoomAsRead(selectedRoom._id, employeeId);
           setTimeout(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }, 50);
+          }, 100);
         }
       } catch (error) {
         secureLog.error('Error fetching messages', error);
-        setMessages([]); // Set empty array on error
-      } finally {
-        setLoadingMessages(false);
       }
     };
 
-    // Fetch messages immediately
     fetchMessages();
-
-    // Poll for new messages if WebSocket is not connected (fallback)
-    let pollingInterval: NodeJS.Timeout | null = null;
-    if (!wsConnected) {
-      pollingInterval = setInterval(() => {
-        fetchMessages();
-      }, 5000); // Poll every 5 seconds when WebSocket is unavailable
-    }
-
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-      }
-    };
-  }, [selectedRoom, employeeId, wsConnected]);
+  }, [selectedRoom, employeeId, retryOperation]);
 
   // Fetch unread counts
   useEffect(() => {
@@ -626,74 +574,26 @@ export default function ChatInterface() {
   const handleInitiateChat = async (user: AvailableUser) => {
     if (!userProfile?._id || !employeeId) return;
     
-    // Check if room already exists first (instant)
-    const existingRoom = rooms.find(room => {
-      if (room.room_type === 'direct' && room.user_ids) {
-        return room.user_ids.some((u: any) => u._id === user._id);
-      }
-      return false;
-    });
-    
-    if (existingRoom) {
-      // Room already exists, just select it (instant - no API call)
-      setSelectedRoom(existingRoom);
-      setShowSidebar(false);
-      return;
-    }
-    
-    // Create new room - show optimistic UI immediately
-    // Create a temporary room object for instant UI update
-    const tempRoom: ChatRoom = {
-      _id: `temp-${Date.now()}`,
-      name: user.full_name,
-      room_type: 'direct',
-      user_ids: [
-        { _id: userProfile._id, full_name: userProfile.full_name || '', email: userProfile.email || '' },
-        { _id: user._id, full_name: user.full_name, email: user.email }
-      ],
-      is_active: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    // Set room immediately for instant UI
-    setSelectedRoom(tempRoom);
-    setShowSidebar(false);
-    setLoading(true);
-    
-    // Create room in background
     try {
-      const response = await apiClient.createDirectChatRoom(userProfile._id, user._id);
+      setLoading(true);
+      const response = await retryOperation(
+        () => apiClient.createDirectChatRoom(userProfile._id, user._id),
+        'Create chat room'
+      );
       
       if (response?.success && response.data) {
         const room = response.data as any;
-        // Replace temp room with real room
         setRooms(prev => {
           const exists = prev.find(r => r._id === room._id);
-          if (exists) {
-            setSelectedRoom(exists);
-            return prev;
-          }
+          if (exists) return prev;
           return [room, ...prev];
         });
         setSelectedRoom(room);
-      } else {
-        // If creation failed, go back to user list
-        setSelectedRoom(null);
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: 'Failed to start chat. Please try again.',
-        });
+        setShowUserList(false);
+        setShowSidebar(false);
       }
     } catch (error) {
       secureLog.error('Error initiating chat', error);
-      setSelectedRoom(null);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to start chat. Please try again.',
-      });
     } finally {
       setLoading(false);
     }
@@ -803,51 +703,39 @@ export default function ChatInterface() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
-              Available Employees
+              {showUserList ? 'Available Users' : 'Conversations'}
             </CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowUserList(!showUserList)}
+            >
+              {showUserList ? 'Conversations' : 'New Chat'}
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
           <ScrollArea className="h-[calc(100vh-12rem)]">
-            {/* Always show available employees */}
-            <div className="space-y-1 p-2">
-              {loadingUsers ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : availableUsers.length === 0 ? (
-                <div className="flex items-center justify-center py-8 text-muted-foreground text-center">
-                  <div>
-                    <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">No users available</p>
+            {showUserList ? (
+              <div className="space-y-1 p-2">
+                {loadingUsers ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
-                </div>
-              ) : (
-                availableUsers.map((user) => {
-                  // Check if there's an existing room with this user
-                  const existingRoom = rooms.find(room => {
-                    if (room.room_type === 'direct' && room.user_ids) {
-                      return room.user_ids.some((u: any) => u._id === user._id);
-                    }
-                    return false;
-                  });
-                  
-                  return (
+                ) : availableUsers.length === 0 ? (
+                  <div className="flex items-center justify-center py-8 text-muted-foreground text-center">
+                    <div>
+                      <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No users available</p>
+                    </div>
+                  </div>
+                ) : (
+                  availableUsers.map((user) => (
                     <Button
                       key={user._id}
-                      variant={selectedRoom?._id === existingRoom?._id ? 'secondary' : 'ghost'}
-                      className="w-full justify-start text-left h-auto py-3 px-3 hover:bg-accent"
-                      onClick={() => {
-                        if (existingRoom) {
-                          // If room exists, just select it
-                          setSelectedRoom(existingRoom);
-                          setShowSidebar(false);
-                        } else {
-                          // Otherwise, create new room
-                          handleInitiateChat(user);
-                        }
-                      }}
-                      disabled={loading}
+                      variant="ghost"
+                      className="w-full justify-start text-left h-auto py-3 px-3"
+                      onClick={() => handleInitiateChat(user)}
                     >
                       <div className="flex items-center gap-3 w-full">
                         <Avatar className="h-10 w-10 flex-shrink-0">
@@ -866,17 +754,73 @@ export default function ChatInterface() {
                             </Badge>
                           )}
                         </div>
-                        {existingRoom && unreadCounts[existingRoom._id] > 0 && (
-                          <Badge variant="destructive" className="ml-2 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center">
-                            {unreadCounts[existingRoom._id] > 99 ? '99+' : unreadCounts[existingRoom._id]}
-                          </Badge>
-                        )}
                       </div>
                     </Button>
-                  );
-                })
-              )}
-            </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1 p-2">
+                {loading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : rooms.length === 0 ? (
+                  <div className="flex items-center justify-center py-8 text-muted-foreground text-center">
+                    <div>
+                      <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No conversations yet</p>
+                      <p className="text-xs mt-1">Start a new chat to begin</p>
+                    </div>
+                  </div>
+                ) : (
+                  rooms.map((room) => {
+                    const otherUser = getOtherUserInRoom(room);
+                    const displayName = getRoomDisplayName(room);
+                    
+                    return (
+                      <Button
+                        key={room._id}
+                        variant={selectedRoom?._id === room._id ? 'secondary' : 'ghost'}
+                        className="w-full justify-start text-left h-auto py-3 px-3"
+                        onClick={() => {
+                          setSelectedRoom(room);
+                          setShowUserList(false);
+                          setShowSidebar(false);
+                        }}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            {room.room_type === 'direct' && otherUser ? (
+                              <Avatar className="h-10 w-10 flex-shrink-0">
+                                <AvatarFallback>
+                                  {getInitials(otherUser.full_name || otherUser.email || 'U')}
+                                </AvatarFallback>
+                              </Avatar>
+                            ) : (
+                              <Hash className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                            )}
+                            <div className="flex flex-col gap-1 flex-1 min-w-0">
+                              <span className="font-medium truncate">{displayName}</span>
+                              {room.room_type === 'department' && room.description && (
+                                <span className="text-xs text-muted-foreground truncate">
+                                  {room.description}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {unreadCounts[room._id] > 0 && (
+                            <Badge variant="destructive" className="ml-2 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center">
+                              {unreadCounts[room._id] > 99 ? '99+' : unreadCounts[room._id]}
+                            </Badge>
+                          )}
+                        </div>
+                      </Button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </ScrollArea>
         </CardContent>
       </Card>
@@ -888,18 +832,6 @@ export default function ChatInterface() {
             <CardHeader className="border-b">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedRoom(null);
-                      setShowUserList(true);
-                    }}
-                    className="h-auto p-1 mr-1"
-                    title="Back to employees"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
                   {selectedRoom.room_type === 'direct' ? (
                     <>
                       <Avatar className="h-8 w-8">
@@ -918,15 +850,9 @@ export default function ChatInterface() {
                 </div>
                 <div className="flex items-center gap-2">
                   {!wsConnected && (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      <Clock className="w-3 h-3 mr-1" />
-                      Polling mode
-                    </Badge>
-                  )}
-                  {wsConnected && (
-                    <Badge variant="outline" className="text-xs text-green-600">
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                      Real-time
+                    <Badge variant="outline" className="text-xs">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Reconnecting...
                     </Badge>
                   )}
                   <Button
@@ -987,20 +913,7 @@ export default function ChatInterface() {
               {/* Messages List */}
               <ScrollArea className="flex-1 px-4" ref={scrollAreaRef}>
                 <div className="space-y-4 py-4">
-                  {loadingMessages && messages.length === 0 ? (
-                    <div className="flex items-center justify-center py-12">
-                      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : Object.entries(groupedMessages).length === 0 ? (
-                    <div className="flex items-center justify-center py-12 text-muted-foreground text-center">
-                      <div>
-                        <MessageSquare className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                        <p className="text-sm">No messages yet</p>
-                        <p className="text-xs mt-1">Start the conversation!</p>
-                      </div>
-                    </div>
-                  ) : (
-                    Object.entries(groupedMessages).map(([date, dateMessages]) => (
+                  {Object.entries(groupedMessages).map(([date, dateMessages]) => (
                     <div key={date}>
                       <div className="flex items-center justify-center my-4">
                         <Badge variant="outline" className="text-xs">
@@ -1103,8 +1016,7 @@ export default function ChatInterface() {
                         );
                       })}
                     </div>
-                  ))
-                  )}
+                  ))}
                   {typingUsers[selectedRoom._id] && typingUsers[selectedRoom._id].length > 0 && (
                     <div className="flex gap-3">
                       <Avatar className="h-8 w-8 flex-shrink-0">
@@ -1195,9 +1107,27 @@ export default function ChatInterface() {
         ) : (
           <CardContent className="flex items-center justify-center h-full">
             <div className="text-center text-muted-foreground">
-              <Users className="w-16 h-16 mx-auto mb-4" />
-              <p className="text-lg font-semibold mb-2">Start a Conversation</p>
-              <p className="text-sm">Select an employee from the list to start chatting</p>
+              {showUserList ? (
+                <>
+                  <Users className="w-16 h-16 mx-auto mb-4" />
+                  <p className="text-lg font-semibold mb-2">Start a Conversation</p>
+                  <p className="text-sm">Select a user from the list to start chatting</p>
+                </>
+              ) : (
+                <>
+                  <MessageSquare className="w-16 h-16 mx-auto mb-4" />
+                  <p className="text-lg font-semibold mb-2">No Conversation Selected</p>
+                  <p className="text-sm">Select a conversation or start a new chat</p>
+                  <Button
+                    variant="outline"
+                    className="mt-4"
+                    onClick={() => setShowUserList(true)}
+                  >
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Start New Chat
+                  </Button>
+                </>
+              )}
             </div>
           </CardContent>
         )}

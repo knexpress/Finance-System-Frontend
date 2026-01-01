@@ -255,10 +255,32 @@ export default function DeliveryAssignmentsPage() {
     }).format(numAmount);
   };
 
-  const normalizeStatus = (status?: string) => status === 'DELIVERED' ? 'DELIVERED' : 'NOT_DELIVERED';
+  const normalizeStatus = (status?: string) => {
+    if (status === 'DELIVERED') return 'DELIVERED';
+    if (status === 'CANCELLED') return 'CANCELLED';
+    return 'NOT_DELIVERED';
+  };
 
   const getStatusColor = (status: string) => {
-    return status === 'DELIVERED' ? 'bg-green-500' : 'bg-red-500';
+    if (status === 'DELIVERED') return 'bg-green-500';
+    if (status === 'CANCELLED') return 'bg-orange-500';
+    return 'bg-red-500';
+  };
+
+  const getStatusLabel = (status: string) => {
+    if (status === 'DELIVERED') return 'Delivered';
+    if (status === 'CANCELLED') return 'Cancelled';
+    return 'Not Delivered';
+  };
+
+  const getPaymentMethodColor = (method: string | undefined) => {
+    if (!method || method === 'NOT_DEFINED_YET') return 'bg-gray-100 text-gray-800';
+    switch (method) {
+      case 'COD': return 'bg-red-100 text-red-800';
+      case 'TABBY': return 'bg-purple-100 text-purple-800';
+      case 'BANK_TRANSFER': return 'bg-blue-100 text-blue-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
   };
 
   const getDeliveryTypeColor = (type: string) => {
@@ -435,7 +457,7 @@ export default function DeliveryAssignmentsPage() {
                 <TableHead>Receiver</TableHead>
                 <TableHead>Receiver Phone</TableHead>
                 <TableHead>Amount</TableHead>
-                <TableHead>Type</TableHead>
+                <TableHead>Payment Method</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Payment</TableHead>
                 <TableHead>QR Code</TableHead>
@@ -458,8 +480,7 @@ export default function DeliveryAssignmentsPage() {
                   </TableCell>
                   <TableCell>
                     <div>
-                      <p className="font-medium">{assignment.request_id?.customer?.name || 'N/A'}</p>
-                      <p className="text-sm text-gray-500">{assignment.client_id?.company_name || 'N/A'}</p>
+                      <p className="text-sm font-medium text-gray-700">{assignment.client_id?.company_name || 'N/A'}</p>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -468,16 +489,52 @@ export default function DeliveryAssignmentsPage() {
                   <TableCell>{assignment.receiver_phone || assignment.request_id?.receiver?.phone || 'N/A'}</TableCell>
                   <TableCell className="font-medium">{formatCurrency(assignment.amount)}</TableCell>
                   <TableCell>
-                    <Badge className={getDeliveryTypeColor(assignment.delivery_type)}>
-                      {assignment.delivery_type}
-                    </Badge>
+                    <Select
+                      value={assignment.payment_method || 'NOT_DEFINED_YET'}
+                      onValueChange={async (value) => {
+                        try {
+                          const result = await apiClient.updateDeliveryAssignment(assignment._id, {
+                            payment_method: value === 'NOT_DEFINED_YET' ? undefined : value
+                          });
+                          if (result.success) {
+                            toast({
+                              title: 'Success',
+                              description: 'Payment method updated successfully',
+                            });
+                            fetchAssignments();
+                          } else {
+                            toast({
+                              variant: 'destructive',
+                              title: 'Error',
+                              description: result.error || 'Failed to update payment method',
+                            });
+                          }
+                        } catch (error) {
+                          toast({
+                            variant: 'destructive',
+                            title: 'Error',
+                            description: 'Failed to update payment method',
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NOT_DEFINED_YET">Not Defined Yet</SelectItem>
+                        <SelectItem value="TABBY">Tabby</SelectItem>
+                        <SelectItem value="COD">COD</SelectItem>
+                        <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </TableCell>
                   {(() => {
                     const normalizedStatus = normalizeStatus(assignment.status);
                     return (
                       <TableCell>
                         <Badge className={`${getStatusColor(normalizedStatus)} text-white`}>
-                          {normalizedStatus === 'DELIVERED' ? 'Delivered' : 'Not Delivered'}
+                          {getStatusLabel(normalizedStatus)}
                         </Badge>
                       </TableCell>
                     );
@@ -533,6 +590,7 @@ export default function DeliveryAssignmentsPage() {
                             <SelectContent>
                               <SelectItem value="NOT_DELIVERED">Not Delivered</SelectItem>
                               <SelectItem value="DELIVERED">Delivered</SelectItem>
+                              <SelectItem value="CANCELLED">Cancelled</SelectItem>
                             </SelectContent>
                           </Select>
                         );

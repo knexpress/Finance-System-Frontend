@@ -39,7 +39,7 @@ const VerificationForm = dynamic(() => import('@/components/verification-form'),
 const BookingPrintView = dynamic(() => import('@/components/booking-print-view'), {
   ssr: false
 });
-import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2, ArrowUp } from 'lucide-react';
 import BookingReviewModal from '@/components/booking-review-modal';
 
 const normalizeServiceCode = (code?: string | null) =>
@@ -98,7 +98,6 @@ interface InvoiceRequestCardProps {
   formatDateLabel: (date: string | Date) => string;
   formatServiceCode: (code?: string | null) => string;
   getStatusBadgeColor: (status: string) => string;
-  getDeliveryStatusBadgeColor: (status?: string) => string;
   renderActionControls: (request: any) => ReactNode;
   fetchInvoiceRequests: () => void;
   onBadgeClick?: (request: any) => void;
@@ -111,7 +110,6 @@ const InvoiceRequestCard = memo(({
   formatDateLabel,
   formatServiceCode,
   getStatusBadgeColor,
-  getDeliveryStatusBadgeColor,
   renderActionControls,
   fetchInvoiceRequests,
   onBadgeClick,
@@ -174,9 +172,6 @@ const InvoiceRequestCard = memo(({
         <div className="flex flex-wrap gap-2">
           <Badge className={getStatusBadgeColor(request.status)}>
             {request.status}
-          </Badge>
-          <Badge className={getDeliveryStatusBadgeColor(request.delivery_status)}>
-            {request.delivery_status}
           </Badge>
           {request.has_delivery && (
             <Badge variant="secondary">Delivery</Badge>
@@ -267,7 +262,7 @@ const InvoiceRequestCard = memo(({
         <div className="mt-4 rounded-lg border border-dashed border-orange-200 bg-orange-50 p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-orange-700">
             <AlertTriangle className="h-4 w-4" />
-            <span>Complete the 6-point verification before sending to Finance</span>
+            <span>Complete the verification before sending to Finance</span>
           </div>
           <div className="mt-3">
             <VerificationForm
@@ -328,6 +323,7 @@ export default function InvoiceRequestsPage() {
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [loadingBooking, setLoadingBooking] = useState(false);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [showShipmentDetailsDialog, setShowShipmentDetailsDialog] = useState(false);
   const [loadingShipmentDetails, setLoadingShipmentDetails] = useState(false);
   const [fullRequestDetails, setFullRequestDetails] = useState<any>(null);
@@ -676,6 +672,13 @@ export default function InvoiceRequestsPage() {
     
     let filtered: any[] = [];
     
+    // If user has explicitly selected "All Statuses", show all requests without department filtering
+    if (statusFilter === 'all') {
+      filtered = safeInvoiceRequests;
+      secureLog.debug('Showing all statuses', { count: filtered.length });
+      return filtered;
+    }
+    
     // If user has selected a specific status filter, apply it first
     if (statusFilter && statusFilter !== 'all') {
       filtered = safeInvoiceRequests.filter(request => {
@@ -809,6 +812,25 @@ export default function InvoiceRequestsPage() {
     };
   }, [showAwbSuggestions]);
 
+  // Scroll to top button visibility
+  useEffect(() => {
+    const handleScroll = () => {
+      // Show button when scrolled down more than 300px
+      setShowScrollToTop(window.scrollY > 300);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Scroll to top function
+  const scrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+  };
+
   // Optimized field list for Operations list view (reduces payload by 70-80%)
   // Optimized: Only fetch fields needed for list view display
   const getEssentialFields = () => [
@@ -870,11 +892,15 @@ export default function InvoiceRequestsPage() {
       // Determine filters based on user-selected status filter or department default
       let filters: { status?: string; search?: string } | undefined = undefined;
       
-      // If user has selected a status filter, use that (overrides department default)
-      if (activeFilter && activeFilter !== 'all') {
+      // If user has explicitly selected "All Statuses", don't set any status filter
+      if (activeFilter === 'all') {
+        // No status filter - fetch all statuses
+        filters = undefined;
+      } else if (activeFilter && activeFilter !== 'all') {
+        // User has selected a specific status filter
         filters = { status: activeFilter };
       } else {
-        // Otherwise, use department defaults
+        // Otherwise, use department defaults (when no filter is selected initially)
         if (userProfile?.department?.name === 'Finance') {
           // Finance: Only VERIFIED status
           filters = { status: 'VERIFIED' };
@@ -944,10 +970,82 @@ export default function InvoiceRequestsPage() {
     }
   }, [statusFilter, userProfile?.department?.name, pageLimit]); // Don't include toast or currentPage to prevent unnecessary re-renders
 
+  // Helper function to update shipment_status_history in booking when invoice request status changes
+  const updateBookingShipmentStatusHistory = async (request: any, newStatus: string) => {
+    // Only update if status is one of the specified statuses
+    const statusesToUpdate = ['SUBMITTED', 'IN_PROGRESS', 'VERIFIED', 'COMPLETED'];
+    if (!statusesToUpdate.includes(newStatus)) {
+      return;
+    }
+
+    try {
+      // Find booking_id from various possible locations in the request object
+      let bookingId: string | null = null;
+      
+      if (request.booking_id) {
+        if (typeof request.booking_id === 'string') {
+          bookingId = request.booking_id;
+        } else if (typeof request.booking_id === 'object' && request.booking_id._id) {
+          bookingId = request.booking_id._id;
+        }
+      } else if (request.booking?._id) {
+        bookingId = request.booking._id;
+      } else if (request.request_id?.booking_id) {
+        if (typeof request.request_id.booking_id === 'string') {
+          bookingId = request.request_id.booking_id;
+        } else if (typeof request.request_id.booking_id === 'object' && request.request_id.booking_id._id) {
+          bookingId = request.request_id.booking_id._id;
+        }
+      }
+
+      if (bookingId) {
+        // Update shipment_status_history to "Shipment Processing"
+        await apiClient.updateBookingShipmentStatusHistory(bookingId, 'Shipment Processing');
+        secureLog.debug('Updated shipment_status_history for booking', { bookingId, status: 'Shipment Processing' });
+      }
+    } catch (error) {
+      // Silently handle errors - don't block the main status update
+      secureLog.error('Error updating shipment_status_history', error);
+    }
+  };
+
   const handleStatusUpdate = async (id: string, newStatus: string) => {
     try {
+      // Find the request to get booking_id
+      const request = invoiceRequests.find(r => r._id === id);
+      
+      // If cancelling, use the cancellation endpoint which handles deletion from all collections
+      if (newStatus === 'CANCELLED') {
+        if (!confirm('Are you sure you want to cancel this invoice request? This will delete it from Delivery Assignments, Invoice Requests, and Invoices collections, but keep it in audit reports for future reference.')) {
+          return;
+        }
+        
+        const result = await apiClient.cancelInvoiceRequest(id);
+        if (result.success) {
+          toast({
+            title: 'Success',
+            description: 'Invoice request cancelled and removed from all collections. It will remain in audit reports.',
+          });
+          apiClient.invalidateCache('/invoice-requests');
+          fetchInvoiceRequests(currentPage, false); // Skip cache after status update
+        } else {
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: result.error || 'Failed to cancel invoice request',
+          });
+        }
+        return;
+      }
+      
+      // For other status updates
       const result = await apiClient.updateInvoiceRequestStatus(id, { status: newStatus });
       if (result.success) {
+        // Update shipment_status_history in booking if applicable
+        if (request) {
+          await updateBookingShipmentStatusHistory(request, newStatus);
+        }
+        
         toast({
           title: 'Success',
           description: 'Status updated successfully',
@@ -1269,6 +1367,9 @@ export default function InvoiceRequestsPage() {
   // Department-specific actions
   const handleOperationsAction = async (id: string, action: string) => {
     try {
+      // Find the request to get booking_id
+      const request = invoiceRequests.find(r => r._id === id);
+      
       // Optimistic UI update - immediately update the local state
       if (action === 'start') {
         setInvoiceRequests(prevRequests => 
@@ -1283,6 +1384,10 @@ export default function InvoiceRequestsPage() {
       let result;
       if (action === 'start') {
         result = await apiClient.updateInvoiceRequestStatus(id, { status: 'IN_PROGRESS' });
+        // Update shipment_status_history in booking
+        if (request) {
+          await updateBookingShipmentStatusHistory(request, 'IN_PROGRESS');
+        }
       } else if (action === 'complete') {
         result = await apiClient.updateInvoiceRequestStatus(id, { status: 'IN_PROGRESS' });
         await apiClient.updateDeliveryStatus(id, { delivery_status: 'DELIVERED' });
@@ -1756,7 +1861,6 @@ export default function InvoiceRequestsPage() {
           'Invoice Number': formattedInvoiceNumber,
           'Created Date': createdDate,
           'Status': request.status || 'N/A',
-          'Delivery Status': request.delivery_status || 'PENDING',
           'AWB Number': awbNumber,
           'Customer': customer,
           'Sender Phone': senderPhone,
@@ -1800,6 +1904,11 @@ export default function InvoiceRequestsPage() {
   const renderActionControls = (request: any) => {
     if (!userProfile) return null;
     const departmentName = userProfile.department.name;
+    
+    // Check if invoice has been generated (status is COMPLETED means invoice was generated)
+    const hasInvoiceGenerated = request.status === 'COMPLETED';
+    // Allow cancellation for all statuses except COMPLETED and CANCELLED
+    const canCancel = request.status !== 'COMPLETED' && request.status !== 'CANCELLED';
 
     if (departmentName === 'Sales') {
       return (
@@ -1812,13 +1921,13 @@ export default function InvoiceRequestsPage() {
               Submit
             </Button>
           )}
-          {request.status !== 'COMPLETED' && request.status !== 'CANCELLED' && (
+          {canCancel && (
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => handleDelete(request._id)}
+              onClick={() => handleStatusUpdate(request._id, 'CANCELLED')}
             >
-              Cancel & Delete
+              Cancel
             </Button>
           )}
         </>
@@ -1836,31 +1945,37 @@ export default function InvoiceRequestsPage() {
               Start Processing
             </Button>
           )}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Delivery</span>
-            <Select
-              value={request.delivery_status}
-              onValueChange={(value) => handleDeliveryStatusUpdate(request._id, value)}
+          {canCancel && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => handleStatusUpdate(request._id, 'CANCELLED')}
             >
-              <SelectTrigger className="h-9 w-32 text-xs">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="PENDING">Pending</SelectItem>
-                <SelectItem value="DELIVERED">Delivered</SelectItem>
-                <SelectItem value="CANCELLED">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              Cancel
+            </Button>
+          )}
         </>
       );
     }
 
-    if (departmentName === 'Finance' && request.status === 'VERIFIED') {
+    if (departmentName === 'Finance') {
       return (
-        <Button size="sm" onClick={() => handleFinanceAction(request._id)}>
-          Generate Invoice
-        </Button>
+        <>
+          {request.status === 'VERIFIED' && (
+            <Button size="sm" onClick={() => handleFinanceAction(request._id)}>
+              Generate Invoice
+            </Button>
+          )}
+          {canCancel && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => handleStatusUpdate(request._id, 'CANCELLED')}
+            >
+              Cancel
+            </Button>
+          )}
+        </>
       );
     }
 
@@ -2547,6 +2662,9 @@ export default function InvoiceRequestsPage() {
           status: 'COMPLETED'
         });
         if (result.success) {
+          // Update shipment_status_history in booking
+          await updateBookingShipmentStatusHistory(selectedRequestForInvoice as any, 'COMPLETED');
+          
           toast({
             title: 'Success',
             description: 'Invoice created with QR code and request completed successfully',
@@ -3285,6 +3403,7 @@ export default function InvoiceRequestsPage() {
                     <>
                       <SelectItem value="VERIFIED">VERIFIED</SelectItem>
                       <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                      <SelectItem value="CANCELLED">CANCELLED</SelectItem>
                     </>
                   ) : (
                     <>
@@ -3293,6 +3412,7 @@ export default function InvoiceRequestsPage() {
                   <SelectItem value="IN_PROGRESS">IN_PROGRESS</SelectItem>
                   <SelectItem value="VERIFIED">VERIFIED</SelectItem>
                   <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                  <SelectItem value="CANCELLED">CANCELLED</SelectItem>
                     </>
                   )}
                 </SelectContent>
@@ -3450,6 +3570,37 @@ export default function InvoiceRequestsPage() {
             )}
           </div>
         </CardHeader>
+        {/* Pagination Controls */}
+        {pagination && pagination.pages > 1 && (
+          <div className="flex items-center justify-between px-6 pb-4 border-b">
+            <div className="text-sm text-muted-foreground">
+              Showing {pagination.startRecord || ((currentPage - 1) * pageLimit + 1)} to {pagination.endRecord || (currentPage * pageLimit)} of {pagination.total || 0} results
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchInvoiceRequests(currentPage - 1, false)}
+                disabled={!pagination.hasPreviousPage || currentPage === 1 || loading}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              <div className="text-sm text-muted-foreground px-2">
+                Page {currentPage} of {pagination.pages}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchInvoiceRequests(currentPage + 1, false)}
+                disabled={!pagination.hasNextPage || currentPage >= pagination.pages || loading}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
         <CardContent>
           {loading ? (
             <div className="flex items-center justify-center h-32">
@@ -3476,44 +3627,11 @@ export default function InvoiceRequestsPage() {
                   formatDateLabel={formatDateLabel}
                   formatServiceCode={formatServiceCode}
                   getStatusBadgeColor={getStatusBadgeColor}
-                  getDeliveryStatusBadgeColor={getDeliveryStatusBadgeColor}
                   renderActionControls={renderActionControls}
                   fetchInvoiceRequests={() => fetchInvoiceRequests(currentPage, false)}
                   onBadgeClick={handleBadgeClick}
                 />
               ))}
-            </div>
-          )}
-          
-          {/* Pagination Controls */}
-          {pagination && pagination.pages > 1 && (
-            <div className="flex items-center justify-between mt-6 pt-4 border-t">
-              <div className="text-sm text-muted-foreground">
-                Showing {pagination.startRecord || ((currentPage - 1) * pageLimit + 1)} to {pagination.endRecord || (currentPage * pageLimit)} of {pagination.total || 0} results
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchInvoiceRequests(currentPage - 1, false)}
-                  disabled={!pagination.hasPreviousPage || currentPage === 1 || loading}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Previous
-                </Button>
-                <div className="text-sm text-muted-foreground px-2">
-                  Page {currentPage} of {pagination.pages}
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchInvoiceRequests(currentPage + 1, false)}
-                  disabled={!pagination.hasNextPage || currentPage >= pagination.pages || loading}
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
             </div>
           )}
         </CardContent>
@@ -4256,14 +4374,8 @@ export default function InvoiceRequestsPage() {
                   <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-semibold text-gray-600">Request Status</Label>
-                      <Badge className={getDeliveryStatusBadgeColor(requestData.status)}>
+                      <Badge className={getStatusBadgeColor(requestData.status)}>
                         {requestData.status}
-                      </Badge>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-semibold text-gray-600">Delivery Status</Label>
-                      <Badge className={getDeliveryStatusBadgeColor(requestData.delivery_status)}>
-                        {requestData.delivery_status}
                       </Badge>
                     </div>
                     <div>
@@ -4344,6 +4456,18 @@ export default function InvoiceRequestsPage() {
             }}
           />
         </div>
+      )}
+
+      {/* Scroll to Top Button */}
+      {showScrollToTop && (
+        <Button
+          onClick={scrollToTop}
+          className="fixed bottom-8 right-8 z-50 h-12 w-12 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110"
+          size="icon"
+          aria-label="Scroll to top"
+        >
+          <ArrowUp className="h-5 w-5" />
+        </Button>
       )}
 
     </div>

@@ -37,6 +37,46 @@ export default function AuditReportPage() {
                         
                         // Log the first report structure for debugging
                         console.log('📄 Sample report structure:', reportsArray[0]);
+                        
+                        // Collect all invoice IDs from reports
+                        const invoiceIds = new Set<string>();
+                        reportsArray.forEach((report: any) => {
+                            const reportData = report.report_data || {};
+                            if (reportData.invoice_id) {
+                                invoiceIds.add(reportData.invoice_id);
+                            }
+                            // Also check if invoice_id is an object with _id
+                            if (reportData.invoice_id && typeof reportData.invoice_id === 'object' && reportData.invoice_id._id) {
+                                invoiceIds.add(reportData.invoice_id._id);
+                            }
+                        });
+                        
+                        // Fetch all invoices in parallel
+                        const invoiceMap = new Map<string, any>();
+                        if (invoiceIds.size > 0) {
+                            console.log(`📦 Fetching ${invoiceIds.size} invoices from invoices collection...`);
+                            const invoicePromises = Array.from(invoiceIds).map(async (invoiceId) => {
+                                try {
+                                    const invoiceResult = await apiClient.getInvoiceUnified(invoiceId);
+                                    if (invoiceResult.success && invoiceResult.data) {
+                                        return { id: invoiceId, invoice: invoiceResult.data };
+                                    }
+                                    return null;
+                                } catch (error) {
+                                    console.error(`❌ Error fetching invoice ${invoiceId}:`, error);
+                                    return null;
+                                }
+                            });
+                            
+                            const invoiceResults = await Promise.all(invoicePromises);
+                            invoiceResults.forEach((result) => {
+                                if (result) {
+                                    invoiceMap.set(result.id, result.invoice);
+                                }
+                            });
+                            console.log(`✅ Fetched ${invoiceMap.size} invoices`);
+                        }
+                        
                         // Convert reports to the format expected by AuditReportTable
                         const formattedData = reportsArray.map((report: any) => {
                             const reportData = report.report_data || {};
@@ -61,9 +101,30 @@ export default function AuditReportPage() {
                                 const origin = reportData.origin || formatLocation(reportData.origin_country, reportData.origin_city);
                                 const destination = reportData.destination || formatLocation(reportData.destination_country, reportData.destination_city);
 
-                                const isLeviableValue = reportData.additional_info2 === 'LEVIABLE' ? 'Leviable' 
-                                    : reportData.additional_info2 === 'NON-LEVIABLE' ? 'Non-Leviable'
-                                    : reportData.additional_info2 || 'N/A';
+                                // For historical uploads, try to get tax_rate from invoice if available
+                                const invoiceData = reportData.invoice || {};
+                                const taxRate = invoiceData.tax_rate !== undefined 
+                                    ? (typeof invoiceData.tax_rate === 'object' && invoiceData.tax_rate.$numberDecimal 
+                                        ? parseFloat(invoiceData.tax_rate.$numberDecimal) 
+                                        : parseFloat(invoiceData.tax_rate))
+                                    : (reportData.tax_rate !== undefined 
+                                        ? (typeof reportData.tax_rate === 'object' && reportData.tax_rate.$numberDecimal
+                                            ? parseFloat(reportData.tax_rate.$numberDecimal)
+                                            : parseFloat(reportData.tax_rate))
+                                        : null);
+                                
+                                // Determine leviable item: if tax_rate is 0 or null/undefined, it's Non-Leviable, otherwise Leviable
+                                const isLeviableValue = (taxRate === 0 || taxRate === null || taxRate === undefined)
+                                    ? 'Non-Leviable'
+                                    : (taxRate !== null && taxRate !== undefined ? 'Leviable' : (reportData.additional_info2 === 'LEVIABLE' ? 'Leviable' 
+                                        : reportData.additional_info2 === 'NON-LEVIABLE' ? 'Non-Leviable'
+                                        : reportData.additional_info2 || 'N/A'));
+                                
+                                // Get service_code from invoice or reportData
+                                const serviceCode = invoiceData.service_code 
+                                    || reportData.service_code 
+                                    || reportData.service_type
+                                    || 'N/A';
 
                                 // Clean weight string if padded spaces
                                 const weightValue = typeof reportData.weight === 'string'
@@ -82,7 +143,7 @@ export default function AuditReportPage() {
                                     origin,
                                     destination,
                                     shipmentType: reportData.shipment_type || 'N/A',
-                                    serviceType: reportData.service_type || 'N/A',
+                                    serviceType: serviceCode,
                                     deliveryStatus: reportData.shipment_status || reportData.delivery_status || 'N/A',
                                     weight: weightValue || 'N/A',
                                     leviableItem: isLeviableValue,
@@ -93,6 +154,48 @@ export default function AuditReportPage() {
                             }
                             
                             // Regular report entry (existing logic)
+                            // Get invoice ID and fetch invoice data from invoices collection
+                            const invoiceId = reportData.invoice_id 
+                                ? (typeof reportData.invoice_id === 'object' && reportData.invoice_id._id 
+                                    ? reportData.invoice_id._id 
+                                    : reportData.invoice_id)
+                                : null;
+                            
+                            // Get invoice from the fetched invoice map
+                            const fetchedInvoice = invoiceId ? invoiceMap.get(invoiceId) : null;
+                            
+                            // Get invoice data - prioritize fetched invoice from invoices collection
+                            const invoiceData = fetchedInvoice || reportData.invoice || {};
+                            
+                            // Get tax_rate - prioritize from fetched invoice
+                            const taxRate = fetchedInvoice?.tax_rate !== undefined 
+                                ? (typeof fetchedInvoice.tax_rate === 'object' && fetchedInvoice.tax_rate.$numberDecimal 
+                                    ? parseFloat(fetchedInvoice.tax_rate.$numberDecimal) 
+                                    : parseFloat(fetchedInvoice.tax_rate))
+                                : (invoiceData.tax_rate !== undefined 
+                                    ? (typeof invoiceData.tax_rate === 'object' && invoiceData.tax_rate.$numberDecimal 
+                                        ? parseFloat(invoiceData.tax_rate.$numberDecimal) 
+                                        : parseFloat(invoiceData.tax_rate))
+                                    : (reportData.tax_rate !== undefined 
+                                        ? (typeof reportData.tax_rate === 'object' && reportData.tax_rate.$numberDecimal
+                                            ? parseFloat(reportData.tax_rate.$numberDecimal)
+                                            : parseFloat(reportData.tax_rate))
+                                        : null));
+                            
+                            // Determine leviable item based on tax_rate
+                            // If tax_rate is 0 or null/undefined, it's Non-Leviable, otherwise Leviable
+                            const leviableItemValue = (taxRate === 0 || taxRate === null || taxRate === undefined) 
+                                ? 'Non-Leviable' 
+                                : 'Leviable';
+                            
+                            // Get service_code from fetched invoice (prioritize invoices collection)
+                            const serviceCode = fetchedInvoice?.service_code 
+                                || invoiceData.service_code 
+                                || reportData.service_code 
+                                || cargoDetails.service_code
+                                || reportData.request_id?.service_code
+                                || 'N/A';
+                            
                             return {
                                 id: report._id,
                                 awbNumber: cargoDetails.awb_number || reportData.awb_number || 'N/A',
@@ -103,9 +206,10 @@ export default function AuditReportPage() {
                                 origin: cargoDetails.route?.split(' → ')[0] || 'N/A',
                                 destination: cargoDetails.route?.split(' → ')[1] || cargoDetails.route || 'N/A',
                                 shipmentType: cargoDetails.shipment?.weight_type || reportData.shipment_type || 'N/A',
-                                serviceType: 'N/A',
+                                serviceType: serviceCode,
                                 deliveryStatus: reportData.current_status || cargoDetails.delivery_status || reportData.invoice_status || reportData.shipment_status || 'N/A',
                                 weight: cargoDetails.shipment?.weight || reportData.weight || 'N/A',
+                                leviableItem: leviableItemValue,
                                 invoice: reportData.invoice_id ? {
                                     id: reportData.invoice_id,
                                     issueDate: reportData.invoice_date,

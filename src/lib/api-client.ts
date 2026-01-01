@@ -657,6 +657,12 @@ class ApiClient {
     });
   }
 
+  async cancelInvoiceRequest(id: string) {
+    return this.request(`/invoice-requests/${id}/cancel`, {
+      method: 'POST',
+    });
+  }
+
   async updateDeliveryStatus(id: string, deliveryStatusData: any) {
     return this.request(`/invoice-requests/${id}/delivery-status`, {
       method: 'PUT',
@@ -932,6 +938,12 @@ class ApiClient {
     return this.request(`/delivery-assignments/driver/${driverId}`);
   }
 
+  async syncDeliveryAssignmentToEmpost(assignmentId: string) {
+    return this.request(`/delivery-assignments/${assignmentId}/sync-empost`, {
+      method: 'POST',
+    });
+  }
+
   // QR Payment Sessions
   async getQRPaymentSessions() {
     return this.request('/qr-payment-sessions');
@@ -1037,6 +1049,46 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(messageData),
     });
+  }
+
+  async uploadChatFile(roomId: string, file: File, senderId: string, replyTo?: string) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('sender_id', senderId);
+    formData.append('message_type', file.type.startsWith('image/') ? 'image' : 'file');
+    if (replyTo) {
+      formData.append('reply_to', replyTo);
+    }
+    
+    const url = `${this.baseUrl}/chat/rooms/${roomId}/messages/upload`;
+    const headers: Record<string, string> = {};
+    
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      return { success: false, error: data.error || 'File upload failed' };
+    }
+    
+    return { success: true, data };
+  }
+
+  async searchChatMessages(roomId: string, query: string, limit: number = 50) {
+    let url = `/chat/rooms/${roomId}/messages/search`;
+    const params = new URLSearchParams();
+    params.append('q', query);
+    params.append('limit', limit.toString());
+    url += `?${params.toString()}`;
+    return this.request(url);
   }
 
   async markMessageAsRead(messageId: string, employeeId: string) {
@@ -1354,6 +1406,13 @@ class ApiClient {
     return this.request(`/bookings/${id}/status`, {
       method: 'PUT',
       body: JSON.stringify(statusData),
+    });
+  }
+
+  async updateBookingShipmentStatusHistory(bookingId: string, shipmentStatusHistory: string) {
+    return this.request(`/bookings/${bookingId}/shipment-status-history`, {
+      method: 'PUT',
+      body: JSON.stringify({ shipment_status_history: shipmentStatusHistory }),
     });
   }
 

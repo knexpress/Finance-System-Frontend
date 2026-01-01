@@ -850,6 +850,35 @@ export default function VerificationForm({ request, onVerificationComplete, curr
         });
 
         if (completeResult.success) {
+          // Update shipment_status_history in booking when status changes to VERIFIED
+          try {
+            const reqData = requestData || request;
+            let bookingId: string | null = null;
+            
+            if (reqData.booking_id) {
+              if (typeof reqData.booking_id === 'string') {
+                bookingId = reqData.booking_id;
+              } else if (typeof reqData.booking_id === 'object' && reqData.booking_id._id) {
+                bookingId = reqData.booking_id._id;
+              }
+            } else if (reqData.booking?._id) {
+              bookingId = reqData.booking._id;
+            } else if (reqData.request_id?.booking_id) {
+              if (typeof reqData.request_id.booking_id === 'string') {
+                bookingId = reqData.request_id.booking_id;
+              } else if (typeof reqData.request_id.booking_id === 'object' && reqData.request_id.booking_id._id) {
+                bookingId = reqData.request_id.booking_id._id;
+              }
+            }
+
+            if (bookingId) {
+              await apiClient.updateBookingShipmentStatusHistory(bookingId, 'Shipment Processing');
+            }
+          } catch (error) {
+            // Silently handle errors - don't block the verification completion
+            console.error('Error updating shipment_status_history', error);
+          }
+          
           toast({
             title: 'Verification Complete',
             description: 'All verification points checked and request sent for invoice generation',

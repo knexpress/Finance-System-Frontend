@@ -352,11 +352,8 @@ export default function PriceBracketsPage() {
                             min="0"
                             value={bracket.max === null ? '' : bracket.max}
                             onChange={(e) => updateBracket(index, 'max', e.target.value === '' ? null : e.target.value)}
-                            placeholder="Max weight (leave empty for unlimited)"
+                            placeholder={bracket.max === null ? 'unlimited' : 'Max weight'}
                           />
-                          {bracket.max === null && (
-                            <Badge variant="secondary" className="ml-2">Unlimited</Badge>
-                          )}
                         </TableCell>
                         <TableCell>
                           <Input
@@ -440,11 +437,8 @@ export default function PriceBracketsPage() {
                             min="0"
                             value={bracket.max === null ? '' : bracket.max}
                             onChange={(e) => updateBracket(index, 'max', e.target.value === '' ? null : e.target.value)}
-                            placeholder="Max weight (leave empty for unlimited)"
+                            placeholder={bracket.max === null ? 'unlimited' : 'Max weight'}
                           />
-                          {bracket.max === null && (
-                            <Badge variant="secondary" className="ml-2">Unlimited</Badge>
-                          )}
                         </TableCell>
                         <TableCell>
                           <Input
