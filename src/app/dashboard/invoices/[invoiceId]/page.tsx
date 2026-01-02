@@ -7,10 +7,11 @@ import TaxInvoiceTemplate from "@/components/tax-invoice-template";
 import { apiClient } from "@/lib/api-client";
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer, FileSpreadsheet, Eye, Package, Truck, CheckCircle, XCircle, MapPin, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import {
     Dialog,
     DialogContent,
@@ -61,6 +62,7 @@ export default function InvoicePage() {
     const [showCodEditDialog, setShowCodEditDialog] = useState(false);
     const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
+    const [showRequestDetailsDialog, setShowRequestDetailsDialog] = useState(false);
     // Local state for COD invoice edits (frontend-only, does not affect backend)
     const [localCodEdits, setLocalCodEdits] = useState<any>(null);
     const [editForm, setEditForm] = useState({
@@ -422,18 +424,21 @@ export default function InvoicePage() {
     
     // Only get insurance from database (line_items or invoice field) - no fallback calculation
     // Check for direct insurance_charge field first
+    // Use a flag to track if insurance_charge was explicitly set (including 0)
+    let insuranceChargeExplicitlySet = false;
     if (invoice.insurance_charge !== undefined && invoice.insurance_charge !== null) {
         insuranceCharge = parseDecimal(invoice.insurance_charge, 2);
+        insuranceChargeExplicitlySet = true; // Mark as explicitly set, even if 0
     }
     
-    // Also use line_items for insurance charge if found there
+    // Also use line_items for insurance charge if found there (only if not explicitly set)
     // Also use line_items as fallback for pickup_charge if not in invoice object (for backward compatibility)
     if (invoice.line_items && invoice.line_items.length > 0) {
         invoice.line_items.forEach((item: any) => {
             const itemTotal = parseDecimal(item.total || item.unit_price, 2);
             const description = item.description?.toLowerCase() || '';
-            // Use line_items for insurance (only if not already set from direct field)
-            if (description.includes('insurance') && insuranceCharge === 0) {
+            // Use line_items for insurance (only if not explicitly set from direct field)
+            if (description.includes('insurance') && !insuranceChargeExplicitlySet) {
                 insuranceCharge += itemTotal;
             }
             // Fallback: If pickup_charge is not in invoice object or is 0, read from line_items
@@ -454,6 +459,15 @@ export default function InvoicePage() {
         insuranceCharge = parseDecimal(insuranceCharge, 2);
         pickupCharge = parseDecimal(pickupCharge, 2);
     }
+    
+    // Debug: Log insurance charge reading
+    console.log('💰 Insurance Charge Debug:', {
+        invoiceInsuranceCharge: invoice.insurance_charge,
+        insuranceChargeExplicitlySet,
+        finalInsuranceCharge: insuranceCharge,
+        hasLineItems: !!invoice.line_items,
+        lineItemsCount: invoice.line_items?.length || 0
+    });
     
     // Debug: Log pickup charge for PH TO UAE COD invoices
     if (isPhToUae && invoiceType === 'normal') {
@@ -1533,12 +1547,14 @@ export default function InvoicePage() {
                     amount: invoiceData.amount,
                     delivery_charge: invoiceData.delivery_charge,
                     delivery_base_amount: invoiceData.delivery_base_amount,
+                    insurance_charge: invoiceData.insurance_charge,
                     total_amount_cod: invoiceData.total_amount_cod || invoiceData.totalAmountCod,
                     total_amount_tax_invoice: invoiceData.total_amount_tax_invoice || invoiceData.totalAmountTaxInvoice,
                     tax_rate: invoiceData.tax_rate,
                     tax_amount: invoiceData.tax_amount,
                     total_amount: invoiceData.total_amount,
-                    subtotal: invoiceData.subtotal
+                    subtotal: invoiceData.subtotal,
+                    line_items: invoiceData.line_items
                 });
                 setInvoice(refreshResult.data);
                 
@@ -1671,6 +1687,13 @@ export default function InvoicePage() {
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowRequestDetailsDialog(true)}
+                        >
+                            <Eye className="h-4 w-4 mr-2" />
+                            View Request
+                        </Button>
                         <Button
                             variant="outline"
                             onClick={handlePrint}
@@ -2093,6 +2116,395 @@ export default function InvoicePage() {
                 </DialogContent>
             </Dialog>
             )}
+
+            {/* Request Details Dialog */}
+            {showRequestDetailsDialog && invoice?.request_id && (() => {
+                const requestData = invoice.request_id;
+                
+                // Helper function to safely parse Decimal128 and other numeric values
+                const parseNumericValue = (value: any): number | string => {
+                    if (value === null || value === undefined || value === '') {
+                        return 'N/A';
+                    }
+                    if (typeof value === 'number') {
+                        return value;
+                    }
+                    if (typeof value === 'string') {
+                        const parsed = parseFloat(value);
+                        return isNaN(parsed) ? 'N/A' : parsed;
+                    }
+                    if (value && typeof value === 'object') {
+                        // Handle MongoDB Decimal128 format
+                        if (value.$numberDecimal) {
+                            return parseFloat(value.$numberDecimal);
+                        }
+                        if (typeof value.toString === 'function') {
+                            const parsed = parseFloat(value.toString());
+                            return isNaN(parsed) ? 'N/A' : parsed;
+                        }
+                    }
+                    return 'N/A';
+                };
+
+                const formatWeight = (value: any): string => {
+                    const parsed = parseNumericValue(value);
+                    if (parsed === 'N/A') return 'N/A';
+                    return `${typeof parsed === 'number' ? parsed.toFixed(2) : parsed} kg`;
+                };
+
+                const formatServiceCode = (code?: string | null) => {
+                    if (!code) return 'N/A';
+                    return code.toString().replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                };
+
+                const getStatusBadgeColor = (status?: string) => {
+                    if (!status) return 'default';
+                    const statusLower = status.toLowerCase();
+                    if (statusLower.includes('verified')) return 'default';
+                    if (statusLower.includes('submitted')) return 'secondary';
+                    if (statusLower.includes('progress')) return 'default';
+                    if (statusLower.includes('cancelled')) return 'destructive';
+                    return 'default';
+                };
+
+                return (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-900 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                            <div className="p-6">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-2xl font-bold">Shipment Request Details</h2>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setShowRequestDetailsDialog(false)}
+                                    >
+                                        <XCircle className="h-5 w-5" />
+                                    </Button>
+                                </div>
+
+                                <div className="space-y-6">
+                                    {/* Customer Information */}
+                                    <Card>
+                                        <CardHeader>
+                                            <CardTitle className="flex items-center gap-2">
+                                                <Package className="h-5 w-5" />
+                                                Customer Information
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Customer Name</Label>
+                                                <p className="text-base">{requestData.customer_name || 'N/A'}</p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Customer Phone</Label>
+                                                <p className="text-base">{requestData.customer_phone || 'N/A'}</p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Customer Email</Label>
+                                                <p className="text-base">{requestData.customer_email || 'N/A'}</p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Origin Place</Label>
+                                                <p className="text-base">{requestData.origin_place || requestData.shipment?.origin || 'N/A'}</p>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+
+                                    {/* Receiver Information */}
+                                    <Card>
+                                        <CardHeader>
+                                            <CardTitle className="flex items-center gap-2">
+                                                <MapPin className="h-5 w-5" />
+                                                Receiver Information
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Receiver Name</Label>
+                                                <p className="text-base">
+                                                    {requestData.receiver_name ||
+                                                     requestData.verification?.receiver_name ||
+                                                     requestData.receiver?.name ||
+                                                     'N/A'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Receiver Phone</Label>
+                                                <p className="text-base">{requestData.receiver_phone || requestData.verification?.receiver_phone || requestData.receiver?.phone || 'N/A'}</p>
+                                            </div>
+                                            <div className="md:col-span-2">
+                                                <Label className="text-sm font-semibold text-gray-600">Receiver Address</Label>
+                                                <p className="text-base">{requestData.destination_place || requestData.verification?.receiver_address || requestData.receiver?.address || 'N/A'}</p>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+
+                                    {/* Shipment Details */}
+                                    <Card>
+                                        <CardHeader>
+                                            <CardTitle className="flex items-center gap-2">
+                                                <Truck className="h-5 w-5" />
+                                                Shipment Details
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Service Code</Label>
+                                                <p className="text-base">
+                                                    {formatServiceCode(
+                                                        requestData.service_code ||
+                                                        requestData.verification?.service_code ||
+                                                        requestData.shipment?.service_code ||
+                                                        'N/A'
+                                                    )}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">AWB Number</Label>
+                                                <p className="text-base">
+                                                    {requestData.tracking_code ||
+                                                     requestData.awb_number ||
+                                                     requestData.awb ||
+                                                     requestData.verification?.awb_number ||
+                                                     'N/A'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Weight (kg)</Label>
+                                                <p className="text-base">
+                                                    {formatWeight(
+                                                        requestData.verification?.actual_weight ||
+                                                        requestData.verification?.total_kg ||
+                                                        requestData.weight ||
+                                                        requestData.weight_kg ||
+                                                        requestData.shipment?.weight
+                                                    )}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Weight Type</Label>
+                                                <p className="text-base">
+                                                    {requestData.verification?.weight_type ||
+                                                     requestData.shipment?.weight_type ||
+                                                     'N/A'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Number of Boxes</Label>
+                                                <p className="text-base">
+                                                    {(() => {
+                                                        const boxes = parseNumericValue(
+                                                            requestData.verification?.number_of_boxes ||
+                                                            requestData.shipment?.number_of_boxes ||
+                                                            requestData.number_of_boxes
+                                                        );
+                                                        return boxes === 'N/A' ? 'N/A' : boxes.toString();
+                                                    })()}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Volumetric Weight (VM)</Label>
+                                                <p className="text-base">
+                                                    {formatWeight(
+                                                        requestData.verification?.total_vm ||
+                                                        requestData.verification?.volumetric_weight ||
+                                                        requestData.shipment?.volumetric_weight
+                                                    )}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Chargeable Weight</Label>
+                                                <p className="text-base">
+                                                    {formatWeight(
+                                                        requestData.verification?.total_kg ||
+                                                        requestData.verification?.chargeable_weight ||
+                                                        requestData.verification?.actual_weight ||
+                                                        requestData.shipment?.chargeable_weight
+                                                    )}
+                                                </p>
+                                            </div>
+                                            {(() => {
+                                                const serviceCode = requestData.service_code || requestData.verification?.service_code || '';
+                                                const isUaeToPh = isUaeToPhService(serviceCode);
+                                                const insured = requestData.insured || requestData.verification?.insured || false;
+                                                const declaredAmount = requestData.declaredAmount || requestData.declared_amount || requestData.verification?.declared_value || null;
+                                                
+                                                if (isUaeToPh && insured === true) {
+                                                    const amount = declaredAmount ? parseNumericValue(declaredAmount) : null;
+                                                    return (
+                                                        <div>
+                                                            <Label className="text-sm font-semibold text-gray-600">Insured Declared Value</Label>
+                                                            <p className="text-base">
+                                                                {amount && amount !== 'N/A' 
+                                                                    ? `${typeof amount === 'number' ? amount.toFixed(2) : amount} AED`
+                                                                    : 'Not set'}
+                                                            </p>
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Calculated Rate (AED/kg)</Label>
+                                                <p className="text-base">
+                                                    {(() => {
+                                                        const rate = parseNumericValue(
+                                                            requestData.verification?.calculated_rate ||
+                                                            requestData.base_rate
+                                                        );
+                                                        if (rate === 'N/A') return 'N/A';
+                                                        return typeof rate === 'number' ? rate.toFixed(2) : rate.toString();
+                                                    })()}
+                                                </p>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+
+                                    {/* Verification Details */}
+                                    {requestData.verification && (
+                                        <Card>
+                                            <CardHeader>
+                                                <CardTitle className="flex items-center gap-2">
+                                                    <CheckCircle className="h-5 w-5" />
+                                                    Verification Details
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-gray-600">Agent Name</Label>
+                                                    <p className="text-base">{requestData.verification.agents_name || 'N/A'}</p>
+                                                </div>
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-gray-600">Shipment Classification</Label>
+                                                    <p className="text-base">{requestData.verification.shipment_classification || 'N/A'}</p>
+                                                </div>
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-gray-600">Cargo Service</Label>
+                                                    <p className="text-base">{requestData.verification.cargo_service || 'N/A'}</p>
+                                                </div>
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-gray-600">Rate Bracket</Label>
+                                                    <p className="text-base">{requestData.verification.rate_bracket || 'N/A'}</p>
+                                                </div>
+                                                {requestData.verification.listed_commodities && (
+                                                    <div className="md:col-span-2">
+                                                        <Label className="text-sm font-semibold text-gray-600">Listed Commodities</Label>
+                                                        <p className="text-base">{requestData.verification.listed_commodities}</p>
+                                                    </div>
+                                                )}
+                                                {requestData.verification.verification_notes && (
+                                                    <div className="md:col-span-2">
+                                                        <Label className="text-sm font-semibold text-gray-600">Verification Notes</Label>
+                                                        <p className="text-base">{requestData.verification.verification_notes}</p>
+                                                    </div>
+                                                )}
+                                            </CardContent>
+                                        </Card>
+                                    )}
+
+                                    {/* Box Details */}
+                                    {requestData.verification?.boxes && Array.isArray(requestData.verification.boxes) && requestData.verification.boxes.length > 0 && (
+                                        <Card>
+                                            <CardHeader>
+                                                <CardTitle className="flex items-center gap-2">
+                                                    <Package className="h-5 w-5" />
+                                                    Box Details
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent>
+                                                <div className="space-y-4">
+                                                    {requestData.verification.boxes.map((box: any, index: number) => (
+                                                        <div key={index} className="border rounded-lg p-4">
+                                                            <h4 className="font-semibold mb-3">Box {index + 1} {box.quantity > 1 && `(×${box.quantity})`}</h4>
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                                <div>
+                                                                    <Label className="text-sm font-semibold text-gray-600">Classification</Label>
+                                                                    <p className="text-base">{box.classification || box.shipment_classification || 'N/A'}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <Label className="text-sm font-semibold text-gray-600">Items</Label>
+                                                                    <p className="text-base">{box.items || 'N/A'}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <Label className="text-sm font-semibold text-gray-600">Dimensions (L × W × H cm)</Label>
+                                                                    <p className="text-base">
+                                                                        {(() => {
+                                                                            const length = parseNumericValue(box.length);
+                                                                            const width = parseNumericValue(box.width);
+                                                                            const height = parseNumericValue(box.height);
+                                                                            if (length === 'N/A' || width === 'N/A' || height === 'N/A') {
+                                                                                return 'N/A';
+                                                                            }
+                                                                            const l = typeof length === 'number' ? length.toFixed(2) : length;
+                                                                            const w = typeof width === 'number' ? width.toFixed(2) : width;
+                                                                            const h = typeof height === 'number' ? height.toFixed(2) : height;
+                                                                            return `${l} × ${w} × ${h}`;
+                                                                        })()}
+                                                                    </p>
+                                                                </div>
+                                                                <div>
+                                                                    <Label className="text-sm font-semibold text-gray-600">Volumetric Weight (VM)</Label>
+                                                                    <p className="text-base">
+                                                                        {formatWeight(box.vm || box.volumetric_weight)}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    )}
+
+                                    {/* Status Information */}
+                                    <Card>
+                                        <CardHeader>
+                                            <CardTitle className="flex items-center gap-2">
+                                                <FileText className="h-5 w-5" />
+                                                Status Information
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <Label className="text-sm font-semibold text-gray-600">Request Status</Label>
+                                                <Badge className={getStatusBadgeColor(requestData.status)}>
+                                                    {requestData.status || 'N/A'}
+                                                </Badge>
+                                            </div>
+                                            {requestData.createdAt && (
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-gray-600">Created At</Label>
+                                                    <p className="text-base">
+                                                        {new Date(requestData.createdAt).toLocaleString()}
+                                                    </p>
+                                                </div>
+                                            )}
+                                            {requestData.updatedAt && (
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-gray-600">Updated At</Label>
+                                                    <p className="text-base">
+                                                        {new Date(requestData.updatedAt).toLocaleString()}
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </CardContent>
+                                    </Card>
+                                </div>
+
+                                <div className="mt-6 flex justify-end">
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => setShowRequestDetailsDialog(false)}
+                                    >
+                                        Close
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }
