@@ -4538,10 +4538,6 @@ export default function InvoiceRequestsPage() {
           }}
           currentUser={userProfile}
           viewOnly={true}
-          onPrint={(booking) => {
-            setBookingToPrint(booking);
-            setShowPrintView(true);
-          }}
         />
       )}
 

@@ -15,7 +15,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { secureLog } from '@/lib/secure-logger';
-import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Printer } from 'lucide-react';
+import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Download } from 'lucide-react';
+import { generateBookingPDF, type BookingPDFData } from '../../pdfGenerator';
 
 interface BookingReviewModalProps {
   booking: any;
@@ -24,7 +25,6 @@ interface BookingReviewModalProps {
   onReviewComplete: () => void;
   currentUser: any;
   viewOnly?: boolean; // If true, hide approve/reject buttons and make it view-only
-  onPrint?: (booking: any) => void; // Optional print handler
 }
 
 export default function BookingReviewModal({
@@ -34,9 +34,9 @@ export default function BookingReviewModal({
   onReviewComplete,
   currentUser,
   viewOnly = false,
-  onPrint,
 }: BookingReviewModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingImageTitle, setViewingImageTitle] = useState<string>('');
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -210,6 +210,233 @@ export default function BookingReviewModal({
     }
   };
 
+  const handleDownloadPDF = async () => {
+    try {
+      setIsGeneratingPDF(true);
+
+      // Fetch full booking data from backend (invoiceRequestCollection)
+      const result = await apiClient.getBookingForReview(booking._id);
+      const fullBooking = result.success && result.data ? result.data : booking;
+
+      // Extract sender and receiver data
+      const senderData = fullBooking.sender || {};
+      const receiverData = fullBooking.receiver || {};
+
+      // Get service code
+      const serviceCode = fullBooking.service || 
+                         fullBooking.service_code ||
+                         fullBooking.request_id?.service ||
+                         fullBooking.request_id?.service_code ||
+                         '';
+
+      // Get AWB number
+      const awbNumber = fullBooking.awb ||
+                       fullBooking.awb_number ||
+                       fullBooking.awbNumber ||
+                       fullBooking.request_id?.awb ||
+                       fullBooking.request_id?.awb_number ||
+                       fullBooking.booking?.awb_number ||
+                       '';
+
+      // Get reference number (booking ID or invoice request ID)
+      const referenceNumber = fullBooking._id?.toString() ||
+                             fullBooking.request_id?._id?.toString() ||
+                             fullBooking.booking_id ||
+                             '';
+
+      // Extract items
+      const bookingItems = Array.isArray(fullBooking.items) ? fullBooking.items :
+                           Array.isArray(fullBooking.orderItems) ? fullBooking.orderItems :
+                           Array.isArray(fullBooking.listedItems) ? fullBooking.listedItems :
+                           [];
+
+      // Map items to PDF format
+      const pdfItems = bookingItems.map((item: any, index: number) => ({
+        id: item?.id || item?._id?.toString() || `item-${index}`,
+        commodity: item?.commodity || item?.name || item?.description || item?.item || item?.title || 'N/A',
+        qty: item?.qty || item?.quantity || item?.count || 1
+      }));
+
+      // Get images from identityDocuments (primary source) or fallback locations
+      const getImageSrc = (imageField: string | undefined): string | undefined => {
+        if (!imageField) return undefined;
+        if (imageField.startsWith('data:image') || imageField.startsWith('http')) {
+          return imageField;
+        }
+        return imageField;
+      };
+
+      const eidFrontImage = getImageSrc(
+        fullBooking.identityDocuments?.eidFrontImage ||
+        fullBooking.collections?.identityDocuments?.eidFrontImage ||
+        fullBooking.id_front_image ||
+        fullBooking.idFrontImage
+      );
+
+      const eidBackImage = getImageSrc(
+        fullBooking.identityDocuments?.eidBackImage ||
+        fullBooking.collections?.identityDocuments?.eidBackImage ||
+        fullBooking.id_back_image ||
+        fullBooking.idBackImage
+      );
+
+      const philippinesIdFront = getImageSrc(
+        fullBooking.identityDocuments?.philippinesIdFront ||
+        fullBooking.collections?.identityDocuments?.philippinesIdFront ||
+        fullBooking.philippinesIdFront ||
+        fullBooking.philippines_id_front
+      );
+
+      const philippinesIdBack = getImageSrc(
+        fullBooking.identityDocuments?.philippinesIdBack ||
+        fullBooking.collections?.identityDocuments?.philippinesIdBack ||
+        fullBooking.philippinesIdBack ||
+        fullBooking.philippines_id_back
+      );
+
+      // Collect customer images
+      const allCustomerImages: string[] = [];
+      if (Array.isArray(fullBooking.identityDocuments?.customerImages)) {
+        allCustomerImages.push(...fullBooking.identityDocuments.customerImages);
+      }
+      if (Array.isArray(fullBooking.collections?.identityDocuments?.customerImages)) {
+        allCustomerImages.push(...fullBooking.collections.identityDocuments.customerImages);
+      }
+      if (Array.isArray(fullBooking.customerImages)) {
+        allCustomerImages.push(...fullBooking.customerImages);
+      }
+      const singularCustomerImage = fullBooking.identityDocuments?.customerImage ||
+                                   fullBooking.collections?.identityDocuments?.customerImage ||
+                                   fullBooking.customerImage;
+      const customerImages = singularCustomerImage && !allCustomerImages.includes(singularCustomerImage)
+        ? [...allCustomerImages, singularCustomerImage]
+        : allCustomerImages.filter(Boolean);
+
+      // Get delivery options
+      const senderDeliveryOption = senderData.deliveryOption || 
+                                  fullBooking.sender_delivery_option ||
+                                  (fullBooking.sender?.deliveryOption) ||
+                                  'warehouse';
+      
+      const receiverDeliveryOption = receiverData.deliveryOption ||
+                                    fullBooking.receiver_delivery_option ||
+                                    (fullBooking.receiver?.deliveryOption) ||
+                                    'warehouse';
+
+      // Get declaration text
+      const declarationText = fullBooking.declarationText ||
+                             fullBooking.declaration_text ||
+                             fullBooking.notes ||
+                             undefined;
+
+      // Get submission timestamp
+      const submissionTimestamp = fullBooking.createdAt ||
+                                 fullBooking.created_at ||
+                                 fullBooking.submissionTimestamp ||
+                                 undefined;
+
+      // Map to PDF data format
+      const pdfData: BookingPDFData = {
+        referenceNumber: referenceNumber,
+        bookingId: fullBooking._id?.toString(),
+        awb: awbNumber || undefined,
+        service: serviceCode,
+        sender: {
+          fullName: senderData.fullName ||
+                   senderData.name ||
+                   fullBooking.customer_name ||
+                   fullBooking.name ||
+                   '',
+          completeAddress: senderData.completeAddress ||
+                          senderData.address ||
+                          fullBooking.sender_address ||
+                          fullBooking.senderAddress ||
+                          fullBooking.origin_place ||
+                          fullBooking.origin ||
+                          '',
+          contactNo: senderData.contactNo ||
+                    senderData.phone ||
+                    senderData.phoneNumber ||
+                    fullBooking.customer_phone ||
+                    fullBooking.phone ||
+                    '',
+          emailAddress: senderData.emailAddress ||
+                      senderData.email ||
+                      fullBooking.customer_email ||
+                      fullBooking.email ||
+                      '',
+          agentName: senderData.agentName ||
+                   fullBooking.sales_agent_name ||
+                   fullBooking.agentName ||
+                   fullBooking.agent?.name ||
+                   fullBooking.agent?.full_name ||
+                   fullBooking.created_by_employee?.full_name ||
+                   '',
+          deliveryOption: (senderDeliveryOption === 'pickup' || senderDeliveryOption === 'warehouse') 
+                         ? senderDeliveryOption 
+                         : 'warehouse'
+        },
+        receiver: {
+          fullName: receiverData.fullName ||
+                   receiverData.name ||
+                   fullBooking.receiver_name ||
+                   fullBooking.receiverName ||
+                   '',
+          completeAddress: receiverData.completeAddress ||
+                          receiverData.address ||
+                          fullBooking.receiver_address ||
+                          fullBooking.receiverAddress ||
+                          '',
+          contactNo: receiverData.contactNo ||
+                    receiverData.phone ||
+                    receiverData.phoneNumber ||
+                    fullBooking.receiver_phone ||
+                    fullBooking.receiverPhone ||
+                    '',
+          emailAddress: receiverData.emailAddress ||
+                       receiverData.email ||
+                       fullBooking.receiver_email ||
+                       fullBooking.receiverEmail ||
+                       '',
+          deliveryOption: (receiverDeliveryOption === 'address' || receiverDeliveryOption === 'warehouse')
+                         ? receiverDeliveryOption
+                         : 'warehouse',
+          numberOfBoxes: fullBooking.number_of_boxes ||
+                        fullBooking.numberOfBoxes ||
+                        fullBooking.receiver?.numberOfBoxes ||
+                        undefined
+        },
+        items: pdfItems,
+        eidFrontImage: eidFrontImage,
+        eidBackImage: eidBackImage,
+        philippinesIdFront: philippinesIdFront,
+        philippinesIdBack: philippinesIdBack,
+        customerImage: customerImages.length > 0 ? customerImages[0] : undefined,
+        customerImages: customerImages.length > 0 ? customerImages : undefined,
+        submissionTimestamp: submissionTimestamp,
+        declarationText: declarationText
+      };
+
+      // Generate and download PDF
+      await generateBookingPDF(pdfData);
+
+      toast({
+        title: 'Success',
+        description: 'PDF generated and downloaded successfully',
+      });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      secureLog.error('Error generating PDF', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Failed to generate PDF. Please try again.',
+      });
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
   // Helper function to get image source
   const getImageSrc = (imageField: string | undefined) => {
     if (!imageField) return null;
@@ -312,19 +539,25 @@ export default function BookingReviewModal({
               ).toUpperCase()}
             </p>
               </div>
-              {onPrint && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-1"
-                  onClick={() => {
-                    onPrint(booking);
-                  }}
-                >
-                  <Printer className="h-4 w-4 mr-2" />
-                  Print
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1"
+                onClick={handleDownloadPDF}
+                disabled={isGeneratingPDF}
+              >
+                {isGeneratingPDF ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download PDF
+                  </>
+                )}
+              </Button>
             </div>
           </DialogHeader>
 
@@ -710,15 +943,7 @@ export default function BookingReviewModal({
           )}
           {viewOnly && (
             <div className="flex justify-end gap-4 pt-4">
-              {onPrint && (
-                <Button
-                  variant="outline"
-                  onClick={() => onPrint(booking)}
-                >
-                  <Printer className="h-4 w-4 mr-2" />
-                  Print
-                </Button>
-              )}
+              {/* New button placeholder - functionality to be added */}
               <Button variant="outline" onClick={onClose}>
                 <X className="h-4 w-4 mr-2" />
                 Close
