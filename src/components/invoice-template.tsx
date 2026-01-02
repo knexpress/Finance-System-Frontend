@@ -95,6 +95,12 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
             {data.batchNumber ? (
               <p><span className="font-semibold">Batch #</span> {data.batchNumber}</p>
             ) : null}
+            {/* Show shipment classification for UAE TO PH (FLOMIC or COMMERCIAL only) */}
+            {data.isUaeToPh && data.shipmentClassification && 
+             (data.shipmentClassification.toUpperCase() === 'FLOMIC' || 
+              data.shipmentClassification.toUpperCase() === 'COMMERCIAL') ? (
+              <p><span className="font-semibold">Classification:</span> {data.shipmentClassification.toUpperCase()}</p>
+            ) : null}
           </div>
         </div>
       </div>

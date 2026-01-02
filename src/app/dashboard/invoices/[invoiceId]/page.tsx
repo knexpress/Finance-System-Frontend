@@ -70,6 +70,7 @@ export default function InvoicePage() {
         amount: '',
         pickup_charge: '',
         delivery_charge: '',
+        insurance_charge: '',
         tax_rate: '',
         due_date: '',
         notes: ''
@@ -142,6 +143,19 @@ export default function InvoicePage() {
                     console.log('✅ Setting invoice data:', result.data);
                     setInvoice(result.data);
                     const invoiceData = result.data as any;
+                    // Get insurance charge from invoice (line_items or direct field)
+                    let insuranceValue = '';
+                    if (invoiceData.insurance_charge !== undefined && invoiceData.insurance_charge !== null) {
+                        insuranceValue = parseFloat(invoiceData.insurance_charge).toString();
+                    } else if (invoiceData.line_items && invoiceData.line_items.length > 0) {
+                        const insuranceItem = invoiceData.line_items.find((item: any) => 
+                            item.description?.toLowerCase().includes('insurance')
+                        );
+                        if (insuranceItem) {
+                            insuranceValue = parseFloat(insuranceItem.total || insuranceItem.unit_price || 0).toString();
+                        }
+                    }
+                    
                     setEditForm({
                         receiver_name: invoiceData.receiver_name || '',
                         receiver_address: invoiceData.receiver_address || '',
@@ -149,6 +163,7 @@ export default function InvoicePage() {
                         amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
                         pickup_charge: invoiceData.pickup_charge ? parseFloat(invoiceData.pickup_charge).toString() : '',
                         delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
+                        insurance_charge: insuranceValue,
                         tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
                         due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
                         notes: invoiceData.notes || ''
@@ -405,15 +420,20 @@ export default function InvoicePage() {
     pickupCharge = parseDecimal(invoice.pickup_charge || 0, 2);
     deliveryCharge = deliveryChargeFromInvoice; // Always use invoice.delivery_charge
     
-    // Only use line_items for insurance charge if not set in direct fields
-    // (insurance is typically not directly editable, so get from line_items or request)
+    // Only get insurance from database (line_items or invoice field) - no fallback calculation
+    // Check for direct insurance_charge field first
+    if (invoice.insurance_charge !== undefined && invoice.insurance_charge !== null) {
+        insuranceCharge = parseDecimal(invoice.insurance_charge, 2);
+    }
+    
+    // Also use line_items for insurance charge if found there
     // Also use line_items as fallback for pickup_charge if not in invoice object (for backward compatibility)
     if (invoice.line_items && invoice.line_items.length > 0) {
         invoice.line_items.forEach((item: any) => {
             const itemTotal = parseDecimal(item.total || item.unit_price, 2);
             const description = item.description?.toLowerCase() || '';
-            // Use line_items for insurance (other charges come from direct fields)
-            if (description.includes('insurance')) {
+            // Use line_items for insurance (only if not already set from direct field)
+            if (description.includes('insurance') && insuranceCharge === 0) {
                 insuranceCharge += itemTotal;
             }
             // Fallback: If pickup_charge is not in invoice object or is 0, read from line_items
@@ -448,27 +468,8 @@ export default function InvoicePage() {
         });
     }
     
-    // Get insurance charge from invoice or request (if not already set)
-    if (insuranceCharge === 0) {
-        const request = invoice.request_id;
-        if (request) {
-            const insured = request.insured || request.booking?.insured || request.sender?.insured || false;
-            const declaredAmount = request.declaredAmount || request.declared_amount || 
-                                 request.booking?.declaredAmount || request.booking?.declared_amount ||
-                                 request.sender?.declaredAmount || request.sender?.declared_amount || 0;
-            if (insured === true && declaredAmount) {
-                let parsedDeclaredAmount = 0;
-                if (typeof declaredAmount === 'object' && declaredAmount.$numberDecimal) {
-                    parsedDeclaredAmount = parseFloat(declaredAmount.$numberDecimal);
-                } else if (typeof declaredAmount === 'number') {
-                    parsedDeclaredAmount = declaredAmount;
-                } else {
-                    parsedDeclaredAmount = parseFloat(declaredAmount.toString());
-                }
-                insuranceCharge = parseDecimal(parsedDeclaredAmount * 0.01, 2);
-            }
-        }
-    }
+    // Insurance charge is now only from database (line_items or invoice field)
+    // If not found in database, it remains 0 (no fallback calculation)
     
     // For PH TO UAE tax invoices: use delivery_charge from DB as-is (backend-calculated)
     if (isPhToUae && invoiceType === 'tax') {
@@ -774,17 +775,17 @@ export default function InvoicePage() {
           }
         }
       } else if (isUaeToPh && !isFlomicOrPersonal) {
-        // For UAE to PH commercial shipments: Always use subtotal (includes insurance) instead of database total
-        // This ensures insurance charge is included in the total
-        total = subtotal;
-        console.log('✅ UAE TO PH Commercial: Using subtotal (includes insurance) instead of database total:', {
+        // For UAE to PH commercial shipments: Use database total_amount (trust database value)
+        // Database total_amount is the source of truth
+        total = parseDecimal(invoice.total_amount || subtotal, 2);
+        console.log('✅ UAE TO PH Commercial: Using database total_amount:', {
           databaseTotal: invoice.total_amount,
           subtotal,
           insuranceCharge,
           shippingCharge,
           pickupCharge,
           deliveryCharge,
-          newTotal: total
+          finalTotal: total
         });
       }
       console.log('✅ Using database tax/total values:', {
@@ -1366,6 +1367,10 @@ export default function InvoicePage() {
             if (editForm.amount) payload.amount = parseFloat(editForm.amount);
             if (editForm.pickup_charge) payload.pickup_charge = parseFloat(editForm.pickup_charge);
             if (editForm.delivery_charge) payload.delivery_charge = parseFloat(editForm.delivery_charge);
+            // Include insurance_charge (can be 0 to remove insurance)
+            if (editForm.insurance_charge !== undefined && editForm.insurance_charge !== '') {
+                payload.insurance_charge = parseFloat(editForm.insurance_charge) || 0;
+            }
             if (editForm.tax_rate) payload.tax_rate = parseFloat(editForm.tax_rate);
             if (editForm.due_date) payload.due_date = new Date(editForm.due_date).toISOString();
             
@@ -1373,9 +1378,10 @@ export default function InvoicePage() {
             const shippingCharge = editForm.amount ? parseFloat(editForm.amount) : 0;
             const pickupCharge = editForm.pickup_charge ? parseFloat(editForm.pickup_charge) : 0;
             const deliveryCharge = editForm.delivery_charge ? parseFloat(editForm.delivery_charge) : 0;
+            const insuranceCharge = editForm.insurance_charge ? parseFloat(editForm.insurance_charge) : 0;
             const taxRate = editForm.tax_rate ? parseFloat(editForm.tax_rate) : 0;
             
-            const subtotal = shippingCharge + pickupCharge + deliveryCharge;
+            const subtotal = shippingCharge + pickupCharge + deliveryCharge + insuranceCharge;
             const taxAmount = deliveryCharge > 0 && taxRate > 0 ? (deliveryCharge * taxRate) / 100 : 0;
             const total = subtotal + taxAmount;
             
@@ -1537,6 +1543,19 @@ export default function InvoicePage() {
                 setInvoice(refreshResult.data);
                 
                 // Update all edit forms with fresh data
+                // Get insurance charge from invoice (line_items or direct field)
+                let insuranceValue = '';
+                if (invoiceData.insurance_charge !== undefined && invoiceData.insurance_charge !== null) {
+                    insuranceValue = parseFloat(invoiceData.insurance_charge).toString();
+                } else if (invoiceData.line_items && invoiceData.line_items.length > 0) {
+                    const insuranceItem = invoiceData.line_items.find((item: any) => 
+                        item.description?.toLowerCase().includes('insurance')
+                    );
+                    if (insuranceItem) {
+                        insuranceValue = parseFloat(insuranceItem.total || insuranceItem.unit_price || 0).toString();
+                    }
+                }
+                
                 setEditForm({
                     receiver_name: invoiceData.receiver_name || '',
                     receiver_address: invoiceData.receiver_address || '',
@@ -1544,6 +1563,7 @@ export default function InvoicePage() {
                     amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
                     pickup_charge: invoiceData.pickup_charge ? parseFloat(invoiceData.pickup_charge).toString() : '',
                     delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
+                    insurance_charge: insuranceValue,
                     tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
                     due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
                     notes: invoiceData.notes || ''
@@ -2015,6 +2035,18 @@ export default function InvoicePage() {
                                     onChange={(e) => handleEditChange('delivery_charge', e.target.value)}
                                 />
                             </div>
+                            <div>
+                                <Label>Insurance Charge (AED)</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={editForm.insurance_charge}
+                                    onChange={(e) => handleEditChange('insurance_charge', e.target.value)}
+                                    placeholder="0.00"
+                                />
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div>
                                 <Label>Tax Rate (%)</Label>
                                 <Input
