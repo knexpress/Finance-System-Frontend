@@ -32,17 +32,14 @@ import { apiClient } from '@/lib/api-client';
 import { apiCache } from '@/lib/api-cache';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
-import { Eye, CheckCircle, XCircle, Image as ImageIcon, Printer } from 'lucide-react';
+import { Eye, CheckCircle, XCircle, Image as ImageIcon, Download, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { createPortal } from 'react-dom';
+import { generateBookingPDF, type BookingPDFData } from '../../../../pdfGenerator';
+import { secureLog } from '@/lib/secure-logger';
 
 // Dynamically import heavy modal components to reduce initial bundle size
 const BookingReviewModal = dynamic(() => import('@/components/booking-review-modal'), {
-  loading: () => <div className="flex items-center justify-center p-8">Loading...</div>,
-  ssr: false
-});
-
-const BookingPrintView = dynamic(() => import('@/components/booking-print-view'), {
   loading: () => <div className="flex items-center justify-center p-8">Loading...</div>,
   ssr: false
 });
@@ -58,9 +55,8 @@ export default function BookingRequestsPage() {
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
-  const [showPrintView, setShowPrintView] = useState(false);
-  const [bookingToPrint, setBookingToPrint] = useState<any>(null);
   const [loadingBookingDetails, setLoadingBookingDetails] = useState(false);
+  const [generatingPDFBookingId, setGeneratingPDFBookingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50; // Show 50 items per page for better performance
   const { toast } = useToast();
@@ -235,36 +231,230 @@ export default function BookingRequestsPage() {
     fetchBookings(false); // Don't use cache, get fresh data
   };
 
-  const handlePrint = async (booking: any) => {
+  const handleDownloadPDF = async (booking: any) => {
     try {
-      setLoadingBookingDetails(true);
-      // Fetch full booking details with all images from database
+      setGeneratingPDFBookingId(booking._id);
+
+      // Fetch full booking data from backend (invoiceRequestCollection)
       const result = await apiClient.getBookingForReview(booking._id);
-      if (result.success && result.data) {
-        setBookingToPrint(result.data);
-        setShowPrintView(true);
-      } else {
-        // Fallback to using the booking from list if API fails
-        toast({
-          variant: 'destructive',
-          title: 'Warning',
-          description: (result as any).error || 'Failed to load full booking details. Showing cached data.',
-        });
-        setBookingToPrint(booking);
-        setShowPrintView(true);
+      const fullBooking = result.success && result.data ? result.data : booking;
+
+      // Extract sender and receiver data
+      const senderData = fullBooking.sender || {};
+      const receiverData = fullBooking.receiver || {};
+
+      // Get service code
+      const serviceCode = fullBooking.service || 
+                         fullBooking.service_code ||
+                         fullBooking.request_id?.service ||
+                         fullBooking.request_id?.service_code ||
+                         '';
+
+      // Get AWB number
+      const awbNumber = fullBooking.awb ||
+                       fullBooking.awb_number ||
+                       fullBooking.awbNumber ||
+                       fullBooking.request_id?.awb ||
+                       fullBooking.request_id?.awb_number ||
+                       fullBooking.booking?.awb_number ||
+                       '';
+
+      // Get reference number (booking ID or invoice request ID)
+      const referenceNumber = fullBooking._id?.toString() ||
+                             fullBooking.request_id?._id?.toString() ||
+                             fullBooking.booking_id ||
+                             '';
+
+      // Extract items
+      const bookingItems = Array.isArray(fullBooking.items) ? fullBooking.items :
+                           Array.isArray(fullBooking.orderItems) ? fullBooking.orderItems :
+                           Array.isArray(fullBooking.listedItems) ? fullBooking.listedItems :
+                           [];
+
+      // Map items to PDF format
+      const pdfItems = bookingItems.map((item: any, index: number) => ({
+        id: item?.id || item?._id?.toString() || `item-${index}`,
+        commodity: item?.commodity || item?.name || item?.description || item?.item || item?.title || 'N/A',
+        qty: item?.qty || item?.quantity || item?.count || 1
+      }));
+
+      // Get images from identityDocuments (primary source) or fallback locations
+      const getImageSrc = (imageField: string | undefined): string | undefined => {
+        if (!imageField) return undefined;
+        if (imageField.startsWith('data:image') || imageField.startsWith('http')) {
+          return imageField;
+        }
+        return imageField;
+      };
+
+      const eidFrontImage = getImageSrc(
+        fullBooking.identityDocuments?.eidFrontImage ||
+        fullBooking.collections?.identityDocuments?.eidFrontImage ||
+        fullBooking.id_front_image ||
+        fullBooking.idFrontImage
+      );
+
+      const eidBackImage = getImageSrc(
+        fullBooking.identityDocuments?.eidBackImage ||
+        fullBooking.collections?.identityDocuments?.eidBackImage ||
+        fullBooking.id_back_image ||
+        fullBooking.idBackImage
+      );
+
+      const philippinesIdFront = getImageSrc(
+        fullBooking.identityDocuments?.philippinesIdFront ||
+        fullBooking.collections?.identityDocuments?.philippinesIdFront ||
+        fullBooking.philippinesIdFront ||
+        fullBooking.philippines_id_front
+      );
+
+      const philippinesIdBack = getImageSrc(
+        fullBooking.identityDocuments?.philippinesIdBack ||
+        fullBooking.collections?.identityDocuments?.philippinesIdBack ||
+        fullBooking.philippinesIdBack ||
+        fullBooking.philippines_id_back
+      );
+
+      // Collect customer images
+      const allCustomerImages: string[] = [];
+      if (Array.isArray(fullBooking.identityDocuments?.customerImages)) {
+        allCustomerImages.push(...fullBooking.identityDocuments.customerImages);
       }
+      if (Array.isArray(fullBooking.collections?.identityDocuments?.customerImages)) {
+        allCustomerImages.push(...fullBooking.collections.identityDocuments.customerImages);
+      }
+      if (Array.isArray(fullBooking.customerImages)) {
+        allCustomerImages.push(...fullBooking.customerImages);
+      }
+      const singularCustomerImage = fullBooking.identityDocuments?.customerImage ||
+                                   fullBooking.collections?.identityDocuments?.customerImage ||
+                                   fullBooking.customerImage;
+      const customerImages = singularCustomerImage && !allCustomerImages.includes(singularCustomerImage)
+        ? [...allCustomerImages, singularCustomerImage]
+        : allCustomerImages.filter(Boolean);
+
+      // Get delivery options
+      const senderDeliveryOption = senderData.deliveryOption || 
+                                  fullBooking.sender_delivery_option ||
+                                  (fullBooking.sender?.deliveryOption) ||
+                                  'warehouse';
+      
+      const receiverDeliveryOption = receiverData.deliveryOption ||
+                                    fullBooking.receiver_delivery_option ||
+                                    (fullBooking.receiver?.deliveryOption) ||
+                                    'warehouse';
+
+      // Get declaration text
+      const declarationText = fullBooking.declarationText ||
+                             fullBooking.declaration_text ||
+                             fullBooking.notes ||
+                             undefined;
+
+      // Get submission timestamp
+      const submissionTimestamp = fullBooking.createdAt ||
+                                 fullBooking.created_at ||
+                                 fullBooking.submissionTimestamp ||
+                                 undefined;
+
+      // Map to PDF data format
+      const pdfData: BookingPDFData = {
+        referenceNumber: referenceNumber,
+        bookingId: fullBooking._id?.toString(),
+        awb: awbNumber || undefined,
+        service: serviceCode,
+        sender: {
+          fullName: senderData.fullName ||
+                   senderData.name ||
+                   fullBooking.customer_name ||
+                   fullBooking.name ||
+                   '',
+          completeAddress: senderData.completeAddress ||
+                          senderData.address ||
+                          fullBooking.sender_address ||
+                          fullBooking.senderAddress ||
+                          fullBooking.origin_place ||
+                          fullBooking.origin ||
+                          '',
+          contactNo: senderData.contactNo ||
+                    senderData.phone ||
+                    senderData.phoneNumber ||
+                    fullBooking.customer_phone ||
+                    fullBooking.phone ||
+                    '',
+          emailAddress: senderData.emailAddress ||
+                      senderData.email ||
+                      fullBooking.customer_email ||
+                      fullBooking.email ||
+                      '',
+          agentName: senderData.agentName ||
+                   fullBooking.sales_agent_name ||
+                   fullBooking.agentName ||
+                   fullBooking.agent?.name ||
+                   fullBooking.agent?.full_name ||
+                   fullBooking.created_by_employee?.full_name ||
+                   '',
+          deliveryOption: (senderDeliveryOption === 'pickup' || senderDeliveryOption === 'warehouse') 
+                         ? senderDeliveryOption 
+                         : 'warehouse'
+        },
+        receiver: {
+          fullName: receiverData.fullName ||
+                   receiverData.name ||
+                   fullBooking.receiver_name ||
+                   fullBooking.receiverName ||
+                   '',
+          completeAddress: receiverData.completeAddress ||
+                          receiverData.address ||
+                          fullBooking.receiver_address ||
+                          fullBooking.receiverAddress ||
+                          '',
+          contactNo: receiverData.contactNo ||
+                    receiverData.phone ||
+                    receiverData.phoneNumber ||
+                    fullBooking.receiver_phone ||
+                    fullBooking.receiverPhone ||
+                    '',
+          emailAddress: receiverData.emailAddress ||
+                       receiverData.email ||
+                       fullBooking.receiver_email ||
+                       fullBooking.receiverEmail ||
+                       '',
+          deliveryOption: (receiverDeliveryOption === 'address' || receiverDeliveryOption === 'warehouse')
+                         ? receiverDeliveryOption
+                         : 'warehouse',
+          numberOfBoxes: fullBooking.number_of_boxes ||
+                        fullBooking.numberOfBoxes ||
+                        fullBooking.receiver?.numberOfBoxes ||
+                        undefined
+        },
+        items: pdfItems,
+        eidFrontImage: eidFrontImage,
+        eidBackImage: eidBackImage,
+        philippinesIdFront: philippinesIdFront,
+        philippinesIdBack: philippinesIdBack,
+        customerImage: customerImages.length > 0 ? customerImages[0] : undefined,
+        customerImages: customerImages.length > 0 ? customerImages : undefined,
+        submissionTimestamp: submissionTimestamp,
+        declarationText: declarationText
+      };
+
+      // Generate and download PDF
+      await generateBookingPDF(pdfData);
+
+      toast({
+        title: 'Success',
+        description: 'PDF generated and downloaded successfully',
+      });
     } catch (error) {
-      console.error('Error fetching booking details:', error);
-      // Fallback to using the booking from list
+      console.error('Error generating PDF:', error);
+      secureLog.error('Error generating PDF', error);
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Failed to load full booking details. Showing cached data.',
+        description: 'Failed to generate PDF. Please try again.',
       });
-    setBookingToPrint(booking);
-    setShowPrintView(true);
     } finally {
-      setLoadingBookingDetails(false);
+      setGeneratingPDFBookingId(null);
     }
   };
 
@@ -683,11 +873,20 @@ export default function BookingRequestsPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handlePrint(booking)}
-                            disabled={loadingBookingDetails}
+                            onClick={() => handleDownloadPDF(booking)}
+                            disabled={loadingBookingDetails || generatingPDFBookingId === booking._id}
                           >
-                            <Printer className="h-4 w-4 mr-2" />
-                            Print
+                            {generatingPDFBookingId === booking._id ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Generating...
+                              </>
+                            ) : (
+                              <>
+                                <Download className="h-4 w-4 mr-2" />
+                                Download PDF
+                              </>
+                            )}
                           </Button>
                           <Button
                             variant="outline"
@@ -770,25 +969,6 @@ export default function BookingRequestsPage() {
         />
       )}
 
-      {showPrintView && bookingToPrint && (
-        <div className="fixed inset-0 z-50 bg-white overflow-auto">
-          <div className="absolute top-4 right-4">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowPrintView(false);
-                setBookingToPrint(null);
-              }}
-            >
-              Close
-            </Button>
-          </div>
-          <BookingPrintView booking={bookingToPrint} onClose={() => {
-            setShowPrintView(false);
-            setBookingToPrint(null);
-          }} />
-        </div>
-      )}
     </div>
   );
 }

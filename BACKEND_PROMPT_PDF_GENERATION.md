@@ -382,3 +382,4 @@ If you have questions about the data structure or need clarification on any fiel
 - `src/components/booking-review-modal.tsx` - PDF generation handler
 - `pdfGenerator.ts` - PDF format specification
 
+
