@@ -441,10 +441,10 @@ export default function BookingRequestsPage() {
       // Generate and download PDF
       await generateBookingPDF(pdfData);
 
-      toast({
+        toast({
         title: 'Success',
         description: 'PDF generated and downloaded successfully',
-      });
+        });
     } catch (error) {
       console.error('Error generating PDF:', error);
       secureLog.error('Error generating PDF', error);

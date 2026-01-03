@@ -329,7 +329,6 @@ export default function InvoiceRequestsPage() {
   const [fullRequestDetails, setFullRequestDetails] = useState<any>(null);
   const [showPrintView, setShowPrintView] = useState(false);
   const [bookingToPrint, setBookingToPrint] = useState<any>(null);
-  const [processingRequests, setProcessingRequests] = useState<Set<string>>(new Set()); // Track requests being processed
   const [hasDelivery, setHasDelivery] = useState(false); // Delivery required flag for PH TO UAE
   const [customerTRN, setCustomerTRN] = useState(''); // Optional customer TRN
   const [batchNumber, setBatchNumber] = useState(''); // Optional batch number
@@ -342,10 +341,6 @@ export default function InvoiceRequestsPage() {
     request?.service_code ||
     request?.verification?.service_code ||
     request?.shipment?.service_code ||
-    request?.request_id?.service_code ||
-    request?.booking?.service_code ||
-    request?.request_id?.verification?.service_code ||
-    request?.request_id?.booking?.service_code ||
     '';
 
   const { toast } = useToast();
@@ -877,13 +872,6 @@ export default function InvoiceRequestsPage() {
     'request_id'
   ];
 
-  // Check if all requests on current page are IN_PROGRESS (verified)
-  const checkAllRequestsVerified = useCallback((requests: any[]): boolean => {
-    if (!requests || requests.length === 0) return false;
-    // For Operations, check if all requests are IN_PROGRESS
-    return requests.every(request => request.status === 'IN_PROGRESS');
-  }, []);
-
   const fetchInvoiceRequests = useCallback(async (page: number = currentPage, useCache: boolean = true, filterOverride?: string) => {
     // If a fetch is already in progress, queue this request
     if (isFetchingRef.current) {
@@ -981,54 +969,6 @@ export default function InvoiceRequestsPage() {
       }
     }
   }, [statusFilter, userProfile?.department?.name, pageLimit]); // Don't include toast or currentPage to prevent unnecessary re-renders
-
-  // Handle verification completion with auto-advance to next page (for Operations)
-  // Define this after fetchInvoiceRequests so it can use it
-  const handleVerificationComplete = useCallback(async () => {
-    // Refresh the current page to get updated statuses
-    try {
-      const essentialFields = getEssentialFields();
-      const filters = userProfile?.department?.name === 'Operations' 
-        ? { status: 'IN_PROGRESS' } 
-        : undefined;
-      
-      const result = await apiClient.getInvoiceRequestsPage(currentPage, pageLimit, filters, false, essentialFields);
-      
-      if (result.success) {
-        const data = (result.data as any[]) || [];
-        const currentPagination = result.pagination;
-        
-        // Check if all requests on current page are IN_PROGRESS
-        const allVerified = checkAllRequestsVerified(data);
-        
-        // If all are verified and there's a next page, advance to next page
-        if (allVerified && currentPagination && currentPagination.hasNextPage && currentPage < currentPagination.pages) {
-          const nextPage = currentPage + 1;
-          secureLog.debug('All requests verified, advancing to next page', { 
-            currentPage, 
-            nextPage,
-            totalPages: currentPagination.pages,
-            verifiedCount: data.length
-          });
-          
-          // Update state and fetch next page
-          setCurrentPage(nextPage);
-          fetchInvoiceRequests(nextPage, false);
-        } else {
-          // Just refresh the current page data
-          setInvoiceRequests(data);
-          setPagination(currentPagination);
-        }
-      } else {
-        // If fetch failed, just refresh normally
-        fetchInvoiceRequests(currentPage, false);
-      }
-    } catch (error) {
-      secureLog.error('Error in handleVerificationComplete', error);
-      // Fallback to normal refresh
-      fetchInvoiceRequests(currentPage, false);
-    }
-  }, [currentPage, pageLimit, userProfile?.department?.name, checkAllRequestsVerified, fetchInvoiceRequests]);
 
   // Helper function to update shipment_status_history in booking when invoice request status changes
   const updateBookingShipmentStatusHistory = async (request: any, newStatus: string) => {
@@ -1430,9 +1370,6 @@ export default function InvoiceRequestsPage() {
       // Find the request to get booking_id
       const request = invoiceRequests.find(r => r._id === id);
       
-      // Add to processing set to show loading
-      setProcessingRequests(prev => new Set(prev).add(id));
-      
       // Optimistic UI update - immediately update the local state
       if (action === 'start') {
         setInvoiceRequests(prevRequests => 
@@ -1457,73 +1394,39 @@ export default function InvoiceRequestsPage() {
       }
       
       if (result?.success) {
-        // Remove from processing set on success
-        setProcessingRequests(prev => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        
         toast({
           title: 'Success',
           description: 'Request updated successfully',
         });
         apiClient.invalidateCache('/invoice-requests');
         
-        // Don't refresh immediately - let the optimistic update stand
-        // The status has already been updated optimistically, so UI is correct
-        // Only refresh in the background after a delay to sync with backend (for pagination/counts)
-        // This prevents the flickering issue where it reverts to SUBMITTED
+        // When status changes to IN_PROGRESS, reset to page 1 and use current filter
+        // This ensures the updated item appears in the IN_PROGRESS filter immediately
         if (action === 'start') {
-          // If user is viewing SUBMITTED filter, item will disappear (correct behavior)
-          // If user is viewing IN_PROGRESS or all, item stays visible with correct status
-          // Refresh in background after longer delay to sync counts/pagination
+          setCurrentPage(1); // Reset to first page to show the new item
+          // Use current statusFilter (or 'IN_PROGRESS' if filter is 'all' or empty)
+          const filterToUse = statusFilter && statusFilter !== 'all' ? statusFilter : 'IN_PROGRESS';
+          
+          // Wait a bit longer to ensure backend has fully processed the update
+          // This prevents race conditions and ensures the item appears in the correct filter
           setTimeout(() => {
-            fetchInvoiceRequests(currentPage, false);
-          }, 2000); // Long delay in background - doesn't affect UX
+            fetchInvoiceRequests(1, false, filterToUse); // Fetch page 1 with appropriate filter
+          }, 500); // Increased delay to 500ms for better reliability
         } else {
-          // For other actions, refresh after delay
+          // For other actions, use current page
           setTimeout(() => {
             fetchInvoiceRequests(currentPage, false);
-          }, 1000);
+          }, 200);
         }
       } else {
-        // Remove from processing set on error
-        setProcessingRequests(prev => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        
         // Revert optimistic update on error
         if (action === 'start') {
-          setInvoiceRequests(prevRequests => 
-            prevRequests.map(request => 
-              request._id === id 
-                ? { ...request, status: 'SUBMITTED' }
-                : request
-            )
-          );
           fetchInvoiceRequests(currentPage, false);
         }
       }
     } catch (error) {
-      // Remove from processing set on error
-      setProcessingRequests(prev => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      
       // Revert optimistic update on error
       if (action === 'start') {
-        setInvoiceRequests(prevRequests => 
-          prevRequests.map(request => 
-            request._id === id 
-              ? { ...request, status: 'SUBMITTED' }
-              : request
-          )
-        );
         fetchInvoiceRequests(currentPage, false);
       }
       toast({
@@ -1758,8 +1661,6 @@ export default function InvoiceRequestsPage() {
         // Reset special customer fields
         setIsSpecialCustomer(false);
         setSpecialRate('');
-        // Reset insurance option to 'none' (no insurance)
-        setInsuranceOption('none');
       } else {
         // Fallback to cached request if API fails
         const request = invoiceRequests.find((req: any) => req._id === id);
@@ -1808,8 +1709,6 @@ export default function InvoiceRequestsPage() {
           // Reset special customer fields
           setIsSpecialCustomer(false);
           setSpecialRate('');
-          // Reset insurance option to 'none' (no insurance)
-          setInsuranceOption('none');
         } else {
           toast({
             variant: 'destructive',
@@ -2036,23 +1935,14 @@ export default function InvoiceRequestsPage() {
     }
 
     if (departmentName === 'Operations') {
-      const isProcessing = processingRequests.has(request._id);
       return (
         <>
           {request.status === 'SUBMITTED' && (
             <Button
               size="sm"
               onClick={() => handleOperationsAction(request._id, 'start')}
-              disabled={isProcessing}
             >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                'Start Processing'
-              )}
+              Start Processing
             </Button>
           )}
           {canCancel && (
@@ -2192,11 +2082,11 @@ export default function InvoiceRequestsPage() {
           return;
         }
         insuranceChargeValue = parseFloat((declared * 0.01).toFixed(2));
-      } else {
-        // User selected "no insurance" OR option is 'none' OR undefined/null
-        // Always set to 0 to ensure no insurance is charged
+      } else if (insuranceOption === 'none') {
+        // User explicitly selected "no insurance" - force to 0 regardless of database
         insuranceChargeValue = 0;
       }
+      // If insuranceOption is undefined/null, insuranceChargeValue remains 0
       
       // Convert request to invoice data
       // CRITICAL: For PH TO UAE, always pass pickupCharge if user entered a value (even if 0)
@@ -2211,11 +2101,11 @@ export default function InvoiceRequestsPage() {
             ? pickupChargeValue  // For PH TO UAE: Pass value even if 0 (user explicitly entered it)
             : (pickupChargeValue > 0 ? pickupChargeValue : undefined), // For other routes: Only pass if > 0
           deliveryCharge: deliveryChargeValue > 0 ? deliveryChargeValue : undefined,
-          // CRITICAL: Always pass insuranceCharge explicitly
+          // CRITICAL: Always pass insuranceCharge when user has made a selection
           // If user selected "none", pass 0 explicitly to override database
           // If user selected "percent", pass the calculated value
           // This ensures user's choice is respected, not database insured flag
-          insuranceCharge: insuranceOption === 'none' ? 0 : insuranceChargeValue, // Always pass 0 for 'none', calculated value for 'percent'
+          insuranceCharge: insuranceChargeValue, // Always pass (0 or calculated value)
           hasDelivery: isPhToUaeSelected && !isDeliveryDisabled ? hasDelivery : false, // Only for PH TO UAE, disabled if weight >= 15kg
           deliveryBaseAmount: isPhToUaeSelected && !isDeliveryDisabled && hasDelivery ? parseFloat(deliveryBaseAmount) || 20 : undefined, // Base delivery amount for PH_TO_UAE
           customerTRN: customerTRN || undefined, // Pass customer TRN to invoice data
@@ -3738,7 +3628,7 @@ export default function InvoiceRequestsPage() {
                   formatServiceCode={formatServiceCode}
                   getStatusBadgeColor={getStatusBadgeColor}
                   renderActionControls={renderActionControls}
-                  fetchInvoiceRequests={userProfile.department.name === 'Operations' ? (handleVerificationComplete || (() => fetchInvoiceRequests(currentPage, false))) : () => fetchInvoiceRequests(currentPage, false)}
+                  fetchInvoiceRequests={() => fetchInvoiceRequests(currentPage, false)}
                   onBadgeClick={handleBadgeClick}
                 />
               ))}
@@ -4538,6 +4428,10 @@ export default function InvoiceRequestsPage() {
           }}
           currentUser={userProfile}
           viewOnly={true}
+          onPrint={(booking) => {
+            setBookingToPrint(booking);
+            setShowPrintView(true);
+          }}
         />
       )}
 
