@@ -36,9 +36,6 @@ const InvoiceRequestForm = dynamic(() => import('@/components/invoice-request-fo
 const VerificationForm = dynamic(() => import('@/components/verification-form'), {
   ssr: false
 });
-const BookingPrintView = dynamic(() => import('@/components/booking-print-view'), {
-  ssr: false
-});
 import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2, ArrowUp } from 'lucide-react';
 import BookingReviewModal from '@/components/booking-review-modal';
 
@@ -327,8 +324,6 @@ export default function InvoiceRequestsPage() {
   const [showShipmentDetailsDialog, setShowShipmentDetailsDialog] = useState(false);
   const [loadingShipmentDetails, setLoadingShipmentDetails] = useState(false);
   const [fullRequestDetails, setFullRequestDetails] = useState<any>(null);
-  const [showPrintView, setShowPrintView] = useState(false);
-  const [bookingToPrint, setBookingToPrint] = useState<any>(null);
   const [hasDelivery, setHasDelivery] = useState(false); // Delivery required flag for PH TO UAE
   const [customerTRN, setCustomerTRN] = useState(''); // Optional customer TRN
   const [batchNumber, setBatchNumber] = useState(''); // Optional batch number
@@ -4428,35 +4423,9 @@ export default function InvoiceRequestsPage() {
           }}
           currentUser={userProfile}
           viewOnly={true}
-          onPrint={(booking) => {
-            setBookingToPrint(booking);
-            setShowPrintView(true);
-          }}
         />
       )}
 
-      {showPrintView && bookingToPrint && (
-        <div className="fixed inset-0 z-50 bg-white overflow-auto">
-          <div className="absolute top-4 right-4">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowPrintView(false);
-                setBookingToPrint(null);
-              }}
-            >
-              Close
-            </Button>
-          </div>
-          <BookingPrintView
-            booking={bookingToPrint}
-            onClose={() => {
-              setShowPrintView(false);
-              setBookingToPrint(null);
-            }}
-          />
-        </div>
-      )}
 
       {/* Scroll to Top Button */}
       {showScrollToTop && (
