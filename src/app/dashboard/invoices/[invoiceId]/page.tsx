@@ -7,9 +7,9 @@ import TaxInvoiceTemplate from "@/components/tax-invoice-template";
 import { apiClient } from "@/lib/api-client";
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer, FileSpreadsheet, Database } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
     Dialog,
@@ -60,6 +60,7 @@ export default function InvoicePage() {
     const [showEditDialog, setShowEditDialog] = useState(false);
     const [showCodEditDialog, setShowCodEditDialog] = useState(false);
     const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
+    const [showRequestDataDialog, setShowRequestDataDialog] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
     // Local state for COD invoice edits (frontend-only, does not affect backend)
     const [localCodEdits, setLocalCodEdits] = useState<any>(null);
@@ -1716,6 +1717,14 @@ export default function InvoicePage() {
                             <Download className="h-4 w-4 mr-2" />
                             Download PDF
                         </Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowRequestDataDialog(true)}
+                            className="bg-purple-50 hover:bg-purple-100 border-purple-200"
+                        >
+                            <Database className="h-4 w-4 mr-2" />
+                            View Request Data
+                        </Button>
                     </div>
                 </div>
             </Card>
@@ -2092,6 +2101,352 @@ export default function InvoicePage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            )}
+
+            {/* View Request Data Dialog */}
+            {showRequestDataDialog && invoice && (
+                <Dialog open={showRequestDataDialog} onOpenChange={setShowRequestDataDialog}>
+                    <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                            <DialogTitle className="text-2xl font-bold">Invoice Request Details</DialogTitle>
+                            <DialogDescription>
+                                Complete invoice request information from the database
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-6 mt-4">
+                            {(() => {
+                                const requestData = invoice.request_id || invoice;
+                                const bookingSnapshot = requestData.booking_snapshot || requestData.booking_data || {};
+                                // Get verification from multiple possible paths - check invoice directly too
+                                const verification = invoice.verification || requestData.verification || {};
+                                const sender = bookingSnapshot.sender || requestData.sender || {};
+                                const receiver = bookingSnapshot.receiver || requestData.receiver || verification || {};
+                                const items = bookingSnapshot.items || requestData.items || [];
+                                
+                                // Helper to safely parse numeric values (handles Decimal128, numbers, strings)
+                                const safeParseDecimal = (value: any): number | null => {
+                                    if (value === undefined || value === null || value === '') return null;
+                                    if (typeof value === 'number') {
+                                        // Handle 0 as valid value
+                                        return isNaN(value) ? null : value;
+                                    }
+                                    if (typeof value === 'string') {
+                                        const parsed = parseFloat(value);
+                                        return isNaN(parsed) ? null : parsed;
+                                    }
+                                    if (typeof value === 'object' && value.$numberDecimal) {
+                                        return parseFloat(value.$numberDecimal);
+                                    }
+                                    if (typeof value === 'object' && value.toString) {
+                                        const parsed = parseFloat(value.toString());
+                                        return isNaN(parsed) ? null : parsed;
+                                    }
+                                    return null;
+                                };
+                                
+                                // Debug: Log verification data to console
+                                console.log('🔍 Request Data Dialog - Verification:', {
+                                    hasVerification: !!verification,
+                                    actual_weight: verification.actual_weight,
+                                    volumetric_weight: verification.volumetric_weight,
+                                    chargeable_weight: verification.chargeable_weight,
+                                    total_kg: verification.total_kg,
+                                    amount: verification.amount,
+                                    calculated_rate: verification.calculated_rate,
+                                    verificationKeys: Object.keys(verification),
+                                    invoiceVerification: invoice.verification,
+                                    requestDataVerification: requestData.verification
+                                });
+                                
+                                return (
+                                    <>
+                                        {/* Header Information */}
+                                        <Card className="border-2 border-primary/20">
+                                            <CardHeader className="bg-primary/5">
+                                                <CardTitle className="text-xl flex items-center gap-2">
+                                                    <FileText className="h-5 w-5" />
+                                                    Request Information
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="pt-6">
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Request ID</p>
+                                                        <p className="text-sm font-mono font-semibold">{requestData._id || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Invoice Number</p>
+                                                        <p className="text-sm font-mono font-semibold">{verification.invoice_number || requestData.invoice_number || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">AWB / Tracking Code</p>
+                                                        <p className="text-sm font-mono font-semibold">{verification.tracking_code || bookingSnapshot.tracking_code || bookingSnapshot.awb || requestData.tracking_code || requestData.awb_number || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Reference Number</p>
+                                                        <p className="text-sm font-mono font-semibold">{bookingSnapshot.referenceNumber || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Service Code</p>
+                                                        <p className="text-sm font-semibold">{verification.service_code || bookingSnapshot.service_code || requestData.service_code || bookingSnapshot.service || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Status</p>
+                                                        <p className="text-sm font-semibold">{requestData.status || bookingSnapshot.status || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Cargo Service</p>
+                                                        <p className="text-sm font-semibold">{verification.cargo_service || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Agent Name</p>
+                                                        <p className="text-sm font-semibold">{verification.agents_name || sender.agentName || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        {/* Sender Information */}
+                                        <Card>
+                                            <CardHeader className="bg-blue-50">
+                                                <CardTitle className="text-lg flex items-center gap-2">
+                                                    <span className="text-blue-700">📤</span>
+                                                    Sender Information
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="pt-6">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Full Name</p>
+                                                        <p className="text-sm font-semibold">{sender.fullName || sender.name || requestData.customer_name || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Phone</p>
+                                                        <p className="text-sm">{sender.phone || sender.phoneNumber || sender.contactNo || requestData.customer_phone || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Email</p>
+                                                        <p className="text-sm">{sender.email || sender.emailAddress || requestData.customer_email || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Country</p>
+                                                        <p className="text-sm">{sender.country || 'N/A'}</p>
+                                                    </div>
+                                                    <div className="md:col-span-2">
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Complete Address</p>
+                                                        <p className="text-sm">{sender.completeAddress || sender.address || sender.addressLine1 || bookingSnapshot.origin_place || requestData.origin_place || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Delivery Option</p>
+                                                        <p className="text-sm font-semibold capitalize">{sender.deliveryOption || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        {/* Receiver Information */}
+                                        <Card>
+                                            <CardHeader className="bg-green-50">
+                                                <CardTitle className="text-lg flex items-center gap-2">
+                                                    <span className="text-green-700">📥</span>
+                                                    Receiver Information
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="pt-6">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Full Name</p>
+                                                        <p className="text-sm font-semibold">{receiver.fullName || receiver.name || verification.receiver_name || requestData.receiver_name || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Phone</p>
+                                                        <p className="text-sm">{receiver.phone || receiver.phoneNumber || receiver.contactNo || verification.receiver_phone || requestData.receiver_phone || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Email</p>
+                                                        <p className="text-sm">{receiver.email || receiver.emailAddress || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Country</p>
+                                                        <p className="text-sm">{receiver.country || 'N/A'}</p>
+                                                    </div>
+                                                    <div className="md:col-span-2">
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Complete Address</p>
+                                                        <p className="text-sm">{receiver.completeAddress || receiver.address || receiver.addressLine1 || verification.receiver_address || bookingSnapshot.destination_place || requestData.destination_place || requestData.receiver_address || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Delivery Option</p>
+                                                        <p className="text-sm font-semibold capitalize">{receiver.deliveryOption || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        {/* Shipment & Verification Details */}
+                                        <Card>
+                                            <CardHeader className="bg-purple-50">
+                                                <CardTitle className="text-lg flex items-center gap-2">
+                                                    <span className="text-purple-700">📦</span>
+                                                    Shipment & Verification Details
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="pt-6">
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Actual Weight (kg)</p>
+                                                        <p className="text-lg font-bold">
+                                                            {(() => {
+                                                                const val = safeParseDecimal(verification.actual_weight || verification.weight || bookingSnapshot.weight || bookingSnapshot.weight_kg);
+                                                                return val !== null ? val.toFixed(2) : 'N/A';
+                                                            })()}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Volumetric Weight (kg)</p>
+                                                        <p className="text-lg font-bold">
+                                                            {(() => {
+                                                                const val = safeParseDecimal(verification.volumetric_weight || verification.total_vm);
+                                                                return val !== null ? val.toFixed(2) : 'N/A';
+                                                            })()}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Chargeable Weight (kg)</p>
+                                                        <p className="text-lg font-bold">
+                                                            {(() => {
+                                                                const val = safeParseDecimal(verification.chargeable_weight);
+                                                                return val !== null ? val.toFixed(2) : 'N/A';
+                                                            })()}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Total KG</p>
+                                                        <p className="text-lg font-bold">
+                                                            {(() => {
+                                                                const val = safeParseDecimal(verification.total_kg);
+                                                                return val !== null ? val.toFixed(2) : 'N/A';
+                                                            })()}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Number of Boxes</p>
+                                                        <p className="text-lg font-bold">{verification.number_of_boxes || bookingSnapshot.number_of_boxes || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Weight Type</p>
+                                                        <p className="text-sm font-semibold">{verification.weight_type || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Classification</p>
+                                                        <p className="text-sm font-semibold">{verification.shipment_classification || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Rate Bracket</p>
+                                                        <p className="text-sm font-semibold">{verification.rate_bracket || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Amount per kg (AED)</p>
+                                                        <p className="text-lg font-bold text-primary">
+                                                            {(() => {
+                                                                const val = safeParseDecimal(verification.amount || verification.calculated_rate);
+                                                                return val !== null ? `AED ${val.toFixed(2)}` : 'N/A';
+                                                            })()}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        {/* Insurance Information */}
+                                        {(verification.insured || bookingSnapshot.insured || requestData.insured) && (
+                                            <Card className="border-2 border-amber-200 bg-amber-50/50">
+                                                <CardHeader className="bg-amber-100">
+                                                    <CardTitle className="text-lg flex items-center gap-2">
+                                                        <span className="text-amber-700">🛡️</span>
+                                                        Insurance Information
+                                                    </CardTitle>
+                                                </CardHeader>
+                                                <CardContent className="pt-6">
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                                        <div>
+                                                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Insured Status</p>
+                                                            <p className="text-sm font-semibold text-green-700">✓ Insured</p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Declared Value (AED)</p>
+                                                            <p className="text-lg font-bold">{verification.declared_value || bookingSnapshot.declaredAmount || requestData.declared_value ? `AED ${parseDecimal(verification.declared_value || bookingSnapshot.declaredAmount || requestData.declared_value, 2).toFixed(2)}` : 'N/A'}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Insurance Charge (1%)</p>
+                                                            <p className="text-lg font-bold text-primary">
+                                                                {verification.declared_value || bookingSnapshot.declaredAmount ? 
+                                                                    `AED ${parseDecimal((verification.declared_value || bookingSnapshot.declaredAmount) * 0.01, 2).toFixed(2)}` : 
+                                                                    'N/A'}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        )}
+
+
+                                        {/* Additional Information */}
+                                        <Card>
+                                            <CardHeader className="bg-gray-50">
+                                                <CardTitle className="text-lg">Additional Information</CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="pt-6">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Verification Notes</p>
+                                                        <p className="text-sm">{verification.verification_notes || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Listed Commodities</p>
+                                                        <p className="text-sm">{verification.listed_commodities || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Booking Notes</p>
+                                                        <p className="text-sm">{bookingSnapshot.notes || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Additional Details</p>
+                                                        <p className="text-sm">{bookingSnapshot.additionalDetails || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Verified At</p>
+                                                        <p className="text-sm">{verification.verified_at ? new Date(verification.verified_at).toLocaleString() : 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Verified By</p>
+                                                        <p className="text-sm font-mono">{verification.verified_by_employee_id || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Sender Details Complete</p>
+                                                        <p className="text-sm font-semibold">{verification.sender_details_complete ? '✓ Yes' : '✗ No'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Receiver Details Complete</p>
+                                                        <p className="text-sm font-semibold">{verification.receiver_details_complete ? '✓ Yes' : '✗ No'}</p>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                    </>
+                                );
+                            })()}
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowRequestDataDialog(false)}
+                            >
+                                Close
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
             )}
         </div>
     );
