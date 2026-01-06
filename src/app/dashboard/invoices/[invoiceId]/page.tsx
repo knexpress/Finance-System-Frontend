@@ -2144,20 +2144,6 @@ export default function InvoicePage() {
                                     return null;
                                 };
                                 
-                                // Debug: Log verification data to console
-                                console.log('🔍 Request Data Dialog - Verification:', {
-                                    hasVerification: !!verification,
-                                    actual_weight: verification.actual_weight,
-                                    volumetric_weight: verification.volumetric_weight,
-                                    chargeable_weight: verification.chargeable_weight,
-                                    total_kg: verification.total_kg,
-                                    amount: verification.amount,
-                                    calculated_rate: verification.calculated_rate,
-                                    verificationKeys: Object.keys(verification),
-                                    invoiceVerification: invoice.verification,
-                                    requestDataVerification: requestData.verification
-                                });
-                                
                                 return (
                                     <>
                                         {/* Header Information */}
