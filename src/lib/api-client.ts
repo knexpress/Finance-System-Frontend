@@ -1,6 +1,11 @@
 // API Client for Backend Communication
 import { apiCache } from './api-cache';
 import { secureLog } from './secure-logger';
+import { getCSRFToken, validateCSRFToken } from './security/csrf-protection';
+import { apiRateLimiter, checkRateLimit } from './security/rate-limiter';
+import { sanitizeObject } from './security/input-validator';
+import { createAuditLog, AuditEventType } from './security/audit-logger';
+import { storeAuthToken, getAuthToken, removeAuthToken } from './security/secure-storage';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -11,24 +16,20 @@ class ApiClient {
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
-    // Get token from localStorage if available
+    // Get token from secure storage if available
     if (typeof window !== 'undefined') {
-      this.token = localStorage.getItem('authToken');
+      this.token = getAuthToken();
     }
   }
 
   setToken(token: string) {
     this.token = token;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('authToken', token);
-    }
+    storeAuthToken(token);
   }
 
   clearToken() {
     this.token = null;
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('authToken');
-    }
+    removeAuthToken();
   }
 
   getToken() {
@@ -89,11 +90,46 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<{ success: boolean; data?: T; error?: string }> {
     try {
+      // Rate limiting check
+      const rateLimitCheck = checkRateLimit(apiRateLimiter, endpoint);
+      if (!rateLimitCheck.allowed) {
+        createAuditLog(AuditEventType.RATE_LIMIT_EXCEEDED, `Rate limit exceeded for ${endpoint}`, {
+          resource: endpoint,
+          success: false,
+          metadata: { remaining: rateLimitCheck.remaining, resetTime: rateLimitCheck.resetTime },
+        });
+        return { 
+          success: false, 
+          error: 'Too many requests. Please try again later.' 
+        };
+      }
+
+      // Sanitize request body if present
+      let sanitizedBody = options.body;
+      if (options.body && typeof options.body === 'string') {
+        try {
+          const bodyData = JSON.parse(options.body);
+          const sanitized = sanitizeObject(bodyData);
+          sanitizedBody = JSON.stringify(sanitized);
+        } catch (e) {
+          // If body is not JSON, leave it as is
+        }
+      }
+
       const url = `${this.baseUrl}${endpoint}`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(options.headers as Record<string, string>),
       };
+
+      // Add CSRF token for state-changing operations
+      const isStateChanging = options.method && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(options.method);
+      if (isStateChanging && typeof window !== 'undefined') {
+        const csrfToken = getCSRFToken();
+        if (csrfToken) {
+          headers['X-CSRF-Token'] = csrfToken;
+        }
+      }
 
       // Add authorization header if token is available
       if (this.token) {
@@ -116,6 +152,7 @@ class ApiClient {
       const response = await fetch(url, {
         headers,
         ...options,
+        body: sanitizedBody,
       });
 
       if (!response.ok) {
@@ -146,7 +183,32 @@ class ApiClient {
           (typeof errorData === 'string' ? errorData : null) ||
           response.statusText ||
           `Request failed with status ${response.status}`;
-        const safeErrorMessage = errorMessage || `Request failed with status ${response.status}`;
+        
+        // Sanitize error message to prevent information leakage
+        // Don't expose internal server details, stack traces, or sensitive info
+        let safeErrorMessage = errorMessage || `Request failed with status ${response.status}`;
+        
+        // Remove potential sensitive information
+        safeErrorMessage = safeErrorMessage
+          .replace(/at\s+.*?:\d+:\d+/g, '') // Remove stack traces
+          .replace(/file:\/\/\/.*?/g, '') // Remove file paths
+          .replace(/password|token|secret|key/gi, '[REDACTED]') // Remove sensitive keywords
+          .substring(0, 200); // Limit length
+        
+        // Log security-relevant errors
+        if (response.status === 401) {
+          createAuditLog(AuditEventType.UNAUTHORIZED_ACCESS_ATTEMPT, `Unauthorized access attempt: ${endpoint}`, {
+            resource: endpoint,
+            success: false,
+            errorMessage: 'Unauthorized',
+          });
+        } else if (response.status === 403) {
+          createAuditLog(AuditEventType.ACCESS_DENIED, `Access denied: ${endpoint}`, {
+            resource: endpoint,
+            success: false,
+            errorMessage: 'Forbidden',
+          });
+        }
         
         secureLog.warn('API Error Response', {
           status: response.status,
@@ -161,6 +223,14 @@ class ApiClient {
       const data = await response.json();
       secureLog.debug('API Success Response', { endpoint: endpoint.substring(0, 50) });
       
+      // Log successful state-changing operations
+      if (isStateChanging) {
+        createAuditLog(AuditEventType.DATA_UPDATE, `API ${options.method} request successful: ${endpoint}`, {
+          resource: endpoint,
+          success: true,
+        });
+      }
+      
       // For auth endpoints, return the data directly wrapped in success
       if (endpoint.includes('/auth/')) {
         return { success: true, data };
@@ -174,13 +244,20 @@ class ApiClient {
       // Otherwise wrap in standard format
       return { success: true, data };
     } catch (error: any) {
-      console.warn('API request failed:', error);
+      secureLog.error('API request failed', error);
       
-      // Provide more specific error messages
+      // Log system errors
+      createAuditLog(AuditEventType.SYSTEM_ERROR, `API request failed: ${endpoint}`, {
+        resource: endpoint,
+        success: false,
+        errorMessage: error.message?.substring(0, 100),
+      });
+      
+      // Provide more specific error messages (sanitized)
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
         return { 
           success: false, 
-          error: `Unable to connect to server. Please check if the API is running at ${this.baseUrl}` 
+          error: 'Unable to connect to server. Please check your connection.' 
         };
       }
       
@@ -188,9 +265,10 @@ class ApiClient {
         return { success: false, error: 'Network error: Unable to reach the server' };
       }
       
+      // Don't expose internal error details
       return { 
         success: false, 
-        error: error.message || 'Network error' 
+        error: 'An error occurred. Please try again later.' 
       };
     }
   }

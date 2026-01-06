@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
@@ -341,8 +342,7 @@ export default function InvoiceRequestsPage() {
   const { toast } = useToast();
   const { userProfile } = useAuth();
   const { clearCount } = useNotifications();
-  const [insuranceOption, setInsuranceOption] = useState<'none' | 'percent'>('none');
-  const [fixedInsuranceType, setFixedInsuranceType] = useState<'mobile' | 'laptop' | 'other'>('mobile');
+  const [hasInsurance, setHasInsurance] = useState(false);
   const [insuranceManualAmount, setInsuranceManualAmount] = useState('');
   const [isSpecialCustomer, setIsSpecialCustomer] = useState(false); // Special customer checkbox
   const [specialRate, setSpecialRate] = useState(''); // Special rate input (float)
@@ -639,8 +639,7 @@ export default function InvoiceRequestsPage() {
   // PH TO UAE: Always disable insurance (no insurance offered)
   useEffect(() => {
     if (isPhToUaeSelected) {
-      setInsuranceOption('none');
-      setFixedInsuranceType('mobile');
+      setHasInsurance(false);
       setInsuranceManualAmount('');
     }
   }, [isPhToUaeSelected]);
@@ -2065,23 +2064,21 @@ export default function InvoiceRequestsPage() {
       // Compute insurance charge based on user selection
       // IMPORTANT: User's explicit selection takes priority over database values
       let insuranceChargeValue = 0;
-      if (insuranceOption === 'percent') {
-        // User selected "1% insurance" - calculate it
-        const declared = getDeclaredAmount(selectedRequestForInvoice);
-        if (declared <= 0) {
+      if (hasInsurance) {
+        // User checked insurance checkbox - use manual amount
+        if (!insuranceManualAmount || parseFloat(insuranceManualAmount) <= 0) {
           toast({
             variant: 'destructive',
-            title: 'Declared Amount Required',
-            description: 'Declared amount is required to calculate 1% insurance.',
+            title: 'Insurance Amount Required',
+            description: 'Please enter a valid insurance amount.',
           });
           return;
         }
-        insuranceChargeValue = parseFloat((declared * 0.01).toFixed(2));
-      } else if (insuranceOption === 'none') {
-        // User explicitly selected "no insurance" - force to 0 regardless of database
+        insuranceChargeValue = parseFloat(parseFloat(insuranceManualAmount).toFixed(2));
+      } else {
+        // User unchecked insurance - force to 0 regardless of database
         insuranceChargeValue = 0;
       }
-      // If insuranceOption is undefined/null, insuranceChargeValue remains 0
       
       // Convert request to invoice data
       // CRITICAL: For PH TO UAE, always pass pickupCharge if user entered a value (even if 0)
@@ -3813,34 +3810,46 @@ export default function InvoiceRequestsPage() {
                   Insurance Amount
                 </Label>
                 <div className="space-y-3">
-                  <div className="flex items-center space-x-3">
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="insurance-option"
-                        value="none"
-                        checked={insuranceOption === 'none'}
-                        onChange={() => setInsuranceOption('none')}
-                        className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                      />
-                      <span className="text-sm">No insurance</span>
-                    </label>
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="insurance-option"
-                        value="percent"
-                        checked={insuranceOption === 'percent'}
-                        onChange={() => setInsuranceOption('percent')}
-                        className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                      />
-                      <span className="text-sm">1% of declared amount</span>
-                    </label>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="has-insurance"
+                      checked={hasInsurance}
+                      onCheckedChange={(checked) => {
+                        setHasInsurance(checked as boolean);
+                        if (!checked) {
+                          setInsuranceManualAmount('');
+                        }
+                      }}
+                    />
+                    <Label 
+                      htmlFor="has-insurance" 
+                      className="text-sm font-normal cursor-pointer"
+                    >
+                      Insurance Value
+                    </Label>
                   </div>
+                  {hasInsurance && (
+                    <div className="ml-6">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Enter insurance amount (AED)"
+                        value={insuranceManualAmount}
+                        onChange={(e) => setInsuranceManualAmount(e.target.value)}
+                        className="w-full"
+                      />
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Choose 1% of declared value for insurance.
-                </p>
+                {(() => {
+                  const declaredAmount = selectedRequestForInvoice ? getDeclaredAmount(selectedRequestForInvoice) : 0;
+                  return declaredAmount > 0 ? (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Declared Amount: {declaredAmount.toFixed(2)} AED
+                    </p>
+                  ) : null;
+                })()}
               </div>
             )}
 
@@ -3886,8 +3895,7 @@ export default function InvoiceRequestsPage() {
                   setDeliveryCharge('');
                   setDeliveryBaseAmount('20'); // Reset to default
                   setTotalKgInput(''); // Reset total kg input
-                  setInsuranceOption('none');
-                  setFixedInsuranceType('mobile');
+                  setHasInsurance(false);
                   setInsuranceManualAmount('');
                 }}
               >

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
+import { secureLog } from '@/lib/secure-logger';
 
 export function AuthForm() {
   const [email, setEmail] = useState('');
@@ -21,21 +22,19 @@ export function AuthForm() {
     e.preventDefault();
     setIsLoading(true);
     
-    console.log('🔐 Attempting login with:', email);
+    secureLog.debug('Login attempt initiated', { email: email.substring(0, 10) + '...' });
     const result = await login(email, password);
-    console.log('🔐 Login result:', result);
+    secureLog.debug('Login result received', { success: result.success });
 
     if (result.success) {
-      console.log('✅ Login successful');
+      secureLog.success('Login successful');
       if (result.requiresPasswordChange) {
-        console.log('⚠️ Password change required, redirecting to dashboard');
+        secureLog.warn('Password change required');
         // Password change modal will show automatically in dashboard
-      } else {
-        console.log('✅ No password change needed, redirecting to dashboard');
       }
       router.push('/dashboard');
     } else {
-      console.error('❌ Login failed:', result.error);
+      secureLog.error('Login failed', { error: result.error });
       toast({
         variant: 'destructive',
         title: 'Login Failed',

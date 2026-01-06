@@ -4,6 +4,10 @@ import { createContext, useContext, useEffect, useState, ReactNode, useCallback 
 import { UserProfile, DepartmentData } from '@/lib/types';
 import { apiClient } from '@/lib/api-client';
 import { secureLog } from '@/lib/secure-logger';
+import { storeUserData, getUserData, removeUserData } from '@/lib/security/secure-storage';
+import { createAuditLog, AuditEventType } from '@/lib/security/audit-logger';
+import { authRateLimiter, checkRateLimit } from '@/lib/security/rate-limiter';
+import { validateEmail } from '@/lib/security/input-validator';
 
 interface AuthContextType {
   userProfile: UserProfile | null;
@@ -40,20 +44,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     try {
-      const storedUser = sessionStorage.getItem(SESSION_STORAGE_KEY);
-      if (storedUser) {
-        const userData = JSON.parse(storedUser);
+      // Use secure storage instead of direct sessionStorage access
+      const userData = getUserData();
+      if (userData) {
         setUserProfile(userData);
         
         // Ensure API client has the token if user is logged in
-        const storedToken = localStorage.getItem('authToken');
+        const storedToken = apiClient.getToken();
         if (storedToken && !apiClient.getToken()) {
           apiClient.setToken(storedToken);
         }
       }
     } catch (error) {
-      secureLog.error("Failed to parse user from session storage", error);
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      secureLog.error("Failed to parse user from secure storage", error);
+      removeUserData();
     } finally {
         setLoading(false);
     }
@@ -62,12 +66,44 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = useCallback(async (email: string, password: string): Promise<{ success: boolean; error?: string; requiresPasswordChange?: boolean }> => {
     setLoading(true);
     
+    // Rate limiting for login attempts
+    const rateLimitCheck = checkRateLimit(authRateLimiter);
+    if (!rateLimitCheck.allowed) {
+      createAuditLog(AuditEventType.RATE_LIMIT_EXCEEDED, 'Login rate limit exceeded', {
+        userEmail: email,
+        success: false,
+        metadata: { remaining: rateLimitCheck.remaining, resetTime: rateLimitCheck.resetTime },
+      });
+      setLoading(false);
+      return { 
+        success: false, 
+        error: 'Too many login attempts. Please try again later.' 
+      };
+    }
+
+    // Validate email format
+    const emailValidation = validateEmail(email);
+    if (!emailValidation.valid) {
+      createAuditLog(AuditEventType.LOGIN_FAILURE, 'Login attempt with invalid email format', {
+        userEmail: email,
+        success: false,
+        errorMessage: emailValidation.error,
+      });
+      setLoading(false);
+      return { success: false, error: emailValidation.error || 'Invalid email format' };
+    }
+    
     try {
-      const result = await apiClient.login(email, password);
+      const result = await apiClient.login(emailValidation.sanitized, password);
       
       secureLog.debug('Login attempt', { success: result.success, hasData: !!result.data });
       
       if (!result.success) {
+        createAuditLog(AuditEventType.LOGIN_FAILURE, 'Login failed', {
+          userEmail: emailValidation.sanitized,
+          success: false,
+          errorMessage: result.error,
+        });
         setLoading(false);
         return { success: false, error: result.error || 'Login failed' };
       }
@@ -127,14 +163,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: 'Login failed - authentication token not found in response' };
       }
       
-      // Store user data in sessionStorage
+      // Store user data securely
       setUserProfile(userData);
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(userData));
-      }
+      storeUserData(userData);
       
-      // Store token in API client (which stores it in localStorage)
+      // Store token in API client (which uses secure storage)
       apiClient.setToken(token);
+
+      // Log successful login
+      createAuditLog(AuditEventType.LOGIN_SUCCESS, 'User logged in successfully', {
+        userId: userData._id || userData.id,
+        userEmail: emailValidation.sanitized,
+        department: userData.department?.name,
+        success: true,
+      });
       
       // Check if password is default (password123)
       // Backend should return this in the response, but we also check here as fallback
@@ -154,14 +196,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const logout = useCallback(() => {
+    // Log logout event
+    if (userProfile) {
+      createAuditLog(AuditEventType.LOGOUT, 'User logged out', {
+        userId: userProfile._id || userProfile.id,
+        userEmail: userProfile.email,
+        department: userProfile.department?.name,
+        success: true,
+      });
+    }
+
     setUserProfile(null);
     setRequiresPasswordChange(false);
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    }
+    removeUserData();
     // Clear API client token
     apiClient.clearToken();
-  }, []);
+  }, [userProfile]);
 
   const clearPasswordChangeRequirement = useCallback(() => {
     setRequiresPasswordChange(false);

@@ -1413,11 +1413,13 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                         min="0"
                         placeholder="0.00"
                         value={verificationData.declared_value}
-                        onChange={(e) => setVerificationData({ ...verificationData, declared_value: e.target.value })}
+                        readOnly
+                        disabled
+                        className="bg-muted cursor-not-allowed text-muted-foreground"
                         required
                       />
                       <p className="text-xs text-muted-foreground mt-1">
-                        Enter the declared value for insurance calculation (1% of declared value)
+                        Declared value set by customer and cannot be changed
                       </p>
                       {verificationData.declared_value && parseFloat(verificationData.declared_value) > 0 && (
                         <p className="text-xs text-blue-600 font-medium mt-1">
