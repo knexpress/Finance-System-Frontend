@@ -172,7 +172,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       // Log successful login
       createAuditLog(AuditEventType.LOGIN_SUCCESS, 'User logged in successfully', {
-        userId: userData._id || userData.id,
+        userId: userData._id || (userData as any).id,
         userEmail: emailValidation.sanitized,
         department: userData.department?.name,
         success: true,
@@ -199,7 +199,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Log logout event
     if (userProfile) {
       createAuditLog(AuditEventType.LOGOUT, 'User logged out', {
-        userId: userProfile._id || userProfile.id,
+        userId: userProfile._id || (userProfile as any).id,
         userEmail: userProfile.email,
         department: userProfile.department?.name,
         success: true,
