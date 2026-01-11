@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 
 const normalizeServiceCode = (code?: string | null) =>
@@ -65,36 +66,106 @@ export default function InvoicePage() {
     // Local state for COD invoice edits (frontend-only, does not affect backend)
     const [localCodEdits, setLocalCodEdits] = useState<any>(null);
     const [editForm, setEditForm] = useState({
+        // Invoice Header
+        invoice_number: '',
+        batch_number: '',
+        awb_number: '',
+        issue_date: '',
+        due_date: '',
+        // Sender Information
+        customer_name: '',
+        customer_phone: '',
+        customer_email: '',
+        origin_place: '',
+        // Receiver Information
         receiver_name: '',
         receiver_address: '',
         receiver_phone: '',
+        receiver_trn: '',
+        // Shipment Details
+        number_of_boxes: '',
+        weight_kg: '',
+        weight_type: 'ACTUAL',
+        base_rate: '',
+        service_code: '',
+        // Charges
         amount: '',
         pickup_charge: '',
         delivery_charge: '',
         insurance_charge: '',
         tax_rate: '',
-        due_date: '',
+        tax_amount: '',
+        total: '',
+        // Agent
+        agent_name: '',
+        // Notes
         notes: ''
     });
-    // Separate edit forms for PH TO UAE COD and Tax invoices
+    // Separate edit forms for PH TO UAE COD and Tax invoices (comprehensive like regular edit form)
     const [codEditForm, setCodEditForm] = useState({
+        // Invoice Header
+        invoice_number: '',
+        batch_number: '',
+        awb_number: '',
+        issue_date: '',
+        due_date: '',
+        // Sender Information
+        customer_name: '',
+        customer_phone: '',
+        customer_email: '',
+        origin_place: '',
+        // Receiver Information
         receiver_name: '',
         receiver_address: '',
         receiver_phone: '',
+        receiver_trn: '',
+        // Shipment Details
+        number_of_boxes: '',
+        weight_kg: '',
+        weight_type: 'ACTUAL',
+        base_rate: '',
+        service_code: '',
+        // COD Charges Only (NO Tax invoice fields)
         amount: '', // Shipping charge for COD
         pickup_charge: '', // Pickup charge for COD
         cod_delivery_charge: '', // COD delivery charge (separate from Tax delivery_charge)
         total_amount_cod: '', // Total amount for COD invoice
+        // Agent
+        agent_name: '',
+        // Notes
         notes: ''
     });
     const [taxEditForm, setTaxEditForm] = useState({
+        // Invoice Header
+        invoice_number: '',
+        batch_number: '',
+        awb_number: '',
+        issue_date: '',
+        due_date: '',
+        // Sender Information
+        customer_name: '',
+        customer_phone: '',
+        customer_email: '',
+        origin_place: '',
+        // Receiver Information
         receiver_name: '',
         receiver_address: '',
         receiver_phone: '',
+        receiver_trn: '',
+        // Shipment Details
+        number_of_boxes: '',
+        weight_kg: '',
+        weight_type: 'ACTUAL',
+        base_rate: '',
+        service_code: '',
+        // Tax Charges Only (NO COD invoice fields)
         delivery_charge: '', // Delivery charge for Tax invoice
         tax_rate: '5', // Always 5% for PH TO UAE tax invoices
         tax_amount: '', // Tax amount
         total_amount_tax_invoice: '', // Total amount for Tax invoice
+        // Agent
+        agent_name: '',
+        // Notes
         notes: ''
     });
     const { toast } = useToast();
@@ -157,16 +228,63 @@ export default function InvoicePage() {
                         }
                     }
                     
+                    // Initialize all edit form fields
+                    const invoiceNumber = invoiceData.invoice_id || invoiceData._id || '';
+                    const batchNumber = invoiceData.batch_number || invoiceData.request_id?.batch_number || '';
+                    const awbNumber = invoiceData.awb_number || invoiceData.request_id?.awb_number || invoiceData.request_id?.tracking_code || '';
+                    const issueDate = invoiceData.issue_date ? new Date(invoiceData.issue_date).toISOString().split('T')[0] : '';
+                    const dueDate = invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '';
+                    
+                    const customerName = invoiceData.customer_name || invoiceData.request_id?.customer_name || invoiceData.request_id?.sender?.name || invoiceData.client_id?.company_name || invoiceData.client_id?.contact_name || '';
+                    const customerPhone = invoiceData.customer_phone || invoiceData.request_id?.customer_phone || invoiceData.request_id?.sender?.phone || invoiceData.client_id?.contact_phone || '';
+                    const customerEmail = invoiceData.customer_email || invoiceData.request_id?.customer_email || invoiceData.request_id?.sender?.email || invoiceData.client_id?.contact_email || '';
+                    const originPlace = invoiceData.origin_place || invoiceData.request_id?.origin_place || invoiceData.request_id?.sender?.address || '';
+                    
+                    const receiverName = invoiceData.receiver_name || invoiceData.request_id?.receiver?.name || '';
+                    const receiverAddress = invoiceData.receiver_address || invoiceData.request_id?.receiver?.address || '';
+                    const receiverPhone = invoiceData.receiver_phone || invoiceData.request_id?.receiver?.phone || '';
+                    const receiverTrn = invoiceData.customer_trn || invoiceData.request_id?.customer_trn || '';
+                    
+                    const numberOfBoxes = invoiceData.number_of_boxes || invoiceData.request_id?.verification?.number_of_boxes || invoiceData.request_id?.shipment?.number_of_boxes || '';
+                    const weightKg = invoiceData.weight_kg || invoiceData.request_id?.verification?.total_kg || invoiceData.request_id?.verification?.chargeable_weight || '';
+                    const weightType = invoiceData.request_id?.shipment?.weight_type || invoiceData.request_id?.verification?.weight_type || 'ACTUAL';
+                    const baseRate = invoiceData.base_rate ? parseFloat(invoiceData.base_rate).toString() : (invoiceData.request_id?.verification?.calculated_rate ? parseFloat(invoiceData.request_id.verification.calculated_rate.toString()).toString() : '');
+                    const serviceCode = invoiceData.service_code || invoiceData.request_id?.service_code || '';
+                    
+                    const agentName = invoiceData.created_by?.full_name || invoiceData.request_id?.verification?.agents_name || '';
+                    
                     setEditForm({
-                        receiver_name: invoiceData.receiver_name || '',
-                        receiver_address: invoiceData.receiver_address || '',
-                        receiver_phone: invoiceData.receiver_phone || '',
+                        // Invoice Header
+                        invoice_number: invoiceNumber.toString(),
+                        batch_number: batchNumber,
+                        awb_number: awbNumber,
+                        issue_date: issueDate,
+                        due_date: dueDate,
+                        // Sender Information
+                        customer_name: customerName,
+                        customer_phone: customerPhone,
+                        customer_email: customerEmail,
+                        origin_place: originPlace,
+                        // Receiver Information
+                        receiver_name: receiverName,
+                        receiver_address: receiverAddress,
+                        receiver_phone: receiverPhone,
+                        receiver_trn: receiverTrn,
+                        // Shipment Details
+                        number_of_boxes: numberOfBoxes.toString(),
+                        weight_kg: weightKg ? parseFloat(weightKg.toString()).toString() : '',
+                        weight_type: weightType,
+                        base_rate: baseRate,
+                        service_code: serviceCode,
+                        // Charges
                         amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
                         pickup_charge: invoiceData.pickup_charge ? parseFloat(invoiceData.pickup_charge).toString() : '',
                         delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
                         insurance_charge: insuranceValue,
                         tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
-                        due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
+                        // Agent
+                        agent_name: agentName,
+                        // Notes
                         notes: invoiceData.notes || ''
                     });
                     
@@ -210,24 +328,70 @@ export default function InvoicePage() {
                         }
                         
                         setCodEditForm({
-                            receiver_name: invoiceData.receiver_name || '',
-                            receiver_address: invoiceData.receiver_address || '',
-                            receiver_phone: invoiceData.receiver_phone || '',
+                            // Invoice Header
+                            invoice_number: invoiceNumber.toString(),
+                            batch_number: batchNumber,
+                            awb_number: awbNumber,
+                            issue_date: issueDate,
+                            due_date: dueDate,
+                            // Sender Information
+                            customer_name: customerName,
+                            customer_phone: customerPhone,
+                            customer_email: customerEmail,
+                            origin_place: originPlace,
+                            // Receiver Information
+                            receiver_name: receiverName,
+                            receiver_address: receiverAddress,
+                            receiver_phone: receiverPhone,
+                            receiver_trn: receiverTrn,
+                            // Shipment Details
+                            number_of_boxes: numberOfBoxes.toString(),
+                            weight_kg: weightKg ? parseFloat(weightKg.toString()).toString() : '',
+                            weight_type: weightType,
+                            base_rate: baseRate,
+                            service_code: serviceCode,
+                            // COD Charges Only (NO Tax invoice fields)
                             amount: shippingChargeValue > 0 ? shippingChargeValue.toFixed(2) : '',
                             pickup_charge: pickupChargeValue > 0 ? pickupChargeValue.toFixed(2) : '',
                             cod_delivery_charge: deliveryBaseAmount > 0 ? deliveryBaseAmount.toFixed(2) : '',
                             total_amount_cod: totalAmountCod > 0 ? parseFloat(totalAmountCod.toString()).toFixed(2) : '',
+                            // Agent
+                            agent_name: agentName,
+                            // Notes
                             notes: invoiceData.notes || ''
                         });
                         
                         setTaxEditForm({
-                            receiver_name: invoiceData.receiver_name || '',
-                            receiver_address: invoiceData.receiver_address || '',
-                            receiver_phone: invoiceData.receiver_phone || '',
+                            // Invoice Header
+                            invoice_number: invoiceNumber.toString(),
+                            batch_number: batchNumber,
+                            awb_number: awbNumber,
+                            issue_date: issueDate,
+                            due_date: dueDate,
+                            // Sender Information
+                            customer_name: customerName,
+                            customer_phone: customerPhone,
+                            customer_email: customerEmail,
+                            origin_place: originPlace,
+                            // Receiver Information
+                            receiver_name: receiverName,
+                            receiver_address: receiverAddress,
+                            receiver_phone: receiverPhone,
+                            receiver_trn: receiverTrn,
+                            // Shipment Details
+                            number_of_boxes: numberOfBoxes.toString(),
+                            weight_kg: weightKg ? parseFloat(weightKg.toString()).toString() : '',
+                            weight_type: weightType,
+                            base_rate: baseRate,
+                            service_code: serviceCode,
+                            // Tax Charges Only (NO COD invoice fields)
                             delivery_charge: deliveryCharge > 0 ? deliveryCharge.toString() : '',
                             tax_rate: '5',
                             tax_amount: taxAmount > 0 ? taxAmount.toString() : '',
                             total_amount_tax_invoice: totalAmountTaxInvoice > 0 ? parseFloat(totalAmountTaxInvoice.toString()).toFixed(2) : '',
+                            // Agent
+                            agent_name: agentName,
+                            // Notes
                             notes: invoiceData.notes || ''
                         });
                     }
@@ -384,7 +548,11 @@ export default function InvoicePage() {
     
     // Use total_kg for display, weightForCalculation for rate calculations
     const weight = weightForCalculation; // Keep for backward compatibility in calculations
-    const displayWeight = totalKg; // Use total_kg for display (or weightForCalculation as fallback)
+    // Priority: direct invoice.weight_kg > totalKg (from verification) > weightForCalculation
+    // This ensures edited values are displayed correctly
+    const displayWeight = invoice.weight_kg 
+        ? parseDecimal(invoice.weight_kg, 2) 
+        : (totalKg > 0 ? totalKg : weightForCalculation); // Use total_kg for display (or weightForCalculation as fallback)
     
     // Debug logging for weight extraction
     console.log('📊 Weight values for invoice display', {
@@ -821,17 +989,18 @@ export default function InvoicePage() {
     const addressParts = receiverAddress.split(',').map((p: string) => p.trim());
     const emirate = addressParts.length > 1 ? addressParts[addressParts.length - 2] : (invoice.request_id?.receiver?.city || 'Dubai');
     
-    // Get shipment details - use direct fields first
+    // Get shipment details - use direct fields first (priority: direct invoice fields > nested request_id fields)
     // Note: weight and numberOfBoxes are already defined above for tax invoice recalculation
     const volume = parseDecimal(invoice.volume_cbm || invoice.request_id?.shipment?.volume, 2);
-    // displayWeight is already set to totalKg above (from verification.total_kg)
-    // This is what Operations entered manually and should be displayed in invoice
-    const weightType = invoice.request_id?.shipment?.weight_type || 
+    // displayWeight is already set above with priority: invoice.weight_kg > totalKg > weightForCalculation
+    // Weight Type: Priority direct invoice.weight_type > request_id nested fields
+    const weightType = invoice.weight_type || 
+                      invoice.request_id?.shipment?.weight_type || 
                       invoice.request_id?.verification?.weight_type || 
                       'ACTUAL';
     
     // Calculate rate from shipping charge and weight if not provided
-    // Priority: base_rate from invoice > calculated_rate from verification > calculated from shippingCharge/weight > default
+    // Priority: base_rate from invoice (direct field) > calculated_rate from verification > calculated from shippingCharge/weight > default
     let rate = 25.00;
     if (invoice.base_rate) {
         rate = parseDecimal(invoice.base_rate, 2);
@@ -1056,7 +1225,7 @@ export default function InvoicePage() {
         invoiceType: invoiceType, // 'normal' or 'tax'
         remarks: {
         boxNumbers: invoice.notes || 'No remarks',
-        agent: invoice.created_by?.full_name || 'SYSTEM',
+        agent: invoice.request_id?.verification?.agents_name || invoice.created_by?.full_name || 'SYSTEM',
         items: invoice.request_id?.verification?.listed_commodities || invoice.notes || 'No remarks'
         },
         termsAndConditions: 'Cash Upon Receipt of Goods',
@@ -1341,14 +1510,7 @@ export default function InvoicePage() {
     const handleTaxEditChange = (field: string, value: string) => {
         setTaxEditForm((prev) => {
             const updated = { ...prev, [field]: value };
-            // Auto-calculate tax_amount and total when delivery_charge changes
-            if (field === 'delivery_charge') {
-                const delivery = parseFloat(value || '0');
-                const taxRate = 5; // Always 5% for PH TO UAE tax invoices
-                const taxAmount = (delivery * taxRate) / 100;
-                updated.tax_amount = taxAmount.toFixed(2);
-                updated.total_amount_tax_invoice = (delivery + taxAmount).toFixed(2);
-            }
+            // No auto-calculation - all values are manual
             return updated;
         });
     };
@@ -1359,39 +1521,112 @@ export default function InvoicePage() {
         setSavingEdit(true);
         try {
             const payload: any = {
+                // Invoice Header
+                invoice_id: editForm.invoice_number.trim() || undefined,
+                batch_number: editForm.batch_number.trim() || undefined,
+                awb_number: editForm.awb_number.trim() || undefined,
+                issue_date: editForm.issue_date ? new Date(editForm.issue_date).toISOString() : undefined,
+                due_date: editForm.due_date ? new Date(editForm.due_date).toISOString() : undefined,
+                // Sender Information
+                customer_name: editForm.customer_name.trim() || undefined,
+                customer_phone: editForm.customer_phone.trim() || undefined,
+                customer_email: editForm.customer_email.trim() || undefined,
+                origin_place: editForm.origin_place.trim() || undefined,
+                // Receiver Information
                 receiver_name: editForm.receiver_name.trim(),
                 receiver_address: editForm.receiver_address.trim(),
                 receiver_phone: editForm.receiver_phone.trim(),
+                customer_trn: editForm.receiver_trn.trim() || undefined,
+                // Shipment Details
+                number_of_boxes: editForm.number_of_boxes ? parseInt(editForm.number_of_boxes) : undefined,
+                weight_kg: editForm.weight_kg ? parseFloat(editForm.weight_kg) : undefined,
+                weight_type: editForm.weight_type || undefined,
+                base_rate: editForm.base_rate ? parseFloat(editForm.base_rate) : undefined,
+                service_code: editForm.service_code.trim() || undefined,
+                // Charges
+                amount: editForm.amount ? parseFloat(editForm.amount) : undefined,
+                pickup_charge: editForm.pickup_charge ? parseFloat(editForm.pickup_charge) : undefined,
+                delivery_charge: editForm.delivery_charge ? parseFloat(editForm.delivery_charge) : undefined,
+                insurance_charge: editForm.insurance_charge !== undefined && editForm.insurance_charge !== '' ? parseFloat(editForm.insurance_charge) || 0 : undefined,
+                tax_rate: editForm.tax_rate ? parseFloat(editForm.tax_rate) : undefined,
+                // Agent
+                agent_name: editForm.agent_name.trim() || undefined,
+                // Notes
                 notes: editForm.notes?.trim() || ''
             };
 
-            if (editForm.amount) payload.amount = parseFloat(editForm.amount);
-            if (editForm.pickup_charge) payload.pickup_charge = parseFloat(editForm.pickup_charge);
-            if (editForm.delivery_charge) payload.delivery_charge = parseFloat(editForm.delivery_charge);
-            // Include insurance_charge (can be 0 to remove insurance)
-            if (editForm.insurance_charge !== undefined && editForm.insurance_charge !== '') {
-                payload.insurance_charge = parseFloat(editForm.insurance_charge) || 0;
-            }
-            if (editForm.tax_rate) payload.tax_rate = parseFloat(editForm.tax_rate);
-            if (editForm.due_date) payload.due_date = new Date(editForm.due_date).toISOString();
+            // Remove undefined and empty string values (except for notes which can be empty)
+            // IMPORTANT: Keep numeric fields even if they are 0 (weight_kg, base_rate, etc. can be valid at 0)
+            Object.keys(payload).forEach(key => {
+                // Don't delete numeric fields that are 0 (they are valid values)
+                const numericFields = ['weight_kg', 'base_rate', 'amount', 'pickup_charge', 'delivery_charge', 'insurance_charge', 'tax_rate', 'subtotal', 'tax_amount', 'total', 'number_of_boxes'];
+                if (numericFields.includes(key) && payload[key] === 0) {
+                    // Keep numeric fields even if 0
+                    return;
+                }
+                if (payload[key] === undefined || (key !== 'notes' && payload[key] === '')) {
+                    delete payload[key];
+                }
+            });
             
-            // Recalculate subtotal and total when charges change
+            // Ensure notes is always included (can be empty string)
+            if (!payload.hasOwnProperty('notes')) {
+                payload.notes = '';
+            }
+            
+            // Debug: Verify critical fields are in payload
+            console.log('🔍 [Edit Invoice] Payload verification:', {
+                hasWeightKg: payload.hasOwnProperty('weight_kg'),
+                weightKg: payload.weight_kg,
+                hasWeightType: payload.hasOwnProperty('weight_type'),
+                weightType: payload.weight_type,
+                hasBaseRate: payload.hasOwnProperty('base_rate'),
+                baseRate: payload.base_rate,
+                hasNumberOfBoxes: payload.hasOwnProperty('number_of_boxes'),
+                numberOfBoxes: payload.number_of_boxes
+            });
+            
+            // Calculate subtotal from charges (no auto-calculation of tax/total - all manual)
             const shippingCharge = editForm.amount ? parseFloat(editForm.amount) : 0;
             const pickupCharge = editForm.pickup_charge ? parseFloat(editForm.pickup_charge) : 0;
             const deliveryCharge = editForm.delivery_charge ? parseFloat(editForm.delivery_charge) : 0;
             const insuranceCharge = editForm.insurance_charge ? parseFloat(editForm.insurance_charge) : 0;
-            const taxRate = editForm.tax_rate ? parseFloat(editForm.tax_rate) : 0;
             
             const subtotal = shippingCharge + pickupCharge + deliveryCharge + insuranceCharge;
-            const taxAmount = deliveryCharge > 0 && taxRate > 0 ? (deliveryCharge * taxRate) / 100 : 0;
-            const total = subtotal + taxAmount;
             
-            // Update calculated values
+            // Use manually entered values (no auto-calculation)
+            const taxAmount = editForm.tax_amount && editForm.tax_amount !== '' ? parseFloat(editForm.tax_amount) : 0;
+            const total = editForm.total && editForm.total !== '' ? parseFloat(editForm.total) : 0;
+            
+            // Update values (all manual - no auto-calculation)
             payload.subtotal = subtotal;
-            payload.tax_amount = taxAmount;
-            payload.total = total;
+            if (editForm.tax_amount && editForm.tax_amount !== '') {
+                payload.tax_amount = taxAmount;
+            }
+            if (editForm.total && editForm.total !== '') {
+                payload.total = total;
+            }
+            
+            // Flag to indicate invoice should be regenerated with all recalculations
+            payload.regenerate = true;
+
+            // Debug: Log the payload being sent
+            console.log('📤 [Edit Invoice] Sending update request:', {
+                invoiceId: invoiceIdentifier,
+                payload: payload,
+                payloadSize: JSON.stringify(payload).length,
+                fieldsCount: Object.keys(payload).length
+            });
 
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
+            
+            // Debug: Log the response
+            console.log('📥 [Edit Invoice] Update response:', {
+                success: result.success,
+                data: result.data,
+                error: result.error
+            });
+            
             if (result.success) {
                 // Re-fetch the invoice to ensure we have the latest data from backend
                 await refreshInvoiceAfterEdit();
@@ -1401,17 +1636,26 @@ export default function InvoicePage() {
                 });
                 setShowEditDialog(false);
             } else {
+                console.error('❌ [Edit Invoice] Update failed:', {
+                    error: result.error,
+                    response: result
+                });
                 toast({
                     variant: 'destructive',
                     title: 'Update failed',
-                    description: result.error || 'Unable to update invoice.',
+                    description: result.error || 'Unable to update invoice. Please check console for details.',
                 });
             }
         } catch (err: any) {
+            console.error('❌ [Edit Invoice] Exception during update:', {
+                error: err,
+                message: err.message,
+                stack: err.stack
+            });
             toast({
                 variant: 'destructive',
                 title: 'Update failed',
-                description: err.message || 'Unable to update invoice.',
+                description: err.message || 'Unable to update invoice. Please check console for details.',
             });
         } finally {
             setSavingEdit(false);
@@ -1425,20 +1669,57 @@ export default function InvoicePage() {
         setSavingEdit(true);
         try {
             const payload: any = {
+                // Invoice Header
+                invoice_id: codEditForm.invoice_number.trim() || undefined,
+                batch_number: codEditForm.batch_number.trim() || undefined,
+                awb_number: codEditForm.awb_number.trim() || undefined,
+                issue_date: codEditForm.issue_date ? new Date(codEditForm.issue_date).toISOString() : undefined,
+                due_date: codEditForm.due_date ? new Date(codEditForm.due_date).toISOString() : undefined,
+                // Sender Information
+                customer_name: codEditForm.customer_name.trim() || undefined,
+                customer_phone: codEditForm.customer_phone.trim() || undefined,
+                customer_email: codEditForm.customer_email.trim() || undefined,
+                origin_place: codEditForm.origin_place.trim() || undefined,
+                // Receiver Information
                 receiver_name: codEditForm.receiver_name.trim(),
                 receiver_address: codEditForm.receiver_address.trim(),
                 receiver_phone: codEditForm.receiver_phone.trim(),
+                customer_trn: codEditForm.receiver_trn.trim() || undefined,
+                // Shipment Details
+                number_of_boxes: codEditForm.number_of_boxes ? parseInt(codEditForm.number_of_boxes) : undefined,
+                weight_kg: codEditForm.weight_kg ? parseFloat(codEditForm.weight_kg) : undefined,
+                weight_type: codEditForm.weight_type || undefined,
+                base_rate: codEditForm.base_rate ? parseFloat(codEditForm.base_rate) : undefined,
+                service_code: codEditForm.service_code.trim() || undefined,
+                // COD Charges ONLY - do NOT update Tax invoice fields
+                amount: codEditForm.amount ? parseFloat(codEditForm.amount) : undefined,
+                pickup_charge: codEditForm.pickup_charge ? parseFloat(codEditForm.pickup_charge) : undefined,
+                cod_delivery_charge: codEditForm.cod_delivery_charge ? parseFloat(codEditForm.cod_delivery_charge) : undefined,
+                total_amount_cod: codEditForm.total_amount_cod ? parseFloat(codEditForm.total_amount_cod) : undefined,
+                // Agent
+                agent_name: codEditForm.agent_name.trim() || undefined,
+                // Notes
                 notes: codEditForm.notes?.trim() || '',
                 invoice_type: 'COD' // Mark as COD invoice edit
             };
 
-            // COD Invoice fields ONLY - do NOT update Tax invoice fields
-            if (codEditForm.amount) payload.amount = parseFloat(codEditForm.amount);
-            if (codEditForm.pickup_charge) payload.pickup_charge = parseFloat(codEditForm.pickup_charge);
-            if (codEditForm.cod_delivery_charge) payload.cod_delivery_charge = parseFloat(codEditForm.cod_delivery_charge);
-            if (codEditForm.total_amount_cod) payload.total_amount_cod = parseFloat(codEditForm.total_amount_cod);
+            // Remove undefined and empty string values (except for notes)
+            Object.keys(payload).forEach(key => {
+                const numericFields = ['weight_kg', 'base_rate', 'amount', 'pickup_charge', 'cod_delivery_charge', 'total_amount_cod', 'number_of_boxes'];
+                if (numericFields.includes(key) && payload[key] === 0) {
+                    return; // Keep numeric fields even if 0
+                }
+                if (payload[key] === undefined || (key !== 'notes' && payload[key] === '')) {
+                    delete payload[key];
+                }
+            });
             
-            // IMPORTANT: Do NOT update Tax invoice fields (delivery_charge, tax_amount, total_amount_tax_invoice)
+            // Ensure notes is always included (can be empty string)
+            if (!payload.hasOwnProperty('notes')) {
+                payload.notes = '';
+            }
+
+            // IMPORTANT: Do NOT update Tax invoice fields (delivery_charge, tax_amount, total_amount_tax_invoice, tax_rate)
             // These should remain unchanged when editing COD invoice
 
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
@@ -1539,7 +1820,12 @@ export default function InvoicePage() {
                     tax_rate: invoiceData.tax_rate,
                     tax_amount: invoiceData.tax_amount,
                     total_amount: invoiceData.total_amount,
-                    subtotal: invoiceData.subtotal
+                    subtotal: invoiceData.subtotal,
+                    // Critical fields for rate/weight display
+                    weight_kg: invoiceData.weight_kg,
+                    weight_type: invoiceData.weight_type,
+                    base_rate: invoiceData.base_rate,
+                    requestIdBaseRate: invoiceData.request_id?.verification?.calculated_rate
                 });
                 setInvoice(refreshResult.data);
                 
@@ -1557,16 +1843,65 @@ export default function InvoicePage() {
                     }
                 }
                 
+                // Initialize all edit form fields (refresh)
+                const invoiceNumber = invoiceData.invoice_id || invoiceData._id || '';
+                const batchNumber = invoiceData.batch_number || invoiceData.request_id?.batch_number || '';
+                const awbNumber = invoiceData.awb_number || invoiceData.request_id?.awb_number || invoiceData.request_id?.tracking_code || '';
+                const issueDate = invoiceData.issue_date ? new Date(invoiceData.issue_date).toISOString().split('T')[0] : '';
+                const dueDate = invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '';
+                
+                const customerName = invoiceData.customer_name || invoiceData.request_id?.customer_name || invoiceData.request_id?.sender?.name || invoiceData.client_id?.company_name || invoiceData.client_id?.contact_name || '';
+                const customerPhone = invoiceData.customer_phone || invoiceData.request_id?.customer_phone || invoiceData.request_id?.sender?.phone || invoiceData.client_id?.contact_phone || '';
+                const customerEmail = invoiceData.customer_email || invoiceData.request_id?.customer_email || invoiceData.request_id?.sender?.email || invoiceData.client_id?.contact_email || '';
+                const originPlace = invoiceData.origin_place || invoiceData.request_id?.origin_place || invoiceData.request_id?.sender?.address || '';
+                
+                const receiverName = invoiceData.receiver_name || invoiceData.request_id?.receiver?.name || '';
+                const receiverAddress = invoiceData.receiver_address || invoiceData.request_id?.receiver?.address || '';
+                const receiverPhone = invoiceData.receiver_phone || invoiceData.request_id?.receiver?.phone || '';
+                const receiverTrn = invoiceData.customer_trn || invoiceData.request_id?.customer_trn || '';
+                
+                const numberOfBoxes = invoiceData.number_of_boxes || invoiceData.request_id?.verification?.number_of_boxes || invoiceData.request_id?.shipment?.number_of_boxes || '';
+                const weightKg = invoiceData.weight_kg || invoiceData.request_id?.verification?.total_kg || invoiceData.request_id?.verification?.chargeable_weight || '';
+                const weightType = invoiceData.request_id?.shipment?.weight_type || invoiceData.request_id?.verification?.weight_type || 'ACTUAL';
+                const baseRate = invoiceData.base_rate ? parseFloat(invoiceData.base_rate).toString() : (invoiceData.request_id?.verification?.calculated_rate ? parseFloat(invoiceData.request_id.verification.calculated_rate.toString()).toString() : '');
+                const serviceCode = invoiceData.service_code || invoiceData.request_id?.service_code || '';
+                
+                const agentName = invoiceData.created_by?.full_name || invoiceData.request_id?.verification?.agents_name || '';
+                
                 setEditForm({
-                    receiver_name: invoiceData.receiver_name || '',
-                    receiver_address: invoiceData.receiver_address || '',
-                    receiver_phone: invoiceData.receiver_phone || '',
+                    // Invoice Header
+                    invoice_number: invoiceNumber.toString(),
+                    batch_number: batchNumber,
+                    awb_number: awbNumber,
+                    issue_date: issueDate,
+                    due_date: dueDate,
+                    // Sender Information
+                    customer_name: customerName,
+                    customer_phone: customerPhone,
+                    customer_email: customerEmail,
+                    origin_place: originPlace,
+                    // Receiver Information
+                    receiver_name: receiverName,
+                    receiver_address: receiverAddress,
+                    receiver_phone: receiverPhone,
+                    receiver_trn: receiverTrn,
+                    // Shipment Details
+                    number_of_boxes: numberOfBoxes.toString(),
+                    weight_kg: weightKg ? parseFloat(weightKg.toString()).toString() : '',
+                    weight_type: weightType,
+                    base_rate: baseRate,
+                    service_code: serviceCode,
+                    // Charges
                     amount: invoiceData.amount ? parseFloat(invoiceData.amount).toString() : '',
                     pickup_charge: invoiceData.pickup_charge ? parseFloat(invoiceData.pickup_charge).toString() : '',
                     delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
                     insurance_charge: insuranceValue,
                     tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
-                    due_date: invoiceData.due_date ? new Date(invoiceData.due_date).toISOString().split('T')[0] : '',
+                    tax_amount: invoiceData.tax_amount ? parseFloat(invoiceData.tax_amount.toString()).toString() : '',
+                    total: invoiceData.total_amount || invoiceData.total ? parseFloat((invoiceData.total_amount || invoiceData.total).toString()).toString() : '',
+                    // Agent
+                    agent_name: agentName,
+                    // Notes
                     notes: invoiceData.notes || ''
                 });
                 
@@ -1795,6 +2130,52 @@ export default function InvoicePage() {
                                     rows={3}
                                 />
                             </div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <Label>Number of Boxes</Label>
+                                    <Input
+                                        type="number"
+                                        min="1"
+                                        value={codEditForm.number_of_boxes}
+                                        onChange={(e) => handleCodEditChange('number_of_boxes', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <Label>Weight (kg)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={codEditForm.weight_kg}
+                                        onChange={(e) => handleCodEditChange('weight_kg', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <Label>Weight Type</Label>
+                                    <Select
+                                        value={codEditForm.weight_type}
+                                        onValueChange={(value) => handleCodEditChange('weight_type', value)}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="ACTUAL">ACTUAL</SelectItem>
+                                            <SelectItem value="VOLUMETRIC">VOLUMETRIC</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
+                                    <Label>Rate (AED/kg)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={codEditForm.base_rate}
+                                        onChange={(e) => handleCodEditChange('base_rate', e.target.value)}
+                                    />
+                                </div>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <Label>Shipping Charge (AED) *</Label>
@@ -1907,6 +2288,52 @@ export default function InvoicePage() {
                                     rows={3}
                                 />
                             </div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <Label>Number of Boxes</Label>
+                                    <Input
+                                        type="number"
+                                        min="1"
+                                        value={taxEditForm.number_of_boxes}
+                                        onChange={(e) => handleTaxEditChange('number_of_boxes', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <Label>Weight (kg)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={taxEditForm.weight_kg}
+                                        onChange={(e) => handleTaxEditChange('weight_kg', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <Label>Weight Type</Label>
+                                    <Select
+                                        value={taxEditForm.weight_type}
+                                        onValueChange={(value) => handleTaxEditChange('weight_type', value)}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="ACTUAL">ACTUAL</SelectItem>
+                                            <SelectItem value="VOLUMETRIC">VOLUMETRIC</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
+                                    <Label>Rate (AED/kg)</Label>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={taxEditForm.base_rate}
+                                        onChange={(e) => handleTaxEditChange('base_rate', e.target.value)}
+                                    />
+                                </div>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div>
                                     <Label>Delivery Charge (AED) *</Label>
@@ -1931,15 +2358,16 @@ export default function InvoicePage() {
                                     <p className="text-xs text-muted-foreground mt-1">Fixed at 5% VAT</p>
                                 </div>
                                 <div>
-                                    <Label>Tax Amount (AED)</Label>
+                                    <Label>Tax Amount (AED) *</Label>
                                     <Input
                                         type="number"
                                         step="0.01"
+                                        min="0"
                                         value={taxEditForm.tax_amount}
-                                        readOnly
-                                        className="bg-gray-100"
+                                        onChange={(e) => handleTaxEditChange('tax_amount', e.target.value)}
+                                        required
                                     />
-                                    <p className="text-xs text-muted-foreground mt-1">Auto-calculated: 5% of delivery</p>
+                                    <p className="text-xs text-muted-foreground mt-1">Enter tax amount manually</p>
                                 </div>
                             </div>
                             <div>
@@ -1947,13 +2375,12 @@ export default function InvoicePage() {
                                 <Input
                                     type="number"
                                     step="0.01"
+                                    min="0"
                                     value={taxEditForm.total_amount_tax_invoice}
                                     onChange={(e) => handleTaxEditChange('total_amount_tax_invoice', e.target.value)}
                                     required
-                                    readOnly
-                                    className="bg-gray-100"
                                 />
-                                <p className="text-xs text-muted-foreground mt-1">Auto-calculated: Delivery + Tax</p>
+                                <p className="text-xs text-muted-foreground mt-1">Enter total amount manually</p>
                             </div>
                             <div>
                                 <Label>Notes</Label>
@@ -1984,106 +2411,502 @@ export default function InvoicePage() {
             )}
 
             {/* Regular Invoice Edit Dialog (for non-PH TO UAE invoices) */}
-            {!isPhToUae && (
+            {!isPhToUae && invoice && (
                 <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-                <DialogContent>
+                <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Edit Invoice</DialogTitle>
-                        <DialogDescription>Adjust receiver and charge details. All changes are tracked.</DialogDescription>
+                        <DialogDescription>Edit all invoice details. All changes are tracked and saved to the database.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <Label>Receiver Name</Label>
-                                <Input
-                                    value={editForm.receiver_name}
-                                    onChange={(e) => handleEditChange('receiver_name', e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <Label>Receiver Phone</Label>
-                                <Input
-                                    value={editForm.receiver_phone}
-                                    onChange={(e) => handleEditChange('receiver_phone', e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <Label>Receiver Address</Label>
-                            <Textarea
-                                value={editForm.receiver_address}
-                                onChange={(e) => handleEditChange('receiver_address', e.target.value)}
-                                rows={3}
-                            />
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div>
-                                <Label>Shipping Charge (AED)</Label>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={editForm.amount}
-                                    onChange={(e) => handleEditChange('amount', e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <Label>Pickup Charge (AED)</Label>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={editForm.pickup_charge}
-                                    onChange={(e) => handleEditChange('pickup_charge', e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <Label>Delivery Charge (AED)</Label>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={editForm.delivery_charge}
-                                    onChange={(e) => handleEditChange('delivery_charge', e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <Label>Insurance Charge (AED)</Label>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={editForm.insurance_charge}
-                                    onChange={(e) => handleEditChange('insurance_charge', e.target.value)}
-                                    placeholder="0.00"
-                                />
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div>
-                                <Label>Tax Rate (%)</Label>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={editForm.tax_rate}
-                                    onChange={(e) => handleEditChange('tax_rate', e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <Label>Due Date</Label>
-                                <Input
-                                    type="date"
-                                    value={editForm.due_date}
-                                    onChange={(e) => handleEditChange('due_date', e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <Label>Notes</Label>
-                            <Textarea
-                                value={editForm.notes}
-                                rows={3}
-                                onChange={(e) => handleEditChange('notes', e.target.value)}
-                            />
-                        </div>
+                    <div className="space-y-6 py-4">
+                        {/* Invoice Header Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Invoice Header</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentInvoiceNumber = invoice.invoice_id || invoice._id || '';
+                                    const currentBatchNumber = invoice.batch_number || invoice.request_id?.batch_number || '';
+                                    const currentAwbNumber = invoice.awb_number || invoice.request_id?.awb_number || invoice.request_id?.tracking_code || '';
+                                    const currentIssueDate = invoice.issue_date ? new Date(invoice.issue_date).toISOString().split('T')[0] : '';
+                                    const currentDueDate = invoice.due_date ? new Date(invoice.due_date).toISOString().split('T')[0] : '';
+                                    
+                                    return (
+                                        <>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                <div>
+                                                    <Label>Invoice Number</Label>
+                                                    <Input
+                                                        value={editForm.invoice_number}
+                                                        onChange={(e) => handleEditChange('invoice_number', e.target.value)}
+                                                    />
+                                                    {currentInvoiceNumber && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentInvoiceNumber.toString()}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Batch Number</Label>
+                                                    <Input
+                                                        value={editForm.batch_number}
+                                                        onChange={(e) => handleEditChange('batch_number', e.target.value)}
+                                                    />
+                                                    {currentBatchNumber && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentBatchNumber || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>AWB Number</Label>
+                                                    <Input
+                                                        value={editForm.awb_number}
+                                                        onChange={(e) => handleEditChange('awb_number', e.target.value)}
+                                                    />
+                                                    {currentAwbNumber && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentAwbNumber || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                                                <div>
+                                                    <Label>Issue Date</Label>
+                                                    <Input
+                                                        type="date"
+                                                        value={editForm.issue_date}
+                                                        onChange={(e) => handleEditChange('issue_date', e.target.value)}
+                                                    />
+                                                    {currentIssueDate && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentIssueDate}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Due Date</Label>
+                                                    <Input
+                                                        type="date"
+                                                        value={editForm.due_date}
+                                                        onChange={(e) => handleEditChange('due_date', e.target.value)}
+                                                    />
+                                                    {currentDueDate && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentDueDate || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+
+                        {/* Sender Information Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Sender Information</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentSenderName = invoice.customer_name || invoice.request_id?.customer_name || invoice.request_id?.sender?.name || invoice.client_id?.company_name || invoice.client_id?.contact_name || '';
+                                    const currentSenderPhone = invoice.customer_phone || invoice.request_id?.customer_phone || invoice.request_id?.sender?.phone || invoice.client_id?.contact_phone || '';
+                                    const currentSenderEmail = invoice.customer_email || invoice.request_id?.customer_email || invoice.request_id?.sender?.email || invoice.client_id?.contact_email || '';
+                                    const currentOriginPlace = invoice.origin_place || invoice.request_id?.origin_place || invoice.request_id?.sender?.address || '';
+                                    
+                                    return (
+                                        <>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <Label>Sender Name</Label>
+                                                    <Input
+                                                        value={editForm.customer_name}
+                                                        onChange={(e) => handleEditChange('customer_name', e.target.value)}
+                                                    />
+                                                    {currentSenderName && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentSenderName || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Sender Phone</Label>
+                                                    <Input
+                                                        value={editForm.customer_phone}
+                                                        onChange={(e) => handleEditChange('customer_phone', e.target.value)}
+                                                    />
+                                                    {currentSenderPhone && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentSenderPhone || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                                                <div>
+                                                    <Label>Sender Email</Label>
+                                                    <Input
+                                                        type="email"
+                                                        value={editForm.customer_email}
+                                                        onChange={(e) => handleEditChange('customer_email', e.target.value)}
+                                                    />
+                                                    {currentSenderEmail && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentSenderEmail || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Origin Place / Sender Address</Label>
+                                                    <Input
+                                                        value={editForm.origin_place}
+                                                        onChange={(e) => handleEditChange('origin_place', e.target.value)}
+                                                    />
+                                                    {currentOriginPlace && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentOriginPlace || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+
+                        {/* Receiver Information Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Receiver Information</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentReceiverName = invoice.receiver_name || invoice.request_id?.receiver?.name || invoice.client_id?.contact_name || invoice.client_id?.company_name || '';
+                                    const currentReceiverPhone = invoice.receiver_phone || invoice.request_id?.receiver?.phone || '';
+                                    const currentReceiverAddress = invoice.receiver_address || invoice.request_id?.receiver?.address || '';
+                                    const currentReceiverTrn = invoice.customer_trn || invoice.request_id?.customer_trn || '';
+                                    
+                                    return (
+                                        <>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <Label>Receiver Name</Label>
+                                                    <Input
+                                                        value={editForm.receiver_name}
+                                                        onChange={(e) => handleEditChange('receiver_name', e.target.value)}
+                                                    />
+                                                    {currentReceiverName && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverName || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Receiver Phone</Label>
+                                                    <Input
+                                                        value={editForm.receiver_phone}
+                                                        onChange={(e) => handleEditChange('receiver_phone', e.target.value)}
+                                                    />
+                                                    {currentReceiverPhone && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverPhone || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                                                <div>
+                                                    <Label>Receiver Address</Label>
+                                                    <Textarea
+                                                        value={editForm.receiver_address}
+                                                        onChange={(e) => handleEditChange('receiver_address', e.target.value)}
+                                                        rows={3}
+                                                    />
+                                                    {currentReceiverAddress && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverAddress.substring(0, 60)}{currentReceiverAddress.length > 60 ? '...' : ''}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Receiver TRN</Label>
+                                                    <Input
+                                                        value={editForm.receiver_trn}
+                                                        onChange={(e) => handleEditChange('receiver_trn', e.target.value)}
+                                                        placeholder="Optional"
+                                                    />
+                                                    {currentReceiverTrn !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverTrn || 'Not set'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+
+                        {/* Shipment Details Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Shipment Details</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentNumberOfBoxes = invoice.number_of_boxes || invoice.request_id?.verification?.number_of_boxes || invoice.request_id?.shipment?.number_of_boxes || '';
+                                    const currentWeightKg = invoice.weight_kg || invoice.request_id?.verification?.total_kg || invoice.request_id?.verification?.chargeable_weight || '';
+                                    const currentWeightType = invoice.request_id?.shipment?.weight_type || invoice.request_id?.verification?.weight_type || 'ACTUAL';
+                                    const currentBaseRate = invoice.base_rate || (invoice.request_id?.verification?.calculated_rate ? parseDecimal(invoice.request_id.verification.calculated_rate, 2).toString() : '');
+                                    const currentServiceCode = invoice.service_code || invoice.request_id?.service_code || '';
+                                    
+                                    return (
+                                        <>
+                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                                <div>
+                                                    <Label>Number of Boxes</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="1"
+                                                        min="1"
+                                                        value={editForm.number_of_boxes}
+                                                        onChange={(e) => handleEditChange('number_of_boxes', e.target.value)}
+                                                    />
+                                                    {currentNumberOfBoxes !== undefined && currentNumberOfBoxes !== '' && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentNumberOfBoxes.toString()}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Weight (kg)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.weight_kg}
+                                                        onChange={(e) => handleEditChange('weight_kg', e.target.value)}
+                                                    />
+                                                    {currentWeightKg !== undefined && currentWeightKg !== '' && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {parseDecimal(currentWeightKg, 2).toString()}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Weight Type</Label>
+                                                    <Select
+                                                        value={editForm.weight_type}
+                                                        onValueChange={(value) => handleEditChange('weight_type', value)}
+                                                    >
+                                                        <SelectTrigger>
+                                                            <SelectValue placeholder="Select weight type" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="ACTUAL">ACTUAL</SelectItem>
+                                                            <SelectItem value="VOLUMETRIC">VOLUMETRIC</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                    {currentWeightType && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentWeightType}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Rate (AED/kg)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.base_rate}
+                                                        onChange={(e) => handleEditChange('base_rate', e.target.value)}
+                                                    />
+                                                    {currentBaseRate && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentBaseRate}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="mt-4">
+                                                <Label>Service Code</Label>
+                                                <Input
+                                                    value={editForm.service_code}
+                                                    onChange={(e) => handleEditChange('service_code', e.target.value)}
+                                                    placeholder="e.g., UAE_TO_PH, PH_TO_UAE"
+                                                />
+                                                {currentServiceCode && (
+                                                    <p className="text-xs text-muted-foreground mt-1">Current: {currentServiceCode}</p>
+                                                )}
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+
+                        {/* Charges Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Charges</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentAmount = invoice.amount ? parseDecimal(invoice.amount, 2).toString() : '';
+                                    const currentPickupCharge = invoice.pickup_charge ? parseDecimal(invoice.pickup_charge, 2).toString() : '';
+                                    const currentDeliveryCharge = invoice.delivery_charge ? parseDecimal(invoice.delivery_charge, 2).toString() : '';
+                                    let currentInsuranceCharge = '';
+                                    if (invoice.insurance_charge !== undefined && invoice.insurance_charge !== null) {
+                                        currentInsuranceCharge = parseDecimal(invoice.insurance_charge, 2).toString();
+                                    } else if (invoice.line_items && invoice.line_items.length > 0) {
+                                        const insuranceItem = invoice.line_items.find((item: any) => 
+                                            item.description?.toLowerCase().includes('insurance')
+                                        );
+                                        if (insuranceItem) {
+                                            currentInsuranceCharge = parseDecimal(insuranceItem.total || insuranceItem.unit_price, 2).toString();
+                                        }
+                                    }
+                                    const currentTaxRate = invoice.tax_rate != null ? parseDecimal(invoice.tax_rate, 2).toString() : '';
+                                    const currentTaxAmount = invoice.tax_amount ? parseDecimal(invoice.tax_amount, 2).toString() : '';
+                                    const currentTotal = invoice.total_amount || invoice.total ? parseDecimal((invoice.total_amount || invoice.total).toString(), 2).toString() : '';
+                                    
+                                    return (
+                                        <>
+                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                                <div>
+                                                    <Label>Shipping Charge (AED)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.amount}
+                                                        onChange={(e) => handleEditChange('amount', e.target.value)}
+                                                    />
+                                                    {currentAmount !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentAmount || '0.00'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Pickup Charge (AED)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.pickup_charge}
+                                                        onChange={(e) => handleEditChange('pickup_charge', e.target.value)}
+                                                    />
+                                                    {currentPickupCharge !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentPickupCharge || '0.00'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Delivery Charge (AED)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.delivery_charge}
+                                                        onChange={(e) => handleEditChange('delivery_charge', e.target.value)}
+                                                    />
+                                                    {currentDeliveryCharge !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentDeliveryCharge || '0.00'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Insurance Charge (AED)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.insurance_charge}
+                                                        onChange={(e) => handleEditChange('insurance_charge', e.target.value)}
+                                                        placeholder="0.00"
+                                                    />
+                                                    {currentInsuranceCharge !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentInsuranceCharge || '0.00'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                                                <div>
+                                                    <Label>Tax Rate (%)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        max="100"
+                                                        value={editForm.tax_rate}
+                                                        onChange={(e) => handleEditChange('tax_rate', e.target.value)}
+                                                    />
+                                                    {currentTaxRate !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentTaxRate || '0'}%</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Tax Amount (AED)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.tax_amount}
+                                                        onChange={(e) => handleEditChange('tax_amount', e.target.value)}
+                                                    />
+                                                    {currentTaxAmount !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentTaxAmount || '0.00'}</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <Label>Total Amount (AED)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={editForm.total}
+                                                        onChange={(e) => handleEditChange('total', e.target.value)}
+                                                    />
+                                                    {currentTotal !== undefined && (
+                                                        <p className="text-xs text-muted-foreground mt-1">Current: {currentTotal || '0.00'}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+
+                        {/* Agent Information Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Agent Information</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentAgentName = invoice.created_by?.full_name || invoice.request_id?.verification?.agents_name || '';
+                                    
+                                    return (
+                                        <div>
+                                            <Label>Agent Name</Label>
+                                            <Input
+                                                value={editForm.agent_name}
+                                                onChange={(e) => handleEditChange('agent_name', e.target.value)}
+                                                placeholder="Agent name"
+                                            />
+                                            {currentAgentName && (
+                                                <p className="text-xs text-muted-foreground mt-1">Current: {currentAgentName || 'Not set'}</p>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+
+                        {/* Notes Section */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-base">Additional Notes</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {(() => {
+                                    // Get current values from invoice for comparison
+                                    const currentNotes = invoice.notes || '';
+                                    
+                                    return (
+                                        <div>
+                                            <Label>Notes</Label>
+                                            <Textarea
+                                                value={editForm.notes}
+                                                rows={4}
+                                                onChange={(e) => handleEditChange('notes', e.target.value)}
+                                                placeholder="Additional notes or remarks"
+                                            />
+                                            {currentNotes && (
+                                                <p className="text-xs text-muted-foreground mt-1">Current: {currentNotes.substring(0, 100)}{currentNotes.length > 100 ? '...' : ''}</p>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
                     </div>
                     <DialogFooter>
                         <Button
