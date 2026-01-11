@@ -282,6 +282,8 @@ export default function InvoicePage() {
                         delivery_charge: invoiceData.delivery_charge ? parseFloat(invoiceData.delivery_charge).toString() : '',
                         insurance_charge: insuranceValue,
                         tax_rate: invoiceData.tax_rate != null ? invoiceData.tax_rate.toString() : '',
+                        tax_amount: invoiceData.tax_amount ? parseFloat(invoiceData.tax_amount).toString() : '',
+                        total: invoiceData.total ? parseFloat(invoiceData.total).toString() : '',
                         // Agent
                         agent_name: agentName,
                         // Notes
@@ -1945,24 +1947,70 @@ export default function InvoicePage() {
                     }
                     
                     setCodEditForm({
-                        receiver_name: invoiceData.receiver_name || '',
-                        receiver_address: invoiceData.receiver_address || '',
-                        receiver_phone: invoiceData.receiver_phone || '',
+                        // Invoice Header
+                        invoice_number: invoiceNumber.toString(),
+                        batch_number: batchNumber,
+                        awb_number: awbNumber,
+                        issue_date: issueDate,
+                        due_date: dueDate,
+                        // Sender Information
+                        customer_name: customerName,
+                        customer_phone: customerPhone,
+                        customer_email: customerEmail,
+                        origin_place: originPlace,
+                        // Receiver Information
+                        receiver_name: receiverName,
+                        receiver_address: receiverAddress,
+                        receiver_phone: receiverPhone,
+                        receiver_trn: receiverTrn,
+                        // Shipment Details
+                        number_of_boxes: numberOfBoxes.toString(),
+                        weight_kg: weightKg ? parseFloat(weightKg.toString()).toString() : '',
+                        weight_type: weightType,
+                        base_rate: baseRate,
+                        service_code: serviceCode,
+                        // COD Charges Only (NO Tax invoice fields)
                         amount: shippingChargeForForm > 0 ? shippingChargeForForm.toFixed(2) : '',
                         pickup_charge: pickupChargeValueForForm > 0 ? pickupChargeValueForForm.toFixed(2) : '',
                         cod_delivery_charge: deliveryBaseAmount > 0 ? deliveryBaseAmount.toFixed(2) : '',
                         total_amount_cod: totalAmountCod > 0 ? parseFloat(totalAmountCod.toString()).toFixed(2) : '',
+                        // Agent
+                        agent_name: agentName,
+                        // Notes
                         notes: invoiceData.notes || ''
                     });
                     
                     setTaxEditForm({
-                        receiver_name: invoiceData.receiver_name || '',
-                        receiver_address: invoiceData.receiver_address || '',
-                        receiver_phone: invoiceData.receiver_phone || '',
+                        // Invoice Header
+                        invoice_number: invoiceNumber.toString(),
+                        batch_number: batchNumber,
+                        awb_number: awbNumber,
+                        issue_date: issueDate,
+                        due_date: dueDate,
+                        // Sender Information
+                        customer_name: customerName,
+                        customer_phone: customerPhone,
+                        customer_email: customerEmail,
+                        origin_place: originPlace,
+                        // Receiver Information
+                        receiver_name: receiverName,
+                        receiver_address: receiverAddress,
+                        receiver_phone: receiverPhone,
+                        receiver_trn: receiverTrn,
+                        // Shipment Details
+                        number_of_boxes: numberOfBoxes.toString(),
+                        weight_kg: weightKg ? parseFloat(weightKg.toString()).toString() : '',
+                        weight_type: weightType,
+                        base_rate: baseRate,
+                        service_code: serviceCode,
+                        // Tax Charges Only (NO COD invoice fields)
                         delivery_charge: deliveryCharge > 0 ? deliveryCharge.toString() : '',
                         tax_rate: '5',
                         tax_amount: taxAmount > 0 ? taxAmount.toString() : '',
                         total_amount_tax_invoice: totalAmountTaxInvoice > 0 ? parseFloat(totalAmountTaxInvoice.toString()).toFixed(2) : '',
+                        // Agent
+                        agent_name: agentName,
+                        // Notes
                         notes: invoiceData.notes || ''
                     });
                 }
