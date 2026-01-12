@@ -32,6 +32,7 @@ interface VerificationFormProps {
   request: any;
   onVerificationComplete: () => void;
   currentUser: any;
+  isReverifyMode?: boolean; // If true, form is in reverify/edit mode for VERIFIED requests
 }
 
 
@@ -190,8 +191,8 @@ const getRateForWeight = (weight: number, route: 'PH_TO_UAE' | 'UAE_TO_PH' | str
   return { rate: fallbackBracket.rate, bracket: fallbackBracket };
 };
 
-export default function VerificationForm({ request, onVerificationComplete, currentUser }: VerificationFormProps) {
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+export default function VerificationForm({ request, onVerificationComplete, currentUser, isReverifyMode = false }: VerificationFormProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(isReverifyMode); // Auto-open if in reverify mode
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFullData, setIsLoadingFullData] = useState(false);
   const [fullRequestData, setFullRequestData] = useState<any>(null);
@@ -835,10 +836,36 @@ export default function VerificationForm({ request, onVerificationComplete, curr
 
       // Add insurance fields for UAE_TO_PH/PINAS + insured = true in database (any classification)
       if (isUaeToPinas && isInsuredInDb && verificationData.declared_value) {
-        updateData.declared_value = parseFloat(verificationData.declared_value) || 0;
+        const declaredAmountValue = parseFloat(verificationData.declared_value) || 0;
+        updateData.declared_value = declaredAmountValue;
+        updateData.declaredAmount = declaredAmountValue; // Also update declaredAmount in invoice request collection
         updateData.insured = true;
       }
 
+      if (isReverifyMode) {
+        // For reverify mode: Just update verification data (don't change status)
+        const updateResult = await apiClient.reverifyVerification(request._id, {
+          ...updateData,
+          verified_by_employee_id: currentUser.employee_id || currentUser._id,
+          verification_notes: verificationData.verification_notes,
+        });
+
+        if (updateResult.success) {
+          toast({
+            title: 'Verification Updated',
+            description: 'Verification information has been updated successfully',
+          });
+          setIsDialogOpen(false);
+          onVerificationComplete();
+        } else {
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: updateResult.error || 'Failed to update verification',
+          });
+        }
+      } else {
+        // Normal verification flow: Update then complete
       // First update verification details
       const updateResult = await apiClient.updateVerification(request._id, updateData);
 
@@ -898,6 +925,7 @@ export default function VerificationForm({ request, onVerificationComplete, curr
           title: 'Error',
           description: updateResult.error || 'Failed to update verification details',
         });
+        }
       }
     } catch (error) {
       toast({
@@ -1413,13 +1441,14 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                         min="0"
                         placeholder="0.00"
                         value={verificationData.declared_value}
-                        readOnly
-                        disabled
-                        className="bg-muted cursor-not-allowed text-muted-foreground"
+                        onChange={(e) => setVerificationData(prev => ({
+                          ...prev,
+                          declared_value: e.target.value
+                        }))}
                         required
                       />
                       <p className="text-xs text-muted-foreground mt-1">
-                        Declared value set by customer and cannot be changed
+                        Enter the declared value for insurance calculation
                       </p>
                       {verificationData.declared_value && parseFloat(verificationData.declared_value) > 0 && (
                         <p className="text-xs text-blue-600 font-medium mt-1">

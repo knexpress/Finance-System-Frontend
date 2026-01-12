@@ -1,7 +1,6 @@
 'use client';
 
 import InvoicesTable from "@/components/invoices-table";
-import CSVUpload from "@/components/csv-upload";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/hooks/use-auth";
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -79,10 +78,6 @@ export default function InvoicesPage() {
 
         loadInvoiceData();
     }, [refreshKey]);
-
-    const handleCSVUploadSuccess = () => {
-        setRefreshKey(prev => prev + 1);
-    };
 
     // Filter invoices based on search and filters
     const filteredInvoices = useMemo(() => {
@@ -191,6 +186,37 @@ export default function InvoicesPage() {
         }
     };
 
+    const handleCancelInvoice = async (invoiceId: string) => {
+        try {
+            const result = await apiClient.cancelInvoiceUnified(invoiceId);
+            
+            if (result.success) {
+                toast({
+                    title: 'Success',
+                    description: 'Invoice and related entities cancelled successfully',
+                });
+                // Refresh invoices list
+                const updatedResult = await apiClient.getInvoicesUnified();
+                if (updatedResult.success && updatedResult.data) {
+                    setInvoices(Array.isArray(updatedResult.data) ? updatedResult.data : []);
+                }
+            } else {
+                toast({
+                    variant: 'destructive',
+                    title: 'Error',
+                    description: result.error || 'Failed to cancel invoice'
+                });
+            }
+        } catch (error) {
+            console.error('Error cancelling invoice:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Error',
+                description: 'Failed to cancel invoice'
+            });
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
@@ -201,8 +227,6 @@ export default function InvoicesPage() {
 
     return (
         <div className="space-y-6">
-            <CSVUpload onSuccess={handleCSVUploadSuccess} />
-            
             {/* Search and Filter Bar */}
             <Card>
                 <CardHeader>
@@ -288,6 +312,7 @@ export default function InvoicesPage() {
                 invoices={filteredInvoices}
                 department={department?.name as any}
                 onRemit={handleRemitInvoice}
+                onCancel={handleCancelInvoice}
             />
         </div>
     );

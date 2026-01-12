@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Eye, TrendingUp, FileSpreadsheet } from 'lucide-react';
+import { Eye, TrendingUp, FileSpreadsheet, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
 import * as XLSX from 'xlsx';
 
@@ -21,9 +21,10 @@ interface InvoicesTableProps {
     invoices: any[];
     department: Department | null;
     onRemit?: (invoiceId: string) => void;
+    onCancel?: (invoiceId: string) => void;
 }
 
-export default function InvoicesTable({ invoices, department, onRemit }: InvoicesTableProps) {
+export default function InvoicesTable({ invoices, department, onRemit, onCancel }: InvoicesTableProps) {
     const { toast } = useToast();
 
     // Ensure invoices is always an array
@@ -67,6 +68,9 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
                 'Total Amount (AED)',
                 'Total Amount COD (AED)',
                 'Total Amount Tax Invoice (AED)',
+                'Sender Delivery Option',
+                'Receiver Delivery Option',
+                'Agent Name',
                 'Issue Date',
                 'Status',
                 'Notes'
@@ -120,6 +124,23 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
                     ? new Date(invoice.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                     : 'N/A';
 
+                // Get fields from invoice request collection
+                const senderDeliveryOption = invoice.request_id?.sender_delivery_option || 'N/A';
+                const receiverDeliveryOption = invoice.request_id?.receiver_delivery_option || 'N/A';
+                const agentName = invoice.request_id?.verification?.agents_name || 'N/A';
+                
+                // Debug: Log the extracted values
+                if (invoiceList.indexOf(invoice) === 0) {
+                    console.log('📊 Excel Export - First Invoice Sample:', {
+                        invoice_id: invoice.invoice_id,
+                        hasRequestId: !!invoice.request_id,
+                        senderDeliveryOption,
+                        receiverDeliveryOption,
+                        agentName,
+                        requestIdKeys: invoice.request_id ? Object.keys(invoice.request_id) : []
+                    });
+                }
+
                 excelData.push([
                     invoice.invoice_id || 'N/A',
                     invoice.awb_number || 'N/A',
@@ -142,6 +163,9 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
                     displayAmount.toFixed(2),
                     totalAmountCod ? parseAmount(totalAmountCod).toFixed(2) : '',
                     totalAmountTaxInvoice ? parseAmount(totalAmountTaxInvoice).toFixed(2) : '',
+                    senderDeliveryOption,
+                    receiverDeliveryOption,
+                    agentName,
                     issueDate,
                     invoice.status || 'N/A',
                     invoice.notes || ''
@@ -175,6 +199,9 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
                 { wch: 18 }, // Total Amount
                 { wch: 20 }, // Total Amount COD
                 { wch: 25 }, // Total Amount Tax Invoice
+                { wch: 22 }, // Sender Delivery Option
+                { wch: 22 }, // Receiver Delivery Option
+                { wch: 15 }, // Agent Name
                 { wch: 15 }, // Issue Date
                 { wch: 15 }, // Status
                 { wch: 30 }  // Notes
@@ -351,6 +378,17 @@ export default function InvoicesTable({ invoices, department, onRemit }: Invoice
                                         >
                                             <TrendingUp className="mr-2 h-4 w-4" />
                                             Mark Collected
+                                        </Button>
+                                    )}
+                                    {onCancel && invoice.status !== 'CANCELLED' && invoice.status !== 'REMITTED' && (
+                                        <Button 
+                                            variant="outline" 
+                                            size="sm"
+                                            className="bg-red-600 text-white hover:bg-red-700"
+                                            onClick={() => onCancel(invoice._id)}
+                                        >
+                                            <X className="mr-2 h-4 w-4" />
+                                            Cancel
                                         </Button>
                                     )}
                                 </div>

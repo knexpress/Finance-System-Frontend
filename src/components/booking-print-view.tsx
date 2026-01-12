@@ -27,13 +27,27 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
     setViewingImageTitle(title);
   };
 
+  // Helper function to decode HTML entities (e.g., &#x2F; -> /)
+  const decodeHtmlEntities = (str: string): string => {
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = str;
+    return textarea.value;
+  };
+
   // Helper function to get image source
   const getImageSrc = (imageField: string | undefined) => {
     if (!imageField) return null;
-    if (imageField.startsWith('data:image') || imageField.startsWith('http')) {
-      return imageField;
+    
+    // Decode HTML entities (fix for data stored with HTML encoding like &#x2F; instead of /)
+    let decodedField = imageField;
+    if (typeof imageField === 'string' && imageField.includes('&#x')) {
+      decodedField = decodeHtmlEntities(imageField);
     }
-    return imageField;
+    
+    if (decodedField.startsWith('data:image') || decodedField.startsWith('http')) {
+      return decodedField;
+    }
+    return decodedField;
   };
 
   // Helper to format values

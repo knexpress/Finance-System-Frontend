@@ -39,6 +39,12 @@ export function sanitizeString(input: string | null | undefined, maxLength: numb
     return '';
   }
 
+  // Skip sanitization for base64 data URLs (image strings)
+  // Base64 strings are safe and should not be truncated or HTML-encoded
+  if (input.startsWith('data:image/')) {
+    return input; // Return full base64 string without modification
+  }
+
   // Trim and limit length
   let sanitized = input.trim().substring(0, maxLength);
 
@@ -345,6 +351,11 @@ export function validatePasswordStrength(password: string): { valid: boolean; st
 
   return { valid, strength, errors };
 }
+
+
+
+
+
 
 
 

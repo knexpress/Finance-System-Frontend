@@ -105,6 +105,8 @@ class ApiClient {
       }
 
       // Sanitize request body if present
+      // NOTE: Base64 image strings in identityDocuments are handled specially
+      // by sanitizeString to avoid truncation
       let sanitizedBody = options.body;
       if (options.body && typeof options.body === 'string') {
         try {
@@ -769,6 +771,13 @@ class ApiClient {
     });
   }
 
+  async reverifyVerification(id: string, verificationData: any) {
+    return this.request(`/invoice-requests/${id}/reverify`, {
+      method: 'PUT',
+      body: JSON.stringify(verificationData),
+    });
+  }
+
   async deleteInvoiceRequest(id: string) {
     return this.request(`/invoice-requests/${id}`, {
       method: 'DELETE',
@@ -858,6 +867,13 @@ class ApiClient {
   async remitInvoiceUnified(id: string) {
     return this.request(`/invoices-unified/${id}/remit`, {
       method: 'PATCH',
+    });
+  }
+
+  async cancelInvoiceUnified(id: string, reason?: string) {
+    return this.request(`/invoices-unified/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || '' }),
     });
   }
 
@@ -1209,92 +1225,6 @@ class ApiClient {
     return this.request(`/chat/users?current_user_id=${currentUserId}`);
   }
 
-  // CSV Upload
-  async uploadCSV(file: File) {
-    const formData = new FormData();
-    formData.append('csvFile', file);
-    
-    // Use fetch directly for file uploads to let browser set Content-Type with boundary
-    const url = `${this.baseUrl}/csv-upload/bulk-create`;
-    const headers: Record<string, string> = {};
-    
-    // Add authorization header if token is available
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      return { success: false, error: data.error || 'Upload failed' };
-    }
-    
-    return data;
-  }
-
-  async downloadCSVTemplate() {
-    // Use fetch directly for downloads
-    const url = `${this.baseUrl}/csv-upload/template`;
-    const headers: Record<string, string> = {};
-    
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-    
-    const response = await fetch(url, { headers });
-    
-    if (!response.ok) {
-      throw new Error('Failed to download template');
-    }
-    
-    const text = await response.text();
-    return { success: true, data: text };
-  }
-
-  // Historical CSV Upload (for old data Jan 1 - Sep 29)
-  async uploadHistoricalCSV(file: File) {
-    // Validate file is CSV
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      return { success: false, error: 'Only CSV files are allowed' };
-    }
-
-    // Create FormData with ONLY the CSV file
-    const formData = new FormData();
-    // Use 'csvFile' as per API specification (both 'csvFile' and 'file' are accepted, but 'csvFile' is preferred)
-    formData.append('csvFile', file); // Only CSV file, no other data
-    
-    // Use fetch directly for file uploads to let browser set Content-Type with boundary
-    const url = `${this.baseUrl}/csv-upload/historical`;
-    const headers: Record<string, string> = {};
-    
-    // Add authorization header if token is available
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-    
-    // Note: Do NOT set Content-Type header - browser will set it with boundary for multipart/form-data
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: formData, // Only contains the CSV file
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      return { success: false, error: data.error || data.details || 'Historical upload failed' };
-    }
-    
-    return data;
-  }
-
   // Payment Remittances
   async getPaymentRemittances() {
     return this.request('/payment-remittances');
@@ -1471,6 +1401,14 @@ class ApiClient {
       success: true,
       data: allBookings
     };
+  }
+
+  // Create a new booking (for Sales department)
+  async createBooking(bookingData: any) {
+    return this.request('/bookings', {
+      method: 'POST',
+      body: JSON.stringify(bookingData),
+    });
   }
 
   async reviewBooking(id: string, reviewData: { reviewed_by_employee_id: string }) {

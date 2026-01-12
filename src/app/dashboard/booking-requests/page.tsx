@@ -356,6 +356,14 @@ export default function BookingRequestsPage() {
                                  fullBooking.submissionTimestamp ||
                                  undefined;
 
+      // Get additional documents
+      const confirmationForm = fullBooking.identityDocuments?.confirmationForm ||
+                              fullBooking.collections?.identityDocuments?.confirmationForm ||
+                              undefined;
+      const tradeLicense = fullBooking.identityDocuments?.tradeLicense ||
+                          fullBooking.collections?.identityDocuments?.tradeLicense ||
+                          undefined;
+
       // Map to PDF data format
       const pdfData: BookingPDFData = {
         referenceNumber: referenceNumber,
@@ -432,6 +440,8 @@ export default function BookingRequestsPage() {
         eidBackImage: eidBackImage,
         philippinesIdFront: philippinesIdFront,
         philippinesIdBack: philippinesIdBack,
+        confirmationForm: confirmationForm,
+        tradeLicense: tradeLicense,
         customerImage: customerImages.length > 0 ? customerImages[0] : undefined,
         customerImages: customerImages.length > 0 ? customerImages : undefined,
         submissionTimestamp: submissionTimestamp,

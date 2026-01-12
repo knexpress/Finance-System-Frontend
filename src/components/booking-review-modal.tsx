@@ -257,13 +257,27 @@ export default function BookingReviewModal({
         qty: item?.qty || item?.quantity || item?.count || 1
       }));
 
+      // Helper function to decode HTML entities (e.g., &#x2F; -> /)
+      const decodeHtmlEntities = (str: string): string => {
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = str;
+        return textarea.value;
+      };
+
       // Get images from identityDocuments (primary source) or fallback locations
       const getImageSrc = (imageField: string | undefined): string | undefined => {
         if (!imageField) return undefined;
-        if (imageField.startsWith('data:image') || imageField.startsWith('http')) {
-          return imageField;
+        
+        // Decode HTML entities (fix for data stored with HTML encoding like &#x2F; instead of /)
+        let decodedField = imageField;
+        if (typeof imageField === 'string' && imageField.includes('&#x')) {
+          decodedField = decodeHtmlEntities(imageField);
         }
-        return imageField;
+        
+        if (decodedField.startsWith('data:image') || decodedField.startsWith('http')) {
+          return decodedField;
+        }
+        return decodedField;
       };
 
       const eidFrontImage = getImageSrc(
@@ -334,6 +348,14 @@ export default function BookingReviewModal({
                                  fullBooking.created_at ||
                                  fullBooking.submissionTimestamp ||
                                  undefined;
+
+      // Get additional documents
+      const confirmationForm = fullBooking.identityDocuments?.confirmationForm ||
+                              fullBooking.collections?.identityDocuments?.confirmationForm ||
+                              undefined;
+      const tradeLicense = fullBooking.identityDocuments?.tradeLicense ||
+                          fullBooking.collections?.identityDocuments?.tradeLicense ||
+                          undefined;
 
       // Map to PDF data format
       const pdfData: BookingPDFData = {
@@ -411,10 +433,14 @@ export default function BookingReviewModal({
         eidBackImage: eidBackImage,
         philippinesIdFront: philippinesIdFront,
         philippinesIdBack: philippinesIdBack,
+        confirmationForm: confirmationForm,
+        tradeLicense: tradeLicense,
         customerImage: customerImages.length > 0 ? customerImages[0] : undefined,
         customerImages: customerImages.length > 0 ? customerImages : undefined,
         submissionTimestamp: submissionTimestamp,
-        declarationText: declarationText
+        declarationText: declarationText,
+        insured: fullBooking.insured || fullBooking.isInsured || false,
+        declaredAmount: fullBooking.declaredAmount || fullBooking.declared_amount || undefined
       };
 
       // Generate and download PDF
@@ -437,22 +463,35 @@ export default function BookingReviewModal({
     }
   };
 
+  // Helper function to decode HTML entities (e.g., &#x2F; -> /)
+  const decodeHtmlEntities = (str: string): string => {
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = str;
+    return textarea.value;
+  };
+
   // Helper function to get image source
   const getImageSrc = (imageField: string | undefined) => {
     if (!imageField) return null;
     
+    // Decode HTML entities (fix for data stored with HTML encoding like &#x2F; instead of /)
+    let decodedField = imageField;
+    if (typeof imageField === 'string' && imageField.includes('&#x')) {
+      decodedField = decodeHtmlEntities(imageField);
+    }
+    
     // If it's a base64 string
-    if (imageField.startsWith('data:image')) {
-      return imageField;
+    if (decodedField.startsWith('data:image')) {
+      return decodedField;
     }
     
     // If it's a URL
-    if (imageField.startsWith('http')) {
-      return imageField;
+    if (decodedField.startsWith('http')) {
+      return decodedField;
     }
     
     // Otherwise return as is (might be a path)
-    return imageField;
+    return decodedField;
   };
 
   // Helper function to open image viewer
@@ -489,6 +528,16 @@ export default function BookingReviewModal({
   const faceScanImage = getImageSrc(
     booking.face_scan_image 
     || booking.faceScanImage
+  );
+
+  // Get additional documents
+  const confirmationForm = getImageSrc(
+    booking.identityDocuments?.confirmationForm
+    || booking.collections?.identityDocuments?.confirmationForm
+  );
+  const tradeLicense = getImageSrc(
+    booking.identityDocuments?.tradeLicense
+    || booking.collections?.identityDocuments?.tradeLicense
   );
 
   // Collect customer images from all possible locations, prioritizing identityDocuments (primary source)
@@ -907,6 +956,58 @@ export default function BookingReviewModal({
               </div>
             </CardContent>
           </Card>
+
+          {/* Additional Documents Section */}
+          {(confirmationForm || tradeLicense) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Additional Documents</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Confirmation Form */}
+                  {confirmationForm && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" />
+                        Confirmation Form
+                      </Label>
+                      <div 
+                        className="relative w-full aspect-video border rounded-md overflow-hidden cursor-zoom-in"
+                        onClick={() => openImageViewer(confirmationForm, 'Confirmation Form')}
+                      >
+                        <img
+                          src={confirmationForm}
+                          alt="Confirmation Form"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Trade License */}
+                  {tradeLicense && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" />
+                        Trade License
+                      </Label>
+                      <div 
+                        className="relative w-full aspect-video border rounded-md overflow-hidden cursor-zoom-in"
+                        onClick={() => openImageViewer(tradeLicense, 'Trade License')}
+                      >
+                        <img
+                          src={tradeLicense}
+                          alt="Trade License"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Action Buttons */}
           {!viewOnly && (

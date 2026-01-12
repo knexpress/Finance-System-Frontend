@@ -58,6 +58,7 @@ export default function InvoicePage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [qrCodeData, setQrCodeData] = useState<any>(null);
+    const [refreshKey, setRefreshKey] = useState(0); // Force re-render trigger
     const [showEditDialog, setShowEditDialog] = useState(false);
     const [showCodEditDialog, setShowCodEditDialog] = useState(false);
     const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
@@ -592,20 +593,36 @@ export default function InvoicePage() {
     deliveryCharge = deliveryChargeFromInvoice; // Always use invoice.delivery_charge
     
     // Only get insurance from database (line_items or invoice field) - no fallback calculation
-    // Check for direct insurance_charge field first
-    if (invoice.insurance_charge !== undefined && invoice.insurance_charge !== null) {
+    // CRITICAL: Check for direct insurance_charge field first
+    // If insurance_charge is explicitly set (even if 0), use it and DO NOT check line_items
+    const hasDirectInsuranceCharge = invoice.insurance_charge !== undefined && invoice.insurance_charge !== null;
+    if (hasDirectInsuranceCharge) {
         insuranceCharge = parseDecimal(invoice.insurance_charge, 2);
+        console.log('💰 Insurance charge from direct field:', {
+            insurance_charge: invoice.insurance_charge,
+            parsed: insuranceCharge,
+            willCheckLineItems: false
+        });
     }
     
-    // Also use line_items for insurance charge if found there
+    // Also use line_items for insurance charge ONLY if direct field is not set (undefined/null)
     // Also use line_items as fallback for pickup_charge if not in invoice object (for backward compatibility)
     if (invoice.line_items && invoice.line_items.length > 0) {
         invoice.line_items.forEach((item: any) => {
             const itemTotal = parseDecimal(item.total || item.unit_price, 2);
             const description = item.description?.toLowerCase() || '';
-            // Use line_items for insurance (only if not already set from direct field)
-            if (description.includes('insurance') && insuranceCharge === 0) {
+            // Use line_items for insurance ONLY if direct field was not set (undefined/null)
+            // If insurance_charge is explicitly 0, we should NOT use line_items
+            if (description.includes('insurance') && !hasDirectInsuranceCharge) {
                 insuranceCharge += itemTotal;
+                console.log('💰 Insurance charge from line_items (no direct field):', {
+                    description: item.description,
+                    total: item.total,
+                    unit_price: item.unit_price,
+                    itemTotal,
+                    accumulated: insuranceCharge,
+                    hasDirectInsuranceCharge: false
+                });
             }
             // Fallback: If pickup_charge is not in invoice object or is 0, read from line_items
             // This is especially important for PH TO UAE COD invoices where pickup charge should be visible
@@ -625,6 +642,15 @@ export default function InvoicePage() {
         insuranceCharge = parseDecimal(insuranceCharge, 2);
         pickupCharge = parseDecimal(pickupCharge, 2);
     }
+    
+    // Debug: Log final insurance charge value
+    console.log('💰 Final insurance charge for display:', {
+        insuranceCharge,
+        invoiceInsuranceCharge: invoice.insurance_charge,
+        hasLineItems: !!invoice.line_items,
+        lineItemsCount: invoice.line_items?.length || 0,
+        refreshKey // Include refresh key to track re-renders
+    });
     
     // Debug: Log pickup charge for PH TO UAE COD invoices
     if (isPhToUae && invoiceType === 'normal') {
@@ -1757,9 +1783,15 @@ export default function InvoicePage() {
         setSavingEdit(true);
         try {
             const payload: any = {
+                // Invoice Header
+                invoice_id: taxEditForm.invoice_number.trim() || undefined,
+                batch_number: taxEditForm.batch_number.trim() || undefined,
+                awb_number: taxEditForm.awb_number.trim() || undefined,
+                // Receiver Information
                 receiver_name: taxEditForm.receiver_name.trim(),
                 receiver_address: taxEditForm.receiver_address.trim(),
                 receiver_phone: taxEditForm.receiver_phone.trim(),
+                // Notes
                 notes: taxEditForm.notes?.trim() || '',
                 invoice_type: 'TAX' // Mark as Tax invoice edit
             };
@@ -1827,9 +1859,41 @@ export default function InvoicePage() {
                     weight_kg: invoiceData.weight_kg,
                     weight_type: invoiceData.weight_type,
                     base_rate: invoiceData.base_rate,
-                    requestIdBaseRate: invoiceData.request_id?.verification?.calculated_rate
+                    requestIdBaseRate: invoiceData.request_id?.verification?.calculated_rate,
+                    // Insurance charge fields
+                    insurance_charge: invoiceData.insurance_charge,
+                    line_items: invoiceData.line_items?.map((item: any) => ({
+                        description: item.description,
+                        total: item.total,
+                        unit_price: item.unit_price
+                    }))
                 });
-                setInvoice(refreshResult.data);
+                // Create a deep copy to ensure React detects the change and all nested properties are updated
+                const updatedInvoice = JSON.parse(JSON.stringify(refreshResult.data));
+                
+                // Debug: Log insurance charge specifically BEFORE state update
+                console.log('🔄 Insurance charge after refresh (BEFORE state update):', {
+                    directField: updatedInvoice.insurance_charge,
+                    fromLineItems: updatedInvoice.line_items?.find((item: any) => 
+                        item.description?.toLowerCase().includes('insurance')
+                    ),
+                    finalInsuranceCharge: updatedInvoice.insurance_charge || 
+                        updatedInvoice.line_items?.find((item: any) => 
+                            item.description?.toLowerCase().includes('insurance')
+                        )?.total || 0,
+                    allLineItems: updatedInvoice.line_items?.map((item: any) => ({
+                        description: item.description,
+                        total: item.total,
+                        unit_price: item.unit_price
+                    }))
+                });
+                
+                // Update invoice state and force re-render
+                setInvoice(updatedInvoice);
+                setRefreshKey(prev => prev + 1); // Force component re-render
+                
+                // Debug: Log insurance charge AFTER state update
+                console.log('🔄 Insurance charge state updated, refreshKey:', refreshKey + 1);
                 
                 // Update all edit forms with fresh data
                 // Get insurance charge from invoice (line_items or direct field)
@@ -2116,9 +2180,9 @@ export default function InvoicePage() {
             <div id="invoice-content">
                 {invoiceData && invoiceData.invoiceNumber ? (
                     invoiceType === 'tax' ? (
-                        <TaxInvoiceTemplate data={taxInvoiceData} />
+                        <TaxInvoiceTemplate key={`tax-${refreshKey}`} data={taxInvoiceData} />
                     ) : (
-                        <InvoiceTemplate data={invoiceData} />
+                        <InvoiceTemplate key={`invoice-${refreshKey}`} data={invoiceData} />
                     )
                 ) : (
                     <Card className="p-6">
@@ -2154,6 +2218,34 @@ export default function InvoicePage() {
                             </DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4">
+                            {/* Invoice Header Section */}
+                            <div className="rounded-lg border p-4 bg-muted/30">
+                                <h3 className="font-semibold mb-3">Invoice Header</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <Label>Invoice Number</Label>
+                                        <Input
+                                            value={codEditForm.invoice_number}
+                                            onChange={(e) => handleCodEditChange('invoice_number', e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label>AWB Number</Label>
+                                        <Input
+                                            value={codEditForm.awb_number}
+                                            onChange={(e) => handleCodEditChange('awb_number', e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label>Batch Number</Label>
+                                        <Input
+                                            value={codEditForm.batch_number}
+                                            onChange={(e) => handleCodEditChange('batch_number', e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <Label>Receiver Name</Label>
@@ -2312,6 +2404,34 @@ export default function InvoicePage() {
                             </DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4">
+                            {/* Invoice Header Section */}
+                            <div className="rounded-lg border p-4 bg-muted/30">
+                                <h3 className="font-semibold mb-3">Invoice Header</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <Label>Invoice Number</Label>
+                                        <Input
+                                            value={taxEditForm.invoice_number}
+                                            onChange={(e) => handleTaxEditChange('invoice_number', e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label>AWB Number</Label>
+                                        <Input
+                                            value={taxEditForm.awb_number}
+                                            onChange={(e) => handleTaxEditChange('awb_number', e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label>Batch Number</Label>
+                                        <Input
+                                            value={taxEditForm.batch_number}
+                                            onChange={(e) => handleTaxEditChange('batch_number', e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <Label>Receiver Name</Label>

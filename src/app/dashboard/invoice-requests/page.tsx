@@ -31,13 +31,13 @@ import { useAuth } from '@/hooks/use-auth';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { secureLog } from '@/lib/secure-logger';
 // Dynamically import heavy form components to reduce initial bundle size
-const InvoiceRequestForm = dynamic(() => import('@/components/invoice-request-form'), {
+const SalesBookingForm = dynamic(() => import('@/components/sales-booking-form'), {
   ssr: false
 });
 const VerificationForm = dynamic(() => import('@/components/verification-form'), {
   ssr: false
 });
-import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2, ArrowUp } from 'lucide-react';
+import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2, ArrowUp, X } from 'lucide-react';
 import BookingReviewModal from '@/components/booking-review-modal';
 
 const normalizeServiceCode = (code?: string | null) =>
@@ -332,6 +332,7 @@ export default function InvoiceRequestsPage() {
   const [deliveryCharge, setDeliveryCharge] = useState(''); // Delivery charge when receiver_delivery_option is "delivery"
   const [deliveryBaseAmount, setDeliveryBaseAmount] = useState('20'); // Base delivery amount for PH_TO_UAE (default 20)
   const [totalKgInput, setTotalKgInput] = useState(''); // Total kilograms input for Finance (PH TO UAE)
+  const [selectedRequestForReverify, setSelectedRequestForReverify] = useState<any>(null);
   const router = useRouter();
   const getRequestServiceCode = (request?: any) =>
     request?.service_code ||
@@ -1939,6 +1940,15 @@ export default function InvoiceRequestsPage() {
               Start Processing
             </Button>
           )}
+          {request.status === 'VERIFIED' && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setSelectedRequestForReverify(request)}
+            >
+              Reverify
+            </Button>
+          )}
           {canCancel && (
             <Button
               variant="destructive"
@@ -1960,6 +1970,16 @@ export default function InvoiceRequestsPage() {
               Generate Invoice
             </Button>
           )}
+          {hasInvoiceGenerated && (request.invoice_id || request.invoice_number) && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => handleCancelInvoice(request)}
+            >
+              <X className="mr-2 h-4 w-4" />
+              Cancel Invoice
+            </Button>
+          )}
           {canCancel && (
             <Button
               variant="destructive"
@@ -1974,6 +1994,70 @@ export default function InvoiceRequestsPage() {
     }
 
     return null;
+  };
+
+  const handleCancelInvoice = async (request: any) => {
+    try {
+      // Get invoice ID from request - prefer _id (MongoDB ID) over invoice_number
+      // The request might have invoice_id (MongoDB ID) or invoice_number (string like INV-000300)
+      let invoiceId = request.invoice_id;
+      
+      // If invoice_id is not available, try to find invoice by invoice_number
+      if (!invoiceId && request.invoice_number) {
+        // Try to fetch invoice by invoice_number to get the _id
+        const invoiceResult = await apiClient.getInvoicesUnified();
+        if (invoiceResult.success && Array.isArray(invoiceResult.data)) {
+          const invoice = invoiceResult.data.find((inv: any) => 
+            inv.invoice_id === request.invoice_number || inv._id === request.invoice_number
+          );
+          if (invoice) {
+            invoiceId = invoice._id;
+          } else {
+            // If not found, use invoice_number as fallback (backend should handle it)
+            invoiceId = request.invoice_number;
+          }
+        } else {
+          invoiceId = request.invoice_number;
+        }
+      }
+      
+      if (!invoiceId) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Invoice ID not found. Please ensure the invoice exists.',
+        });
+        return;
+      }
+
+      if (!confirm('Are you sure you want to cancel this invoice? This will cancel the invoice, invoice request, booking, delivery assignments, and empost (if applicable).')) {
+        return;
+      }
+
+      const result = await apiClient.cancelInvoiceUnified(invoiceId);
+      if (result.success) {
+        toast({
+          title: 'Success',
+          description: 'Invoice and related entities cancelled successfully',
+        });
+        apiClient.invalidateCache('/invoice-requests');
+        apiClient.invalidateCache('/invoices-unified');
+        fetchInvoiceRequests(currentPage, false); // Skip cache after cancellation
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: result.error || 'Failed to cancel invoice',
+        });
+      }
+    } catch (error: any) {
+      console.error('Error cancelling invoice:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message || 'Failed to cancel invoice',
+      });
+    }
   };
 
   const handleGenerateInvoices = async () => {
@@ -3348,14 +3432,14 @@ export default function InvoiceRequestsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Invoice Requests</h1>
           <p className="text-muted-foreground">
-            {userProfile.department.name === 'Sales' && 'Create and track your invoice requests'}
+            {userProfile.department.name === 'Sales' && 'Create and track your bookings'}
             {userProfile.department.name === 'Operations' && 'Process submitted invoice requests'}
             {userProfile.department.name === 'Finance' && 'Generate invoices for completed requests'}
           </p>
         </div>
         {userProfile.department.name === 'Sales' && (
-          <InvoiceRequestForm 
-            onRequestCreated={fetchInvoiceRequests}
+          <SalesBookingForm 
+            onBookingCreated={fetchInvoiceRequests}
             currentUser={userProfile}
           />
         )}
@@ -4434,6 +4518,19 @@ export default function InvoiceRequestsPage() {
         />
       )}
 
+      {/* Reverify Modal for Operations */}
+      {selectedRequestForReverify && (
+        <VerificationForm
+          request={selectedRequestForReverify}
+          onVerificationComplete={() => {
+            setSelectedRequestForReverify(null);
+            apiClient.invalidateCache('/invoice-requests');
+            fetchInvoiceRequests(currentPage, false);
+          }}
+          currentUser={userProfile}
+          isReverifyMode={true}
+        />
+      )}
 
       {/* Scroll to Top Button */}
       {showScrollToTop && (

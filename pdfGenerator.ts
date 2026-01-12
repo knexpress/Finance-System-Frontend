@@ -30,10 +30,14 @@ export interface BookingPDFData {
   eidBackImage?: string
   philippinesIdFront?: string
   philippinesIdBack?: string
+  confirmationForm?: string // Confirmation form image/document
+  tradeLicense?: string // Trade license image/document
   customerImage?: string // Single image for backward compatibility
   customerImages?: string[] // Multiple face images
   submissionTimestamp?: string
   declarationText?: string // Declaration text that customer confirmed
+  insured?: boolean // Whether insurance is selected
+  declaredAmount?: number // Declared value for insurance
 }
 
 export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
@@ -275,6 +279,32 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   doc.text(routeDisplay, margin, yPos)
   yPos += 8
 
+  // Booking Creation Date/Time
+  if (data.submissionTimestamp) {
+    try {
+      const bookingDate = new Date(data.submissionTimestamp)
+      if (!isNaN(bookingDate.getTime())) {
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(0, 0, 0) // Black
+        const dateStr = bookingDate.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        })
+        const timeStr = bookingDate.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: true
+        })
+        doc.text(`Booking Created: ${dateStr} at ${timeStr}`, margin, yPos)
+        yPos += 6
+      }
+    } catch (error) {
+      console.error('Error formatting booking date:', error)
+    }
+  }
+
   drawLine(yPos)
   yPos += 10
 
@@ -351,7 +381,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   doc.text(data.sender.agentName || '', leftColumnX, yPos)
   yPos += 8
 
-  // Delivery Options (checkboxes) - Based on route and sender delivery option
+  // Delivery Options (checkboxes) - Based on route and sender/receiver delivery options
   doc.setFontSize(7)
   
   if (isPhToUae) {
@@ -359,28 +389,39 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     const isDropOffToWarehouse = data.sender.deliveryOption === 'warehouse'
     const isSchedulePickup = data.sender.deliveryOption === 'pickup'
     
-    // Checkbox for DROP OFF TO WAREHOUSE
+    // Sender options (Philippines side)
     doc.text(isDropOffToWarehouse ? '☑' : '☐', leftColumnX, yPos)
     doc.text('DROP OFF TO WAREHOUSE', leftColumnX + 5, yPos)
     yPos += 4
     
-    // Checkbox for SCHEDULE A PICKUP (usually unchecked for PH to UAE)
     doc.text(isSchedulePickup ? '☑' : '☐', leftColumnX, yPos)
     doc.text('SCHEDULE A PICKUP', leftColumnX + 5, yPos)
+    yPos += 4
+    
+    // Receiver options (UAE side)
+    const isReceiverWarehouse = data.receiver.deliveryOption === 'warehouse'
+    const isReceiverDelivery = data.receiver.deliveryOption === 'address'
+    
+    doc.text(isReceiverWarehouse ? '☑' : '☐', leftColumnX, yPos)
+    doc.text('UAE WAREHOUSE PICKUP', leftColumnX + 5, yPos)
+    yPos += 4
+    
+    doc.text(isReceiverDelivery ? '☑' : '☐', leftColumnX, yPos)
+    doc.text('DELIVER TO UAE ADDRESS', leftColumnX + 5, yPos)
   } else {
     // For UAE to PH: Show UAE warehouse pickup options
-    const isWarehousePickup = data.sender.deliveryOption === 'warehouse' || data.sender.deliveryOption === 'pickup'
+    const isSchedulePickup = data.sender.deliveryOption === 'pickup'
     // Receiver deliveryOption is 'warehouse' | 'address' where 'address' means delivery
     const isDeliverToAddress = data.receiver.deliveryOption === 'address'
     
-    // Checkbox for UAE WAREHOUSE PICK-UP (sender side - warehouse/pickup)
-    doc.text(isWarehousePickup ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('UAE WAREHOUSE PICK-UP', leftColumnX + 5, yPos)
+    // Sender options (UAE side)
+    doc.text(isSchedulePickup ? '☑' : '☐', leftColumnX, yPos)
+    doc.text('SCHEDULE A PICKUP', leftColumnX + 5, yPos)
     yPos += 4
     
-    // Checkbox for DELIVER TO UAE ADDRESS (receiver side - delivery)
+    // Receiver options (Philippines side)
     doc.text(isDeliverToAddress ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('DELIVER TO UAE ADDRESS', leftColumnX + 5, yPos)
+    doc.text('DELIVER TO ADDRESS', leftColumnX + 5, yPos)
   }
   
   yPos += 8
@@ -535,6 +576,28 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   // Update yPos based on the maximum number of rows between both tables
   const maxRows = Math.max(leftTableRows, rightTableRows, 1) // At least 1 row
   yPos = tableStartY + headerHeight + (maxRows * rowHeight) + 10
+
+  // Insurance Information (if insured)
+  if (data.insured) {
+    yPos += 5
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.setTextColor(0, 128, 0) // Green color
+    doc.text('INSURANCE INFORMATION', margin, yPos)
+    yPos += 8
+    
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(0, 0, 0) // Black
+    doc.text('Insurance Coverage: YES', margin, yPos)
+    yPos += 6
+    
+    if (data.declaredAmount && data.declaredAmount > 0) {
+      doc.text(`Declared Value: AED ${data.declaredAmount.toFixed(2)}`, margin, yPos)
+      yPos += 6
+    }
+    yPos += 4
+  }
 
   // Important Declaration
   yPos += 5
@@ -762,23 +825,24 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   // ============================================
   // PAGE 4: SELFIE/FACE IMAGES (Side by Side)
   // ============================================
-  addNewPage()
-  const page4Number = doc.getNumberOfPages()
-
-  // Re-define image variables for page 4
-  const page4ImageMargin = 20
-  const page4ImageSpacing = 15
-  const page4ImageWidth = (pageWidth - (page4ImageMargin * 2) - page4ImageSpacing) / 2
-  const page4LeftImageX = page4ImageMargin
-  const page4RightImageX = page4ImageMargin + page4ImageWidth + page4ImageSpacing
-  const page4ImageStartY = 40
-  const page4MaxImageHeight = (pageHeight - page4ImageStartY - margin) * 0.8
-
+  // Only create this page if customer photos are available
   const customerPhotos = data.customerImages && data.customerImages.length > 0 
     ? data.customerImages 
     : (data.customerImage ? [data.customerImage] : [])
   
   if (customerPhotos.length > 0) {
+    addNewPage()
+    const page4Number = doc.getNumberOfPages()
+
+    // Re-define image variables for page 4
+    const page4ImageMargin = 20
+    const page4ImageSpacing = 15
+    const page4ImageWidth = (pageWidth - (page4ImageMargin * 2) - page4ImageSpacing) / 2
+    const page4LeftImageX = page4ImageMargin
+    const page4RightImageX = page4ImageMargin + page4ImageWidth + page4ImageSpacing
+    const page4ImageStartY = 40
+    const page4MaxImageHeight = (pageHeight - page4ImageStartY - margin) * 0.8
+
     if (customerPhotos.length === 1) {
       // Center single image if only one photo
       const centeredX = (pageWidth - page4ImageWidth) / 2
@@ -807,14 +871,129 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
         doc.text('Customer Photo - 2', page4RightImageX, page4ImageStartY - 8)
       }
     }
-  } else {
-    // Show message if no photos available
-    doc.setPage(page4Number)
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(128, 128, 128)
-    doc.text('No customer photos available', margin, page4ImageStartY)
   }
+
+  // ============================================
+  // PAGE 5: ADDITIONAL DOCUMENTS (Confirmation Form & Trade License)
+  // ============================================
+  if (data.confirmationForm || data.tradeLicense) {
+    addNewPage()
+    const page5Number = doc.getNumberOfPages()
+    let page5YPos = margin + 10
+
+    doc.setPage(page5Number)
+    
+    // Section Header
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 128, 0) // Green color
+    doc.text('ADDITIONAL DOCUMENTS', margin, page5YPos)
+    page5YPos += 15
+
+    // Draw a line under the header
+    drawLine(page5YPos - 5)
+    page5YPos += 10
+
+    const docImageWidth = 85
+    const docImageHeight = 110
+    const docSpacing = 15
+    const availableWidth = pageWidth - (margin * 2)
+    const totalDocsWidth = (data.confirmationForm ? docImageWidth : 0) + (data.tradeLicense ? docImageWidth : 0) + (data.confirmationForm && data.tradeLicense ? docSpacing : 0)
+    
+    // Calculate starting X positions for side-by-side layout
+    let leftDocX = margin
+    let rightDocX = pageWidth - margin - docImageWidth
+    
+    // If both documents exist, center them; otherwise, center the single document
+    if (data.confirmationForm && data.tradeLicense) {
+      const centerX = pageWidth / 2
+      leftDocX = centerX - docImageWidth - (docSpacing / 2)
+      rightDocX = centerX + (docSpacing / 2)
+    } else {
+      // Center single document
+      leftDocX = (pageWidth - docImageWidth) / 2
+    }
+
+    // Confirmation Form
+    if (data.confirmationForm) {
+      doc.setPage(page5Number)
+      
+      // Label
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(0, 0, 0)
+      const labelY = page5YPos - 3
+      doc.text('Confirmation Form', leftDocX, labelY)
+      
+      // Image
+      await addImageToPDF(data.confirmationForm, leftDocX, page5YPos, docImageWidth, docImageHeight, page5Number)
+      
+      // Draw border around image
+      doc.setDrawColor(100, 100, 100)
+      doc.setLineWidth(0.5)
+      doc.rect(leftDocX, page5YPos, docImageWidth, docImageHeight)
+    }
+
+    // Trade License
+    if (data.tradeLicense) {
+      doc.setPage(page5Number)
+      
+      // Determine X position (right side if both exist, centered if only this one)
+      const tradeLicenseX = (data.confirmationForm && data.tradeLicense) ? rightDocX : leftDocX
+      
+      // Label
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(0, 0, 0)
+      const labelY = page5YPos - 3
+      doc.text('Trade License', tradeLicenseX, labelY)
+      
+      // Image
+      await addImageToPDF(data.tradeLicense, tradeLicenseX, page5YPos, docImageWidth, docImageHeight, page5Number)
+      
+      // Draw border around image
+      doc.setDrawColor(100, 100, 100)
+      doc.setLineWidth(0.5)
+      doc.rect(tradeLicenseX, page5YPos, docImageWidth, docImageHeight)
+    }
+  }
+
+  // ============================================
+  // DISCLAIMER (Last Page - Always add)
+  // ============================================
+  addNewPage()
+  const disclaimerPageNumber = doc.getNumberOfPages()
+  let disclaimerYPos = margin + 20
+
+  doc.setPage(disclaimerPageNumber)
+  
+  // Disclaimer title with red color
+  doc.setFontSize(14)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(255, 0, 0) // Red color
+  doc.text('DISCLAIMER', margin, disclaimerYPos)
+  disclaimerYPos += 12
+
+  // Disclaimer text with red highlighting background
+  doc.setFontSize(11)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(255, 0, 0) // Red text color
+  const disclaimerText = 'We hereby declare that all requirements provided by them are for documentation purposes only and shall be treated as strictly confidential.'
+  const disclaimerLines = doc.splitTextToSize(disclaimerText, pageWidth - (margin * 2))
+  
+  // Calculate total height needed for all lines
+  const lineHeight = 7
+  const totalHeight = disclaimerLines.length * (lineHeight + 2) + 4
+  
+  // Draw red background rectangle for entire disclaimer text
+  doc.setFillColor(255, 200, 200) // Light red background
+  doc.rect(margin, disclaimerYPos - 6, pageWidth - (margin * 2), totalHeight, 'F')
+  
+  // Add text on top of red background
+  disclaimerLines.forEach((line: string) => {
+    doc.text(line, margin + 2, disclaimerYPos)
+    disclaimerYPos += lineHeight
+  })
 
   // Add footer to all pages
   const totalPages = doc.getNumberOfPages()
