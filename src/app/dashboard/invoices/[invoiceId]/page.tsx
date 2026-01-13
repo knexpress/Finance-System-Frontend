@@ -59,6 +59,7 @@ export default function InvoicePage() {
     const [error, setError] = useState<string | null>(null);
     const [qrCodeData, setQrCodeData] = useState<any>(null);
     const [refreshKey, setRefreshKey] = useState(0); // Force re-render trigger
+    const [forceUpdate, setForceUpdate] = useState(0); // Additional trigger to force recalculation
     const [showEditDialog, setShowEditDialog] = useState(false);
     const [showCodEditDialog, setShowCodEditDialog] = useState(false);
     const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
@@ -212,8 +213,20 @@ export default function InvoicePage() {
                 console.log('📄 Invoice API result:', result);
                 console.log('📄 Invoice API result.data:', result.data);
                 console.log('📄 Invoice API result.success:', result.success);
+                console.log('🔍 Initial invoice fetch - cod_delivery_charge check:', {
+                    cod_delivery_charge: (result.data as any)?.cod_delivery_charge,
+                    cod_delivery_charge_type: typeof (result.data as any)?.cod_delivery_charge,
+                    delivery_charge: (result.data as any)?.delivery_charge,
+                    delivery_base_amount: (result.data as any)?.delivery_base_amount,
+                    all_keys: result.data ? Object.keys(result.data) : []
+                });
                 if (result.success && result.data) {
-                    console.log('✅ Setting invoice data:', result.data);
+                    console.log('✅ Setting invoice data:', {
+                        invoice_id: (result.data as any).invoice_id || (result.data as any)._id,
+                        cod_delivery_charge: (result.data as any).cod_delivery_charge,
+                        delivery_charge: (result.data as any).delivery_charge,
+                        delivery_base_amount: (result.data as any).delivery_base_amount
+                    });
                     setInvoice(result.data);
                     const invoiceData = result.data as any;
                     // Get insurance charge from invoice (line_items or direct field)
@@ -425,6 +438,21 @@ export default function InvoicePage() {
 
         fetchInvoice();
     }, [invoiceId]);
+
+    // Track invoice state changes to ensure re-renders
+    useEffect(() => {
+        if (invoice) {
+            const codDeliveryCharge = (invoice as any).cod_delivery_charge;
+            console.log('🔄 Invoice state changed (useEffect):', {
+                refreshKey,
+                forceUpdate,
+                cod_delivery_charge: codDeliveryCharge,
+                cod_delivery_charge_type: typeof codDeliveryCharge,
+                invoice_id: invoice._id || invoice.invoice_id,
+                note: 'Invoice state updated - component should re-render and calculations should use new value'
+            });
+        }
+    }, [invoice, refreshKey, forceUpdate]);
 
     if (loading) {
         return (
@@ -738,9 +766,37 @@ export default function InvoicePage() {
     // Priority: Use stored totals from backend if available, otherwise recalculate
     const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
     const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
-    const codDeliveryCharge = parseDecimal((invoice as any).cod_delivery_charge || 0, 2); // COD delivery charge for PH TO UAE (separate from Tax delivery_charge)
+    // Check both snake_case and camelCase field names for cod_delivery_charge
+    const codDeliveryChargeRaw = (invoice as any).cod_delivery_charge || (invoice as any).codDeliveryCharge;
+    const codDeliveryCharge = parseDecimal(codDeliveryChargeRaw || 0, 2); // COD delivery charge for PH TO UAE (separate from Tax delivery_charge)
     // Keep delivery_base_amount as fallback for backward compatibility during migration
     const deliveryBaseAmount = codDeliveryCharge > 0 ? codDeliveryCharge : parseDecimal((invoice as any).delivery_base_amount || 0, 2);
+    
+    // Debug: Log cod_delivery_charge to verify it's being read correctly
+    // Also check if invoice is null/undefined
+    const invoiceKeys = invoice ? Object.keys(invoice) : [];
+    const deliveryRelatedKeys = invoiceKeys.filter(k => 
+        k.toLowerCase().includes('delivery') || 
+        k.toLowerCase().includes('cod') ||
+        k.toLowerCase().includes('charge')
+    );
+    
+    console.log('🔍 COD Delivery Charge Debug (COMPONENT BODY):', {
+        refreshKey,
+        forceUpdate,
+        invoice_exists: !!invoice,
+        invoice_id: invoice?._id || invoice?.invoice_id,
+        cod_delivery_charge_snake: (invoice as any)?.cod_delivery_charge,
+        cod_delivery_charge_camel: (invoice as any)?.codDeliveryCharge,
+        cod_delivery_charge_raw: codDeliveryChargeRaw,
+        codDeliveryCharge_parsed: codDeliveryCharge,
+        delivery_charge: (invoice as any)?.delivery_charge,
+        delivery_base_amount_raw: (invoice as any)?.delivery_base_amount,
+        deliveryBaseAmount_final: deliveryBaseAmount,
+        all_invoice_keys: invoiceKeys,
+        delivery_related_keys: deliveryRelatedKeys,
+        note: 'Reading cod_delivery_charge from invoice state - this runs on every render'
+    });
     
     // Fix: If shippingCharge is 0 and this is a PH TO UAE COD invoice, calculate it from total_amount_cod
     // This handles cases where amount was incorrectly set to 0 (e.g., from old Tax invoice edits)
@@ -1125,27 +1181,48 @@ export default function InvoicePage() {
             // For PH TO UAE Tax: Use delivery_charge directly
             // For other invoices: Use deliveryCharge as calculated
             deliveryCharge: (() => {
+                // Re-read cod_delivery_charge from invoice state to ensure we have the latest value
+                const currentCodDeliveryCharge = parseDecimal((invoice as any).cod_delivery_charge || (invoice as any).codDeliveryCharge || 0, 2);
+                const currentDeliveryBaseAmount = currentCodDeliveryCharge > 0 ? currentCodDeliveryCharge : parseDecimal((invoice as any).delivery_base_amount || 0, 2);
+                
                 if (isPhToUae) {
                     if (invoiceType === 'normal') {
                         // COD invoice: Use local edits if available (frontend-only)
-                        // - If weight >= 15kg: Show 0 (free delivery) but keep delivery_base_amount in DB
-                        // - If weight < 15kg: Use local edit or delivery_base_amount if available, otherwise deliveryCharge
+                        // - If weight >= 15kg: Show 0 (free delivery) but keep cod_delivery_charge in DB
+                        // - If weight < 15kg: Use local edit or cod_delivery_charge if available, otherwise deliveryCharge
                         if (totalKg >= 15) {
-                            return 0; // Show 0 for free delivery, but delivery_base_amount stays in DB
+                            console.log('📦 PH TO UAE COD: Weight >= 15kg, showing 0 for delivery (free delivery)');
+                            return 0; // Show 0 for free delivery, but cod_delivery_charge stays in DB
                         }
-                        // Use local COD edit if available, otherwise use delivery_base_amount
+                        // Use local COD edit if available, otherwise use cod_delivery_charge from database
                         if (localCodEdits?.delivery_base_amount !== undefined) {
+                            console.log('📦 PH TO UAE COD: Using local edit for delivery charge:', localCodEdits.delivery_base_amount);
                             return parseDecimal(localCodEdits.delivery_base_amount, 2);
                         }
-                        return (deliveryBaseAmount > 0) ? deliveryBaseAmount : deliveryCharge;
+                        // Prioritize cod_delivery_charge from database (this is the value saved after edit)
+                        // Use the current value read directly from invoice state
+                        const finalDeliveryCharge = currentCodDeliveryCharge > 0 ? currentCodDeliveryCharge : (currentDeliveryBaseAmount > 0 ? currentDeliveryBaseAmount : deliveryCharge);
+                        console.log('📦 PH TO UAE COD: Delivery charge calculation (RE-READ FROM STATE):', {
+                            refreshKey,
+                            forceUpdate,
+                            cod_delivery_charge_from_state: (invoice as any).cod_delivery_charge,
+                            currentCodDeliveryCharge,
+                            currentDeliveryBaseAmount,
+                            deliveryBaseAmount_old: deliveryBaseAmount,
+                            deliveryCharge_old: deliveryCharge,
+                            finalDeliveryCharge,
+                            totalKg,
+                            note: 'Re-reading cod_delivery_charge directly from invoice state to ensure latest value'
+                        });
+                        return finalDeliveryCharge;
                     } else {
                         // Tax invoice: Always use delivery_charge from invoice
                         return deliveryChargeFromInvoice;
                     }
                 }
                 // Other invoices: Use deliveryCharge as calculated
-                return (isPhToUae && taxRate === 0 && totalKg < 15 && deliveryBaseAmount > 0) 
-                    ? deliveryBaseAmount 
+                return (isPhToUae && taxRate === 0 && totalKg < 15 && currentDeliveryBaseAmount > 0) 
+                    ? currentDeliveryBaseAmount 
                     : deliveryCharge;
             })(),
             insuranceCharge: isPhToUae ? undefined : (insuranceCharge > 0 ? insuranceCharge : undefined), // No insurance in PH TO UAE
@@ -1629,10 +1706,10 @@ export default function InvoicePage() {
             // Update values (all manual - no auto-calculation)
             payload.subtotal = subtotal;
             if (editForm.tax_amount && editForm.tax_amount !== '') {
-                payload.tax_amount = taxAmount;
+            payload.tax_amount = taxAmount;
             }
             if (editForm.total && editForm.total !== '') {
-                payload.total = total;
+            payload.total = total;
             }
             
             // Flag to indicate invoice should be regenerated with all recalculations
@@ -1746,16 +1823,20 @@ export default function InvoicePage() {
             if (!payload.hasOwnProperty('notes')) {
                 payload.notes = '';
             }
-
+            
             // IMPORTANT: Do NOT update Tax invoice fields (delivery_charge, tax_amount, total_amount_tax_invoice, tax_rate)
             // These should remain unchanged when editing COD invoice
 
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
             if (result.success) {
+                // Refresh invoice data to get updated values from database
+                // This will update the invoice state and trigger a re-render
                 await refreshInvoiceAfterEdit();
+                // Small delay to ensure React processes the state update
+                await new Promise(resolve => setTimeout(resolve, 50));
                 toast({
                     title: 'COD Invoice updated',
-                    description: 'COD invoice changes have been saved successfully.',
+                    description: 'COD invoice changes have been saved successfully. The invoice will refresh automatically.',
                 });
                 setShowCodEditDialog(false);
             } else {
@@ -1842,12 +1923,24 @@ export default function InvoicePage() {
     const refreshInvoiceAfterEdit = async () => {
         try {
             const refreshResult = await apiClient.getInvoiceUnified(invoiceId);
+            console.log('🔄 Raw API response:', {
+                success: refreshResult.success,
+                hasData: !!refreshResult.data,
+                dataKeys: refreshResult.data ? Object.keys(refreshResult.data) : [],
+                cod_delivery_charge_in_response: (refreshResult.data as any)?.cod_delivery_charge,
+                cod_delivery_charge_type: typeof (refreshResult.data as any)?.cod_delivery_charge
+            });
+            
             if (refreshResult.success && refreshResult.data) {
                 const invoiceData = refreshResult.data as any;
                 // Debug: Log the refreshed invoice data to verify updated values
+                const codDeliveryChargeFromApi = (invoiceData as any).cod_delivery_charge;
                 console.log('🔄 Refreshed invoice after edit:', {
                     amount: invoiceData.amount,
                     delivery_charge: invoiceData.delivery_charge,
+                    cod_delivery_charge: codDeliveryChargeFromApi, // COD delivery charge for PH TO UAE
+                    cod_delivery_charge_type: typeof codDeliveryChargeFromApi,
+                    cod_delivery_charge_value: codDeliveryChargeFromApi,
                     delivery_base_amount: invoiceData.delivery_base_amount,
                     total_amount_cod: invoiceData.total_amount_cod || invoiceData.totalAmountCod,
                     total_amount_tax_invoice: invoiceData.total_amount_tax_invoice || invoiceData.totalAmountTaxInvoice,
@@ -1866,7 +1959,10 @@ export default function InvoicePage() {
                         description: item.description,
                         total: item.total,
                         unit_price: item.unit_price
-                    }))
+                    })),
+                    // Verify cod_delivery_charge is present
+                    has_cod_delivery_charge: codDeliveryChargeFromApi !== undefined && codDeliveryChargeFromApi !== null,
+                    invoice_keys: Object.keys(invoiceData).filter(k => k.toLowerCase().includes('delivery') || k.toLowerCase().includes('cod'))
                 });
                 // Create a deep copy to ensure React detects the change and all nested properties are updated
                 const updatedInvoice = JSON.parse(JSON.stringify(refreshResult.data));
@@ -1889,11 +1985,33 @@ export default function InvoicePage() {
                 });
                 
                 // Update invoice state and force re-render
-                setInvoice(updatedInvoice);
-                setRefreshKey(prev => prev + 1); // Force component re-render
+                const codDeliveryChargeInUpdated = (updatedInvoice as any).cod_delivery_charge;
+                // Use functional update to ensure React detects the change
+                setInvoice((prevInvoice) => {
+                    // Create a completely new object to ensure React detects the change
+                    const newInvoice = JSON.parse(JSON.stringify(updatedInvoice));
+                    console.log('🔄 setInvoice called with new invoice:', {
+                        prev_cod_delivery_charge: (prevInvoice as any)?.cod_delivery_charge,
+                        new_cod_delivery_charge: (newInvoice as any).cod_delivery_charge,
+                        invoice_id: newInvoice._id || newInvoice.invoice_id
+                    });
+                    return newInvoice;
+                });
+                const newRefreshKey = refreshKey + 1;
+                setRefreshKey(newRefreshKey); // Force component re-render
+                setForceUpdate(prev => prev + 1); // Additional trigger to force recalculation
                 
-                // Debug: Log insurance charge AFTER state update
-                console.log('🔄 Insurance charge state updated, refreshKey:', refreshKey + 1);
+                // Debug: Log critical fields AFTER state update
+                console.log('🔄 Invoice state updated after refresh:', {
+                    refreshKey: newRefreshKey,
+                    cod_delivery_charge: codDeliveryChargeInUpdated,
+                    cod_delivery_charge_type: typeof codDeliveryChargeInUpdated,
+                    cod_delivery_charge_parsed: codDeliveryChargeInUpdated ? parseFloat(codDeliveryChargeInUpdated.toString()) : 0,
+                    delivery_charge: updatedInvoice.delivery_charge,
+                    total_amount_cod: (updatedInvoice as any).total_amount_cod || (updatedInvoice as any).totalAmountCod,
+                    insurance_charge: updatedInvoice.insurance_charge,
+                    note: 'State updated - component should re-render and calculations should use new cod_delivery_charge value'
+                });
                 
                 // Update all edit forms with fresh data
                 // Get insurance charge from invoice (line_items or direct field)
@@ -2746,40 +2864,40 @@ export default function InvoicePage() {
                                     
                                     return (
                                         <>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                <div>
-                                                    <Label>Receiver Name</Label>
-                                                    <Input
-                                                        value={editForm.receiver_name}
-                                                        onChange={(e) => handleEditChange('receiver_name', e.target.value)}
-                                                    />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <Label>Receiver Name</Label>
+                                <Input
+                                    value={editForm.receiver_name}
+                                    onChange={(e) => handleEditChange('receiver_name', e.target.value)}
+                                />
                                                     {currentReceiverName && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverName || 'Not set'}</p>
                                                     )}
-                                                </div>
-                                                <div>
-                                                    <Label>Receiver Phone</Label>
-                                                    <Input
-                                                        value={editForm.receiver_phone}
-                                                        onChange={(e) => handleEditChange('receiver_phone', e.target.value)}
-                                                    />
+                            </div>
+                            <div>
+                                <Label>Receiver Phone</Label>
+                                <Input
+                                    value={editForm.receiver_phone}
+                                    onChange={(e) => handleEditChange('receiver_phone', e.target.value)}
+                                />
                                                     {currentReceiverPhone && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverPhone || 'Not set'}</p>
                                                     )}
-                                                </div>
-                                            </div>
+                            </div>
+                        </div>
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                                                <div>
-                                                    <Label>Receiver Address</Label>
-                                                    <Textarea
-                                                        value={editForm.receiver_address}
-                                                        onChange={(e) => handleEditChange('receiver_address', e.target.value)}
-                                                        rows={3}
-                                                    />
+                        <div>
+                            <Label>Receiver Address</Label>
+                            <Textarea
+                                value={editForm.receiver_address}
+                                onChange={(e) => handleEditChange('receiver_address', e.target.value)}
+                                rows={3}
+                            />
                                                     {currentReceiverAddress && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentReceiverAddress.substring(0, 60)}{currentReceiverAddress.length > 60 ? '...' : ''}</p>
                                                     )}
-                                                </div>
+                        </div>
                                                 <div>
                                                     <Label>Receiver TRN</Label>
                                                     <Input
@@ -2918,76 +3036,76 @@ export default function InvoicePage() {
                                     
                                     return (
                                         <>
-                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                                <div>
-                                                    <Label>Shipping Charge (AED)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        step="0.01"
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div>
+                                <Label>Shipping Charge (AED)</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
                                                         min="0"
-                                                        value={editForm.amount}
-                                                        onChange={(e) => handleEditChange('amount', e.target.value)}
-                                                    />
+                                    value={editForm.amount}
+                                    onChange={(e) => handleEditChange('amount', e.target.value)}
+                                />
                                                     {currentAmount !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentAmount || '0.00'}</p>
                                                     )}
-                                                </div>
-                                                <div>
-                                                    <Label>Pickup Charge (AED)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        step="0.01"
+                            </div>
+                            <div>
+                                <Label>Pickup Charge (AED)</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
                                                         min="0"
-                                                        value={editForm.pickup_charge}
-                                                        onChange={(e) => handleEditChange('pickup_charge', e.target.value)}
-                                                    />
+                                    value={editForm.pickup_charge}
+                                    onChange={(e) => handleEditChange('pickup_charge', e.target.value)}
+                                />
                                                     {currentPickupCharge !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentPickupCharge || '0.00'}</p>
                                                     )}
-                                                </div>
-                                                <div>
-                                                    <Label>Delivery Charge (AED)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        step="0.01"
+                            </div>
+                            <div>
+                                <Label>Delivery Charge (AED)</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
                                                         min="0"
-                                                        value={editForm.delivery_charge}
-                                                        onChange={(e) => handleEditChange('delivery_charge', e.target.value)}
-                                                    />
+                                    value={editForm.delivery_charge}
+                                    onChange={(e) => handleEditChange('delivery_charge', e.target.value)}
+                                />
                                                     {currentDeliveryCharge !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentDeliveryCharge || '0.00'}</p>
                                                     )}
-                                                </div>
-                                                <div>
-                                                    <Label>Insurance Charge (AED)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        step="0.01"
+                            </div>
+                            <div>
+                                <Label>Insurance Charge (AED)</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
                                                         min="0"
-                                                        value={editForm.insurance_charge}
-                                                        onChange={(e) => handleEditChange('insurance_charge', e.target.value)}
-                                                        placeholder="0.00"
-                                                    />
+                                    value={editForm.insurance_charge}
+                                    onChange={(e) => handleEditChange('insurance_charge', e.target.value)}
+                                    placeholder="0.00"
+                                />
                                                     {currentInsuranceCharge !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentInsuranceCharge || '0.00'}</p>
                                                     )}
-                                                </div>
-                                            </div>
+                            </div>
+                        </div>
                                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-                                                <div>
-                                                    <Label>Tax Rate (%)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        step="0.01"
+                            <div>
+                                <Label>Tax Rate (%)</Label>
+                                <Input
+                                    type="number"
+                                    step="0.01"
                                                         min="0"
                                                         max="100"
-                                                        value={editForm.tax_rate}
-                                                        onChange={(e) => handleEditChange('tax_rate', e.target.value)}
-                                                    />
+                                    value={editForm.tax_rate}
+                                    onChange={(e) => handleEditChange('tax_rate', e.target.value)}
+                                />
                                                     {currentTaxRate !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentTaxRate || '0'}%</p>
                                                     )}
-                                                </div>
+                            </div>
                                                 <div>
                                                     <Label>Tax Amount (AED)</Label>
                                                     <Input
@@ -3000,21 +3118,21 @@ export default function InvoicePage() {
                                                     {currentTaxAmount !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentTaxAmount || '0.00'}</p>
                                                     )}
-                                                </div>
-                                                <div>
+                        </div>
+                            <div>
                                                     <Label>Total Amount (AED)</Label>
-                                                    <Input
+                                <Input
                                                         type="number"
                                                         step="0.01"
                                                         min="0"
                                                         value={editForm.total}
                                                         onChange={(e) => handleEditChange('total', e.target.value)}
-                                                    />
+                                />
                                                     {currentTotal !== undefined && (
                                                         <p className="text-xs text-muted-foreground mt-1">Current: {currentTotal || '0.00'}</p>
                                                     )}
-                                                </div>
-                                            </div>
+                            </div>
+                        </div>
                                         </>
                                     );
                                 })()}
@@ -3059,18 +3177,18 @@ export default function InvoicePage() {
                                     const currentNotes = invoice.notes || '';
                                     
                                     return (
-                                        <div>
-                                            <Label>Notes</Label>
-                                            <Textarea
-                                                value={editForm.notes}
+                        <div>
+                            <Label>Notes</Label>
+                            <Textarea
+                                value={editForm.notes}
                                                 rows={4}
-                                                onChange={(e) => handleEditChange('notes', e.target.value)}
+                                onChange={(e) => handleEditChange('notes', e.target.value)}
                                                 placeholder="Additional notes or remarks"
-                                            />
+                            />
                                             {currentNotes && (
                                                 <p className="text-xs text-muted-foreground mt-1">Current: {currentNotes.substring(0, 100)}{currentNotes.length > 100 ? '...' : ''}</p>
                                             )}
-                                        </div>
+                        </div>
                                     );
                                 })()}
                             </CardContent>

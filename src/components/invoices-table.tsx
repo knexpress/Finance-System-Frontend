@@ -281,11 +281,34 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         </TableRow>
                         </TableHeader>
                         <TableBody>
-                        {safeInvoices.map((invoice) => (
+                        {safeInvoices.map((invoice) => {
+                            // Debug: Log batch_number for first invoice to verify data structure
+                            if (safeInvoices.indexOf(invoice) === 0) {
+                                console.log('🔍 Invoice Batch Number Debug:', {
+                                    invoice_id: invoice.invoice_id,
+                                    batch_number: invoice.batch_number,
+                                    batch_number_type: typeof invoice.batch_number,
+                                    has_batch_number: 'batch_number' in invoice,
+                                    invoice_keys: Object.keys(invoice).filter(k => k.toLowerCase().includes('batch')),
+                                    full_invoice: invoice
+                                });
+                            }
+                            
+                            // Batch number fetched directly from invoices collection batch_number field
+                            // Ensure we're reading from the invoice object directly, not from nested objects
+                            // Handle empty strings, null, undefined - only use if it's a valid non-empty string
+                            const batchNumber = invoice.batch_number && String(invoice.batch_number).trim() 
+                                ? String(invoice.batch_number).trim() 
+                                : null;
+                            
+                            return (
                             <TableRow key={invoice._id}>
                             <TableCell className="font-mono text-xs">{invoice.invoice_id || 'N/A'}</TableCell>
                             <TableCell className="font-mono text-xs">{invoice.awb_number || 'N/A'}</TableCell>
-                            <TableCell className="font-mono text-xs">{invoice.batch_number || 'N/A'}</TableCell>
+                            {/* Batch number fetched directly from invoices collection batch_number field */}
+                            <TableCell className="font-mono text-xs">
+                                {batchNumber || 'N/A'}
+                            </TableCell>
                             <TableCell>{invoice.client_id?.company_name || 'Unknown'}</TableCell>
                             <TableCell>
                                 {(() => {
@@ -394,8 +417,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                                 </div>
                             </TableCell>
                             </TableRow>
-                        ))}
-                         {safeInvoices.length === 0 && (
+                            );
+                        })}
+                        {safeInvoices.length === 0 && (
                             <TableRow>
                                 <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
                                     No invoices found. Try adjusting your search or filters.
