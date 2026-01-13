@@ -1987,7 +1987,7 @@ export default function InvoicePage() {
                 // Update invoice state and force re-render
                 const codDeliveryChargeInUpdated = (updatedInvoice as any).cod_delivery_charge;
                 // Use functional update to ensure React detects the change
-                setInvoice((prevInvoice) => {
+                setInvoice((prevInvoice: any) => {
                     // Create a completely new object to ensure React detects the change
                     const newInvoice = JSON.parse(JSON.stringify(updatedInvoice));
                     console.log('🔄 setInvoice called with new invoice:', {
