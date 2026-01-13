@@ -1433,8 +1433,45 @@ class ApiClient {
   }
 
   // Get bookings with verified invoices (for cargo status tracking)
-  async getBookingsWithVerifiedInvoices(useCache: boolean = true) {
-    return this.request('/bookings/verified-invoices', {}, useCache, 30000);
+  // Optimized to only fetch fields needed for display
+  async getBookingsWithVerifiedInvoices(useCache: boolean = true, fields?: string[]) {
+    // Define minimal fields needed for review-requests page display
+    const defaultFields = [
+      '_id',
+      'awb',
+      'tracking_code',
+      'awb_number',
+      'customer_name',
+      'receiver_name',
+      'origin_place',
+      'destination_place',
+      'shipment_status',
+      'batch_no', // Legacy field, kept for backward compatibility
+      'invoice_number',
+      'invoice.batch_number', // Batch number from invoices collection
+      'service_code',
+      'service',
+      'sender.completeAddress',
+      'sender.country',
+      'receiver.completeAddress',
+      'receiver.country',
+      'request_id.service_code',
+      'request_id.service',
+      'request_id.awb',
+      'request_id.tracking_code',
+      'request_id.awb_number',
+      'booking.service_code',
+      'booking.service',
+      'booking.awb',
+      'booking.tracking_code',
+      'booking.awb_number'
+    ];
+    
+    const fieldsToFetch = fields || defaultFields;
+    const fieldsParam = fieldsToFetch.join(',');
+    const endpoint = `/bookings/verified-invoices?fields=${encodeURIComponent(fieldsParam)}`;
+    
+    return this.request(endpoint, {}, useCache, 30000);
   }
 
   // Update booking shipment status

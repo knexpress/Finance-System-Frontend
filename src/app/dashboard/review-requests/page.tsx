@@ -34,7 +34,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
-import { Package, Truck, Plane, MapPin, CheckCircle, Search, Layers, Hash } from 'lucide-react';
+import { Package, Truck, Plane, MapPin, CheckCircle, Search, Layers, Hash, Filter } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 // Helper function to normalize service code
@@ -91,9 +91,12 @@ interface Booking {
   origin_place?: string;
   destination_place?: string;
   shipment_status?: string;
-  batch_no?: string;
+  batch_no?: string; // Legacy field, will be replaced by invoice.batch_number
   invoice_id?: string;
   invoice_number?: string;
+  invoice?: {
+    batch_number?: string; // Batch number from invoices collection
+  };
   service_code?: string;
   service?: string;
   createdAt?: string;
@@ -123,11 +126,8 @@ export default function ReviewRequestsPage() {
   const [showAwbSuggestions, setShowAwbSuggestions] = useState(false);
   const [selectedBookings, setSelectedBookings] = useState<Set<string>>(new Set());
   const [showStatusDialog, setShowStatusDialog] = useState(false);
-  const [showBatchDialog, setShowBatchDialog] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('');
-  const [batchNo, setBatchNo] = useState('');
   const [statusNotes, setStatusNotes] = useState('');
-  const [batchNotes, setBatchNotes] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const awbInputRef = useRef<HTMLInputElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
@@ -135,17 +135,23 @@ export default function ReviewRequestsPage() {
   const { userProfile } = useAuth();
 
   // Fetch bookings with verified invoices
+  // Optimized to only fetch required fields for display
   const fetchBookings = useCallback(async () => {
     try {
       setLoading(true);
+      // Request only the fields needed for display to reduce payload size
       const result = await apiClient.getBookingsWithVerifiedInvoices(false);
       if (result.success && result.data) {
         const bookingData = Array.isArray(result.data) ? result.data : [];
-        // Set default shipment_status to SHIPMENT_RECEIVED if missing
-        const bookingsWithDefaults = bookingData.map(booking => ({
-          ...booking,
-          shipment_status: booking.shipment_status || 'SHIPMENT_RECEIVED'
-        }));
+        // Minimal processing: only set default shipment_status if missing
+        // Avoid deep cloning or unnecessary transformations
+        const bookingsWithDefaults = bookingData.map(booking => {
+          // Only create new object if shipment_status is missing to avoid unnecessary object creation
+          if (!booking.shipment_status) {
+            return { ...booking, shipment_status: 'SHIPMENT_RECEIVED' };
+          }
+          return booking; // Return original object if no changes needed
+        });
         setBookings(bookingsWithDefaults);
       } else {
         toast({
@@ -171,19 +177,28 @@ export default function ReviewRequestsPage() {
   }, [fetchBookings]);
 
   // Helper function to extract AWB number from booking
+  // Optimized to check most common fields first and avoid unnecessary property access
   const getAwbNumber = useCallback((booking: Booking): string => {
-    const awb = (
-      booking.awb ||
-      booking.tracking_code ||
-      booking.awb_number ||
-      (booking as any).request_id?.awb ||
-      (booking as any).request_id?.tracking_code ||
-      (booking as any).request_id?.awb_number ||
-      (booking as any).booking?.awb ||
-      (booking as any).booking?.tracking_code ||
-      (booking as any).booking?.awb_number ||
-      ''
-    ).trim();
+    // Check direct fields first (most common case)
+    let awb = booking.awb || booking.tracking_code || booking.awb_number || '';
+    
+    // Only check nested objects if direct fields are empty
+    if (!awb) {
+      const requestId = (booking as any).request_id;
+      if (requestId) {
+        awb = requestId.awb || requestId.tracking_code || requestId.awb_number || '';
+      }
+    }
+    
+    // Only check booking nested object if still empty
+    if (!awb) {
+      const nestedBooking = (booking as any).booking;
+      if (nestedBooking) {
+        awb = nestedBooking.awb || nestedBooking.tracking_code || nestedBooking.awb_number || '';
+      }
+    }
+    
+    awb = awb.trim();
     
     // Don't return _id as AWB - only return if it's actually an AWB format
     if (awb && awb !== booking._id?.toString() && (awb.length > 10 || /^[A-Z0-9]+$/i.test(awb))) {
@@ -203,6 +218,32 @@ export default function ReviewRequestsPage() {
       )
     ).sort();
   }, [bookings, getAwbNumber]);
+
+  // Get unique batch numbers with counts
+  const batchNumbersWithCounts = useMemo(() => {
+    const batchMap = new Map<string, { count: number; bookingIds: string[] }>();
+    
+    bookings.forEach(booking => {
+      const batchNumber = booking.invoice?.batch_number || booking.batch_no;
+      if (batchNumber) {
+        if (!batchMap.has(batchNumber)) {
+          batchMap.set(batchNumber, { count: 0, bookingIds: [] });
+        }
+        const batchInfo = batchMap.get(batchNumber)!;
+        batchInfo.count++;
+        batchInfo.bookingIds.push(booking._id);
+      }
+    });
+    
+    // Convert to array and sort by batch number
+    return Array.from(batchMap.entries())
+      .map(([batchNumber, info]) => ({
+        batchNumber,
+        count: info.count,
+        bookingIds: info.bookingIds
+      }))
+      .sort((a, b) => a.batchNumber.localeCompare(b.batchNumber));
+  }, [bookings]);
 
   // Filter AWB suggestions based on search input
   const awbSuggestions = useMemo(() => {
@@ -246,16 +287,47 @@ export default function ReviewRequestsPage() {
     }
   };
 
-  // Get service code from booking
-  const getServiceCode = (booking: Booking): string | null => {
-    return booking.service_code || 
-           booking.service || 
-           booking.request_id?.service_code || 
-           booking.request_id?.service ||
-           booking.booking?.service_code ||
-           booking.booking?.service ||
-           null;
+  // Select all bookings with a specific batch number
+  const selectBatchBookings = (batchNumber: string) => {
+    const batchInfo = batchNumbersWithCounts.find(b => b.batchNumber === batchNumber);
+    if (batchInfo) {
+      setSelectedBookings(prev => {
+        const newSet = new Set(prev);
+        // Toggle: if all are selected, deselect; otherwise, select all
+        const allSelected = batchInfo.bookingIds.every(id => newSet.has(id));
+        if (allSelected) {
+          batchInfo.bookingIds.forEach(id => newSet.delete(id));
+        } else {
+          batchInfo.bookingIds.forEach(id => newSet.add(id));
+        }
+        return newSet;
+      });
+    }
   };
+
+  // Get service code from booking
+  // Optimized to check most common fields first
+  const getServiceCode = useCallback((booking: Booking): string | null => {
+    // Check direct fields first (most common case)
+    const serviceCode = booking.service_code || booking.service;
+    if (serviceCode) return serviceCode;
+    
+    // Only check nested objects if direct fields are empty
+    const requestId = booking.request_id;
+    if (requestId) {
+      const requestService = requestId.service_code || requestId.service;
+      if (requestService) return requestService;
+    }
+    
+    // Only check booking nested object if still empty
+    const nestedBooking = booking.booking;
+    if (nestedBooking) {
+      const bookingService = nestedBooking.service_code || nestedBooking.service;
+      if (bookingService) return bookingService;
+    }
+    
+    return null;
+  }, []);
 
   // Get status badge with dynamic labels based on service
   const getStatusBadge = (booking: Booking) => {
@@ -335,7 +407,6 @@ export default function ReviewRequestsPage() {
       const bookingIds = Array.from(selectedBookings);
       const result = await apiClient.batchUpdateShipmentStatus(bookingIds, {
         shipment_status: selectedStatus,
-        batch_no: batchNo || undefined,
         updated_by: userProfile?.employee_id || userProfile?.email || 'unknown',
         notes: statusNotes,
       });
@@ -365,60 +436,6 @@ export default function ReviewRequestsPage() {
     }
   };
 
-  // Handle batch creation
-  const handleCreateBatch = async () => {
-    if (selectedBookings.size === 0) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Please select at least one booking',
-      });
-      return;
-    }
-
-    if (!batchNo.trim()) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Please enter a batch number',
-      });
-      return;
-    }
-
-    try {
-      setIsUpdating(true);
-      const bookingIds = Array.from(selectedBookings);
-      const result = await apiClient.createBatch({
-        batch_no: batchNo.trim(),
-        booking_ids: bookingIds,
-        created_by: userProfile?.employee_id || userProfile?.email || 'unknown',
-        notes: batchNotes,
-      });
-
-      if (result.success) {
-        toast({
-          title: 'Success',
-          description: `Batch ${batchNo} created with ${bookingIds.length} booking(s)`,
-        });
-        setShowBatchDialog(false);
-        setBatchNo('');
-        setBatchNotes('');
-        setSelectedBookings(new Set());
-        await fetchBookings();
-      } else {
-        throw new Error(result.error || 'Failed to create batch');
-      }
-    } catch (error) {
-      console.error('Error creating batch:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create batch',
-      });
-    } finally {
-      setIsUpdating(false);
-    }
-  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -476,18 +493,6 @@ export default function ReviewRequestsPage() {
 
               <div className="flex items-end gap-2">
                 <Button
-                  variant="outline"
-                  onClick={() => setShowBatchDialog(true)}
-                  disabled={selectedBookings.size === 0}
-                  className="flex items-center gap-2"
-                >
-                  <Layers className="h-4 w-4" />
-                  Create Batch ({selectedBookings.size})
-                </Button>
-              </div>
-
-              <div className="flex items-end gap-2">
-                <Button
                   variant="default"
                   onClick={() => setShowStatusDialog(true)}
                   disabled={selectedBookings.size === 0}
@@ -527,6 +532,40 @@ export default function ReviewRequestsPage() {
                 </div>
               </div>,
               document.body
+            )}
+
+            {/* Batch Number Selection */}
+            {batchNumbersWithCounts.length > 0 && (
+              <div className="rounded-md border p-4 bg-muted/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm font-semibold">Select by Batch Number</Label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {batchNumbersWithCounts.map(({ batchNumber, count, bookingIds }) => {
+                    const allSelected = bookingIds.every(id => selectedBookings.has(id));
+                    const someSelected = bookingIds.some(id => selectedBookings.has(id));
+                    return (
+                      <Button
+                        key={batchNumber}
+                        variant={allSelected ? "default" : someSelected ? "secondary" : "outline"}
+                        size="sm"
+                        onClick={() => selectBatchBookings(batchNumber)}
+                        className="flex items-center gap-2"
+                      >
+                        <Layers className="h-3 w-3" />
+                        <span>{batchNumber}</span>
+                        <Badge variant="outline" className="ml-1">
+                          {count}
+                        </Badge>
+                        {allSelected && (
+                          <CheckCircle className="h-3 w-3" />
+                        )}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             {/* Selected Count */}
@@ -601,34 +640,68 @@ export default function ReviewRequestsPage() {
                           {booking.receiver_name || 'N/A'}
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col gap-1 text-xs">
-                            <div className="flex items-center gap-1">
-                              <MapPin className="h-3 w-3 text-muted-foreground" />
-                              <span className="font-medium">From:</span>
-                              <span>
-                                {booking.sender?.completeAddress || booking.origin_place || 'N/A'}
-                                {booking.sender?.country && `, ${booking.sender.country}`}
-                              </span>
+                          <div className="flex flex-col gap-2 min-w-[280px] max-w-[350px]">
+                            {/* Origin */}
+                            <div className="flex items-start gap-2">
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <div className="h-2 w-2 rounded-full bg-green-500" />
+                                <MapPin className="h-3 w-3 text-green-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-green-700 mb-0.5">Origin</p>
+                                <p 
+                                  className="text-xs text-foreground truncate" 
+                                  title={booking.sender?.completeAddress || booking.origin_place || 'N/A'}
+                                >
+                                  {booking.sender?.completeAddress || booking.origin_place || 'N/A'}
+                                </p>
+                                {booking.sender?.country && (
+                                  <p className="text-xs text-muted-foreground">{booking.sender.country}</p>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1">
-                              <MapPin className="h-3 w-3 text-muted-foreground" />
-                              <span className="font-medium">To:</span>
-                              <span>
-                                {booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
-                                {booking.receiver?.country && `, ${booking.receiver.country}`}
-                              </span>
+                            
+                            {/* Arrow */}
+                            <div className="flex items-center gap-2 pl-4">
+                              <div className="h-px flex-1 bg-border" />
+                              <Truck className="h-3 w-3 text-muted-foreground" />
+                              <div className="h-px flex-1 bg-border" />
+                            </div>
+                            
+                            {/* Destination */}
+                            <div className="flex items-start gap-2">
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <div className="h-2 w-2 rounded-full bg-orange-500" />
+                                <MapPin className="h-3 w-3 text-orange-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-orange-700 mb-0.5">Destination</p>
+                                <p 
+                                  className="text-xs text-foreground truncate" 
+                                  title={booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
+                                >
+                                  {booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
+                                </p>
+                                {booking.receiver?.country && (
+                                  <p className="text-xs text-muted-foreground">{booking.receiver.country}</p>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </TableCell>
                         <TableCell>
-                          {booking.batch_no ? (
-                            <Badge variant="outline" className="flex items-center gap-1">
-                              <Layers className="h-3 w-3" />
-                              {booking.batch_no}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground text-sm">-</span>
-                          )}
+                          {/* Batch number fetched from invoices collection */}
+                          {(() => {
+                            const batchNumber = booking.invoice?.batch_number || booking.batch_no;
+                            return batchNumber ? (
+                              <Badge variant="outline" className="flex items-center gap-1">
+                                <Layers className="h-3 w-3" />
+                                {batchNumber}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">-</span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           {getStatusBadge(booking)}
@@ -705,17 +778,6 @@ export default function ReviewRequestsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {selectedBookings.size > 1 && (
-              <div>
-                <Label htmlFor="batch-no">Batch Number (Optional)</Label>
-                <Input
-                  id="batch-no"
-                  placeholder="Enter batch number..."
-                  value={batchNo}
-                  onChange={(e) => setBatchNo(e.target.value)}
-                />
-              </div>
-            )}
             <div>
               <Label htmlFor="status-notes">Notes (Optional)</Label>
               <Textarea
@@ -732,7 +794,6 @@ export default function ReviewRequestsPage() {
               setShowStatusDialog(false);
               setSelectedStatus('');
               setStatusNotes('');
-              setBatchNo('');
             }}>
               Cancel
             </Button>
@@ -768,59 +829,6 @@ export default function ReviewRequestsPage() {
               disabled={!selectedStatus || isUpdating || selectedBookings.size === 0}
             >
               {isUpdating ? 'Updating...' : 'Update Status'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Batch Dialog */}
-      <Dialog open={showBatchDialog} onOpenChange={setShowBatchDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create Batch</DialogTitle>
-            <DialogDescription>
-              Create a new batch and assign {selectedBookings.size} selected booking(s) to it
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="batch-number">Batch Number *</Label>
-              <Input
-                id="batch-number"
-                placeholder="e.g., BATCH-001, BATCH-2024-01"
-                value={batchNo}
-                onChange={(e) => setBatchNo(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="batch-notes">Notes (Optional)</Label>
-              <Textarea
-                id="batch-notes"
-                placeholder="Add any additional notes about this batch..."
-                value={batchNotes}
-                onChange={(e) => setBatchNotes(e.target.value)}
-                rows={3}
-              />
-            </div>
-            <div className="p-3 bg-muted rounded-md">
-              <p className="text-sm text-muted-foreground">
-                <strong>{selectedBookings.size}</strong> booking(s) will be assigned to this batch
-              </p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setShowBatchDialog(false);
-              setBatchNo('');
-              setBatchNotes('');
-            }}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreateBatch}
-              disabled={!batchNo.trim() || isUpdating}
-            >
-              {isUpdating ? 'Creating...' : 'Create Batch'}
             </Button>
           </DialogFooter>
         </DialogContent>
