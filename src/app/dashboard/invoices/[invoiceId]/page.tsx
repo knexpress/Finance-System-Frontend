@@ -767,10 +767,20 @@ export default function InvoicePage() {
     const totalAmountCod = (invoice as any).total_amount_cod || (invoice as any).totalAmountCod;
     const totalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
     // Check both snake_case and camelCase field names for cod_delivery_charge
-    const codDeliveryChargeRaw = (invoice as any).cod_delivery_charge || (invoice as any).codDeliveryCharge;
-    const codDeliveryCharge = parseDecimal(codDeliveryChargeRaw || 0, 2); // COD delivery charge for PH TO UAE (separate from Tax delivery_charge)
-    // Keep delivery_base_amount as fallback for backward compatibility during migration
-    const deliveryBaseAmount = codDeliveryCharge > 0 ? codDeliveryCharge : parseDecimal((invoice as any).delivery_base_amount || 0, 2);
+    // IMPORTANT: Check if cod_delivery_charge exists (even if 0) - use it directly
+    // Only fall back to delivery_base_amount if cod_delivery_charge is not present (undefined/null)
+    const codDeliveryChargeRaw = (invoice as any).cod_delivery_charge !== undefined && (invoice as any).cod_delivery_charge !== null
+        ? (invoice as any).cod_delivery_charge
+        : ((invoice as any).codDeliveryCharge !== undefined && (invoice as any).codDeliveryCharge !== null
+            ? (invoice as any).codDeliveryCharge
+            : undefined);
+    const codDeliveryCharge = codDeliveryChargeRaw !== undefined && codDeliveryChargeRaw !== null 
+        ? parseDecimal(codDeliveryChargeRaw, 2) 
+        : undefined; // COD delivery charge for PH TO UAE (separate from Tax delivery_charge)
+    // Keep delivery_base_amount as fallback ONLY if cod_delivery_charge is not present
+    const deliveryBaseAmount = codDeliveryCharge !== undefined 
+        ? codDeliveryCharge 
+        : parseDecimal((invoice as any).delivery_base_amount || 0, 2);
     
     // Debug: Log cod_delivery_charge to verify it's being read correctly
     // Also check if invoice is null/undefined
@@ -803,7 +813,11 @@ export default function InvoicePage() {
     if (isPhToUae && invoiceType === 'normal' && shippingCharge === 0 && totalAmountCod && totalAmountCod > 0) {
         // For COD: total_amount_cod = shipping + pickup + delivery
         // shipping = total_amount_cod - pickup - delivery
-        const codDeliveryAmount = totalKg >= 15 ? 0 : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice);
+        const codDeliveryAmount = totalKg >= 15 
+            ? 0 
+            : (codDeliveryCharge !== undefined 
+                ? codDeliveryCharge 
+                : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice));
         const calculatedShipping = parseDecimal(totalAmountCod, 2) - pickupCharge - codDeliveryAmount;
         if (calculatedShipping > 0) {
             shippingCharge = parseDecimal(calculatedShipping, 2);
@@ -831,7 +845,11 @@ export default function InvoicePage() {
             // Pickup = Total COD - Shipping - Delivery
             if (totalAmountCod && totalAmountCod > 0) {
                 const parsedTotalAmountCod = parseDecimal(totalAmountCod, 2);
-                const codDeliveryAmount = totalKg >= 15 ? 0 : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice);
+                const codDeliveryAmount = totalKg >= 15 
+                    ? 0 
+                    : (codDeliveryCharge !== undefined 
+                        ? codDeliveryCharge 
+                        : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice));
                 const calculatedPickupCharge = parsedTotalAmountCod - shippingCharge - codDeliveryAmount;
                 if (calculatedPickupCharge > 0) {
                     pickupCharge = parseDecimal(calculatedPickupCharge, 2);
@@ -848,22 +866,30 @@ export default function InvoicePage() {
         if (invoiceType === 'normal') {
             // COD invoice: 
             // - If weight >= 15kg: Show 0 (free delivery) but keep cod_delivery_charge in DB
-            // - If weight < 15kg: Use cod_delivery_charge from invoice (saved to database)
+            // - If weight < 15kg: Use cod_delivery_charge from invoice (saved to database) - use it even if 0
             // Note: cod_delivery_charge stays in database even when weight >= 15kg (for record keeping)
             if (totalKg >= 15) {
                 deliveryCharge = 0; // Display 0 for free delivery, but cod_delivery_charge remains in DB
             } else {
-                deliveryCharge = deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice;
+                // Use codDeliveryCharge if it exists (even if 0), otherwise fall back to deliveryBaseAmount or deliveryChargeFromInvoice
+                deliveryCharge = codDeliveryCharge !== undefined 
+                    ? codDeliveryCharge 
+                    : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice);
             }
             console.log('📊 PH TO UAE COD delivery charge:', { 
                 totalKg,
                 isWeight15kgOrMore: totalKg >= 15,
                 codDeliveryCharge,
+                codDeliveryCharge_exists: codDeliveryCharge !== undefined,
                 deliveryBaseAmount, 
                 deliveryChargeFromInvoice, 
                 finalDeliveryCharge: deliveryCharge,
                 invoiceCodDeliveryCharge: (invoice as any).cod_delivery_charge,
-                note: totalKg >= 15 ? 'Free delivery (weight >= 15kg), but cod_delivery_charge preserved in DB' : 'Normal delivery charge'
+                note: totalKg >= 15 
+                    ? 'Free delivery (weight >= 15kg), but cod_delivery_charge preserved in DB' 
+                    : (codDeliveryCharge !== undefined 
+                        ? 'Using cod_delivery_charge from backend (even if 0) - fresh data' 
+                        : 'cod_delivery_charge not found, using delivery_base_amount')
             });
         } else {
             // Tax invoice: Always use delivery_charge (updated after Tax edit)
@@ -1182,14 +1208,25 @@ export default function InvoicePage() {
             // For other invoices: Use deliveryCharge as calculated
             deliveryCharge: (() => {
                 // Re-read cod_delivery_charge from invoice state to ensure we have the latest value
-                const currentCodDeliveryCharge = parseDecimal((invoice as any).cod_delivery_charge || (invoice as any).codDeliveryCharge || 0, 2);
-                const currentDeliveryBaseAmount = currentCodDeliveryCharge > 0 ? currentCodDeliveryCharge : parseDecimal((invoice as any).delivery_base_amount || 0, 2);
+                // IMPORTANT: Check if cod_delivery_charge exists (even if 0) - use it directly
+                // Only fall back to delivery_base_amount if cod_delivery_charge is not present (undefined/null)
+                const currentCodDeliveryChargeRaw = (invoice as any).cod_delivery_charge !== undefined && (invoice as any).cod_delivery_charge !== null
+                    ? (invoice as any).cod_delivery_charge
+                    : ((invoice as any).codDeliveryCharge !== undefined && (invoice as any).codDeliveryCharge !== null
+                        ? (invoice as any).codDeliveryCharge
+                        : undefined);
+                const currentCodDeliveryCharge = currentCodDeliveryChargeRaw !== undefined && currentCodDeliveryChargeRaw !== null
+                    ? parseDecimal(currentCodDeliveryChargeRaw, 2)
+                    : undefined;
+                const currentDeliveryBaseAmount = currentCodDeliveryCharge !== undefined
+                    ? currentCodDeliveryCharge
+                    : parseDecimal((invoice as any).delivery_base_amount || 0, 2);
                 
                 if (isPhToUae) {
                     if (invoiceType === 'normal') {
                         // COD invoice: Use local edits if available (frontend-only)
                         // - If weight >= 15kg: Show 0 (free delivery) but keep cod_delivery_charge in DB
-                        // - If weight < 15kg: Use local edit or cod_delivery_charge if available, otherwise deliveryCharge
+                        // - If weight < 15kg: Use local edit or cod_delivery_charge if available (even if 0), otherwise deliveryCharge
                         if (totalKg >= 15) {
                             console.log('📦 PH TO UAE COD: Weight >= 15kg, showing 0 for delivery (free delivery)');
                             return 0; // Show 0 for free delivery, but cod_delivery_charge stays in DB
@@ -1200,19 +1237,24 @@ export default function InvoicePage() {
                             return parseDecimal(localCodEdits.delivery_base_amount, 2);
                         }
                         // Prioritize cod_delivery_charge from database (this is the value saved after edit)
-                        // Use the current value read directly from invoice state
-                        const finalDeliveryCharge = currentCodDeliveryCharge > 0 ? currentCodDeliveryCharge : (currentDeliveryBaseAmount > 0 ? currentDeliveryBaseAmount : deliveryCharge);
+                        // Use the current value read directly from invoice state - use it even if 0
+                        const finalDeliveryCharge = currentCodDeliveryCharge !== undefined
+                            ? currentCodDeliveryCharge
+                            : (currentDeliveryBaseAmount > 0 ? currentDeliveryBaseAmount : deliveryCharge);
                         console.log('📦 PH TO UAE COD: Delivery charge calculation (RE-READ FROM STATE):', {
                             refreshKey,
                             forceUpdate,
                             cod_delivery_charge_from_state: (invoice as any).cod_delivery_charge,
+                            cod_delivery_charge_exists: currentCodDeliveryCharge !== undefined,
                             currentCodDeliveryCharge,
                             currentDeliveryBaseAmount,
                             deliveryBaseAmount_old: deliveryBaseAmount,
                             deliveryCharge_old: deliveryCharge,
                             finalDeliveryCharge,
                             totalKg,
-                            note: 'Re-reading cod_delivery_charge directly from invoice state to ensure latest value'
+                            note: currentCodDeliveryCharge !== undefined 
+                                ? 'Using cod_delivery_charge from state (even if 0) - fresh data from backend'
+                                : 'cod_delivery_charge not found, falling back to delivery_base_amount'
                         });
                         return finalDeliveryCharge;
                     } else {
