@@ -1560,6 +1560,42 @@ export default function InvoicePage() {
         }
 
         try {
+            // Use the same multi-source strategy as "View Request Data"
+            const invoiceFromDb: any = requestDataSources?.invoice || invoice;
+            const invoiceRequestFromDb: any = requestDataSources?.invoiceRequest || null;
+            const requestData: any = invoiceRequestFromDb || invoiceFromDb?.request_id || invoiceFromDb || {};
+            const bookingSnapshot: any = requestData.booking_snapshot || requestData.booking_data || {};
+            const verification: any = requestData.verification || invoiceFromDb?.verification || {};
+            const senderSnapshot: any = bookingSnapshot.sender || requestData.sender || {};
+            const receiverSnapshot: any = bookingSnapshot.receiver || requestData.receiver || verification || {};
+
+            const agentNameExport =
+                verification?.agents_name ||
+                invoiceFromDb?.created_by?.full_name ||
+                invoiceFromDb?.agent_name ||
+                'N/A';
+
+            const senderDeliveryOptionExport =
+                senderSnapshot?.deliveryOption ||
+                senderSnapshot?.delivery_option ||
+                bookingSnapshot?.deliveryOption ||
+                bookingSnapshot?.delivery_option ||
+                'N/A';
+
+            const receiverDeliveryOptionExport =
+                receiverSnapshot?.deliveryOption ||
+                receiverSnapshot?.delivery_option ||
+                bookingSnapshot?.receiverDeliveryOption ||
+                bookingSnapshot?.receiver_delivery_option ||
+                'N/A';
+
+            const numberOfBoxesExport =
+                verification?.number_of_boxes ||
+                bookingSnapshot?.number_of_boxes ||
+                invoiceFromDb?.number_of_boxes ||
+                invoiceData.shipmentDetails?.numberOfBoxes ||
+                'N/A';
+
             // Prepare Excel data
             const excelData: any[] = [];
 
@@ -1580,6 +1616,9 @@ export default function InvoicePage() {
             excelData.push(['Address', invoiceData.receiverInfo?.address || 'N/A']);
             excelData.push(['Emirate', invoiceData.receiverInfo?.emirate || 'N/A']);
             excelData.push(['Mobile', invoiceData.receiverInfo?.mobile || 'N/A']);
+            if (receiverDeliveryOptionExport && receiverDeliveryOptionExport !== 'N/A') {
+                excelData.push(['Delivery Option', receiverDeliveryOptionExport]);
+            }
             if (invoiceData.receiverInfo?.trn) {
                 excelData.push(['TRN', invoiceData.receiverInfo.trn]);
             }
@@ -1591,15 +1630,21 @@ export default function InvoicePage() {
             excelData.push(['Name', invoiceData.senderInfo?.name || 'N/A']);
             excelData.push(['Address', invoiceData.senderInfo?.address || 'N/A']);
             excelData.push(['Phone', invoiceData.senderInfo?.phone || 'N/A']);
+            if (senderDeliveryOptionExport && senderDeliveryOptionExport !== 'N/A') {
+                excelData.push(['Delivery Option', senderDeliveryOptionExport]);
+            }
             if (invoiceData.senderInfo?.email) {
                 excelData.push(['Email', invoiceData.senderInfo.email]);
+            }
+            if (agentNameExport && agentNameExport !== 'N/A') {
+                excelData.push(['Agent Name', agentNameExport]);
             }
             excelData.push([]);
 
             // Shipment Details
             excelData.push(['SHIPMENT DETAILS']);
             excelData.push([]);
-            excelData.push(['Number of Boxes', invoiceData.shipmentDetails?.numberOfBoxes || 'N/A']);
+            excelData.push(['Number of Boxes', numberOfBoxesExport || 'N/A']);
             excelData.push(['Weight (kg)', invoiceData.shipmentDetails?.weight || 'N/A']);
             excelData.push(['Weight Type', invoiceData.shipmentDetails?.weightType || 'N/A']);
             excelData.push(['Rate (AED/kg)', invoiceData.shipmentDetails?.rate || 'N/A']);
