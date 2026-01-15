@@ -475,7 +475,8 @@ export default function InvoicePage() {
                 let invoiceRequest: any | null = null;
                 if (invoiceRequestId) {
                     // Avoid cached stale request when opening the dialog
-                    const reqRes = await apiClient.getInvoiceRequest(invoiceRequestId.toString());
+                    // Backend does NOT expose GET /invoice-requests/:id. Use details endpoint.
+                    const reqRes = await apiClient.getInvoiceRequestDetails(invoiceRequestId.toString(), false);
                     invoiceRequest = (reqRes as any)?.success ? (reqRes as any).data : null;
                 }
 
@@ -1549,7 +1550,8 @@ export default function InvoicePage() {
     };
 
     // Download as Excel function
-    const handleDownloadExcel = () => {
+    // IMPORTANT: Must fetch invoiceRequest data from invoicerequests collection as well (fresh) for export.
+    const handleDownloadExcel = async () => {
         if (!invoiceData || !invoice) {
             toast({
                 variant: 'destructive',
@@ -1560,41 +1562,47 @@ export default function InvoicePage() {
         }
 
         try {
-            // Use the same multi-source strategy as "View Request Data"
-            const invoiceFromDb: any = requestDataSources?.invoice || invoice;
-            const invoiceRequestFromDb: any = requestDataSources?.invoiceRequest || null;
-            const requestData: any = invoiceRequestFromDb || invoiceFromDb?.request_id || invoiceFromDb || {};
-            const bookingSnapshot: any = requestData.booking_snapshot || requestData.booking_data || {};
-            const verification: any = requestData.verification || invoiceFromDb?.verification || {};
-            const senderSnapshot: any = bookingSnapshot.sender || requestData.sender || {};
-            const receiverSnapshot: any = bookingSnapshot.receiver || requestData.receiver || verification || {};
+            // Fetch latest invoice + invoiceRequest (fresh from backend)
+            const invoiceRes = await apiClient.getInvoiceUnified(invoiceId);
+            const freshInvoice = (invoiceRes as any)?.success ? (invoiceRes as any).data : invoice;
 
-            const agentNameExport =
-                verification?.agents_name ||
-                invoiceFromDb?.created_by?.full_name ||
-                invoiceFromDb?.agent_name ||
-                'N/A';
+            const notesText = ((freshInvoice as any)?.notes || '').toString();
+            const idFromNotesMatch = notesText.match(/\b[a-fA-F0-9]{24}\b/);
+            const invoiceRequestId =
+                (freshInvoice as any)?.request_id?._id ||
+                (freshInvoice as any)?.request_id ||
+                (freshInvoice as any)?.invoice_request_id ||
+                (freshInvoice as any)?.requestId ||
+                (freshInvoice as any)?.invoiceRequestId ||
+                (idFromNotesMatch ? idFromNotesMatch[0] : undefined);
 
-            const senderDeliveryOptionExport =
-                senderSnapshot?.deliveryOption ||
-                senderSnapshot?.delivery_option ||
-                bookingSnapshot?.deliveryOption ||
-                bookingSnapshot?.delivery_option ||
-                'N/A';
+            let invoiceRequest: any | null = null;
+            if (invoiceRequestId) {
+                // Backend does NOT expose GET /invoice-requests/:id. Use details endpoint.
+                const reqRes = await apiClient.getInvoiceRequestDetails(invoiceRequestId.toString(), false);
+                invoiceRequest = (reqRes as any)?.success ? (reqRes as any).data : null;
+            }
 
-            const receiverDeliveryOptionExport =
-                receiverSnapshot?.deliveryOption ||
-                receiverSnapshot?.delivery_option ||
-                bookingSnapshot?.receiverDeliveryOption ||
-                bookingSnapshot?.receiver_delivery_option ||
-                'N/A';
+            const bookingSnapshot = invoiceRequest?.booking_snapshot || invoiceRequest?.booking_data || {};
+            const verification = invoiceRequest?.verification || {};
+            const senderFromReq = bookingSnapshot?.sender || {};
+            const receiverFromReq = bookingSnapshot?.receiver || {};
 
-            const numberOfBoxesExport =
-                verification?.number_of_boxes ||
-                bookingSnapshot?.number_of_boxes ||
-                invoiceFromDb?.number_of_boxes ||
-                invoiceData.shipmentDetails?.numberOfBoxes ||
-                'N/A';
+            const deriveListedCommoditiesFromItems = (srcItems: any[]): string | null => {
+                if (!Array.isArray(srcItems) || srcItems.length === 0) return null;
+                const names = srcItems
+                    .map((it: any) => (it?.name || it?.item || it?.description || it?.item_name || '').toString().trim())
+                    .filter(Boolean);
+                if (names.length === 0) return null;
+                const seen = new Set<string>();
+                const unique = names.filter(n => (seen.has(n) ? false : (seen.add(n), true)));
+                return unique.join(', ');
+            };
+
+            const listedCommodities =
+                verification?.listed_commodities ||
+                deriveListedCommoditiesFromItems(bookingSnapshot?.items || []) ||
+                '';
 
             // Prepare Excel data
             const excelData: any[] = [];
@@ -1609,16 +1617,27 @@ export default function InvoicePage() {
             excelData.push(['Invoice Type', invoiceType === 'tax' ? 'Tax Invoice' : 'Normal Invoice']);
             excelData.push([]);
 
+            // InvoiceRequest / Booking Snapshot (from invoicerequests collection)
+            excelData.push(['INVOICE REQUEST (invoicerequests)']);
+            excelData.push([]);
+            excelData.push(['Request ID', invoiceRequest?._id || 'N/A']);
+            excelData.push(['Tracking Code', verification?.tracking_code || invoiceRequest?.tracking_code || invoiceData.awbNumber || 'N/A']);
+            excelData.push(['Service Code', verification?.service_code || invoiceRequest?.service_code || (freshInvoice as any)?.service_code || 'N/A']);
+            excelData.push(['Cargo Service', verification?.cargo_service || 'N/A']);
+            excelData.push(['Agent Name', verification?.agents_name || senderFromReq?.agentName || 'N/A']);
+            excelData.push(['Listed Commodities', listedCommodities || 'N/A']);
+            excelData.push(['Verified At', verification?.verified_at ? new Date(verification.verified_at).toLocaleString() : 'N/A']);
+            excelData.push([]);
+
             // Receiver Information
             excelData.push(['RECEIVER INFORMATION']);
             excelData.push([]);
-            excelData.push(['Name', invoiceData.receiverInfo?.name || 'N/A']);
-            excelData.push(['Address', invoiceData.receiverInfo?.address || 'N/A']);
-            excelData.push(['Emirate', invoiceData.receiverInfo?.emirate || 'N/A']);
-            excelData.push(['Mobile', invoiceData.receiverInfo?.mobile || 'N/A']);
-            if (receiverDeliveryOptionExport && receiverDeliveryOptionExport !== 'N/A') {
-                excelData.push(['Delivery Option', receiverDeliveryOptionExport]);
-            }
+            // Prefer invoicerequests.booking_data.receiver.* then fall back to invoice mapping
+            excelData.push(['Name', receiverFromReq?.fullName || receiverFromReq?.name || invoiceData.receiverInfo?.name || 'N/A']);
+            excelData.push(['Address', receiverFromReq?.completeAddress || receiverFromReq?.addressLine1 || invoiceData.receiverInfo?.address || 'N/A']);
+            excelData.push(['Emirate', receiverFromReq?.emirates || invoiceData.receiverInfo?.emirate || 'N/A']);
+            excelData.push(['Mobile', receiverFromReq?.contactNo || receiverFromReq?.phoneNumber || invoiceData.receiverInfo?.mobile || 'N/A']);
+            excelData.push(['Delivery Option', receiverFromReq?.deliveryOption || 'N/A']);
             if (invoiceData.receiverInfo?.trn) {
                 excelData.push(['TRN', invoiceData.receiverInfo.trn]);
             }
@@ -1627,27 +1646,26 @@ export default function InvoicePage() {
             // Sender Information
             excelData.push(['SENDER INFORMATION']);
             excelData.push([]);
-            excelData.push(['Name', invoiceData.senderInfo?.name || 'N/A']);
-            excelData.push(['Address', invoiceData.senderInfo?.address || 'N/A']);
-            excelData.push(['Phone', invoiceData.senderInfo?.phone || 'N/A']);
-            if (senderDeliveryOptionExport && senderDeliveryOptionExport !== 'N/A') {
-                excelData.push(['Delivery Option', senderDeliveryOptionExport]);
-            }
-            if (invoiceData.senderInfo?.email) {
-                excelData.push(['Email', invoiceData.senderInfo.email]);
-            }
-            if (agentNameExport && agentNameExport !== 'N/A') {
-                excelData.push(['Agent Name', agentNameExport]);
-            }
+            // Prefer invoicerequests.booking_data.sender.* then fall back to invoice mapping
+            excelData.push(['Name', senderFromReq?.fullName || senderFromReq?.name || invoiceData.senderInfo?.name || 'N/A']);
+            excelData.push(['Address', senderFromReq?.completeAddress || senderFromReq?.addressLine1 || invoiceData.senderInfo?.address || 'N/A']);
+            excelData.push(['Phone', senderFromReq?.contactNo || senderFromReq?.phoneNumber || invoiceData.senderInfo?.phone || 'N/A']);
+            excelData.push(['Email', senderFromReq?.emailAddress || invoiceData.senderInfo?.email || 'N/A']);
+            excelData.push(['Delivery Option', senderFromReq?.deliveryOption || 'N/A']);
             excelData.push([]);
 
             // Shipment Details
             excelData.push(['SHIPMENT DETAILS']);
             excelData.push([]);
-            excelData.push(['Number of Boxes', numberOfBoxesExport || 'N/A']);
-            excelData.push(['Weight (kg)', invoiceData.shipmentDetails?.weight || 'N/A']);
-            excelData.push(['Weight Type', invoiceData.shipmentDetails?.weightType || 'N/A']);
-            excelData.push(['Rate (AED/kg)', invoiceData.shipmentDetails?.rate || 'N/A']);
+            // Prefer invoicerequests.verification.* then fall back to invoice mapping
+            excelData.push(['Number of Boxes', verification?.number_of_boxes || invoiceData.shipmentDetails?.numberOfBoxes || 'N/A']);
+            excelData.push(['Actual Weight (kg)', verification?.actual_weight ?? 'N/A']);
+            excelData.push(['Volumetric Weight (kg)', verification?.volumetric_weight ?? verification?.total_vm ?? 'N/A']);
+            excelData.push(['Chargeable Weight (kg)', verification?.chargeable_weight ?? 'N/A']);
+            excelData.push(['Total KG', verification?.total_kg ?? 'N/A']);
+            excelData.push(['Weight Type', verification?.weight_type || invoiceData.shipmentDetails?.weightType || 'N/A']);
+            excelData.push(['Rate Bracket', verification?.rate_bracket || 'N/A']);
+            excelData.push(['Amount per kg (AED)', verification?.amount ?? verification?.calculated_rate ?? invoiceData.shipmentDetails?.rate || 'N/A']);
             excelData.push([]);
 
             // Charges Breakdown

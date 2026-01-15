@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Eye, TrendingUp, FileSpreadsheet, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
 import * as XLSX from 'xlsx';
+import { apiClient } from '@/lib/api-client';
 
 interface InvoicesTableProps {
     invoices: any[];
@@ -31,7 +32,10 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
 
     // Download invoices as Excel
-    const handleDownloadExcel = (invoiceList: any[]) => {
+    // IMPORTANT: Enrich export data with invoicerequests collection (invoiceRequests) for:
+    // - sender/receiver deliveryOption
+    // - agent name
+    const handleDownloadExcel = async (invoiceList: any[]) => {
         if (!invoiceList || invoiceList.length === 0) {
             toast({
                 variant: 'destructive',
@@ -42,6 +46,84 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
         }
 
         try {
+            // 1) Collect invoiceRequestIds for batch enrichment
+            const extractObjectIdFromNotes = (notes: any): string | null => {
+                const txt = (notes || '').toString();
+                const m = txt.match(/\b[a-fA-F0-9]{24}\b/);
+                return m ? m[0] : null;
+            };
+
+            const requestIds = Array.from(new Set(
+                invoiceList
+                    .map((inv: any) =>
+                        inv?.request_id?._id ||
+                        inv?.request_id ||
+                        inv?.invoice_request_id ||
+                        extractObjectIdFromNotes(inv?.notes)
+                    )
+                    .filter(Boolean)
+                    .map((v: any) => v.toString())
+            ));
+
+            // Debug: show extraction results for troubleshooting local "still N/A"
+            if (process.env.NODE_ENV === 'development') {
+                const sample = invoiceList?.[0];
+                console.log('📤 Excel Export - RequestId Extraction Debug:', {
+                    invoicesCount: invoiceList?.length || 0,
+                    requestIdsCount: requestIds.length,
+                    firstInvoice: sample ? {
+                        invoice_id: sample.invoice_id,
+                        request_id: sample.request_id,
+                        invoice_request_id: sample.invoice_request_id,
+                        notes: sample.notes,
+                        idFromNotes: extractObjectIdFromNotes(sample.notes),
+                    } : null,
+                    requestIds: requestIds.slice(0, 10),
+                    note: 'If requestIdsCount is 0, export cannot enrich delivery options/agent from invoiceRequests.'
+                });
+            }
+
+            if (requestIds.length === 0) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Excel Export: Missing request IDs',
+                    description: 'No invoiceRequest IDs were found (request_id / invoice_request_id / notes). Cannot enrich Delivery Options / Agent Name.',
+                });
+            }
+
+            const invoiceRequestById = new Map<string, any>();
+            if (requestIds.length > 0) {
+                toast({
+                    title: 'Preparing Excel…',
+                    description: `Fetching ${requestIds.length} invoice request(s) for export.`,
+                });
+
+                // Fetch in parallel (best-effort). If some fail, export still proceeds.
+                const results = await Promise.all(
+                    requestIds.map(async (id) => {
+                        try {
+                            // Backend does NOT expose GET /invoice-requests/:id.
+                            // Use details endpoint which returns full booking_data + verification.
+                            const res = await apiClient.getInvoiceRequestDetails(id, false);
+                            return (res as any)?.success ? (res as any).data : null;
+                        } catch {
+                            return null;
+                        }
+                    })
+                );
+                results.forEach((req) => {
+                    if (req?._id) invoiceRequestById.set(req._id.toString(), req);
+                });
+
+                if (process.env.NODE_ENV === 'development') {
+                    console.log('📤 Excel Export - invoiceRequests fetched:', {
+                        requested: requestIds.length,
+                        loaded: invoiceRequestById.size,
+                        note: 'If loaded is 0, check backend /invoice-requests/:id availability and auth.'
+                    });
+                }
+            }
+
             // Prepare Excel data
             const excelData: any[] = [];
 
@@ -124,20 +206,38 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     ? new Date(invoice.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                     : 'N/A';
 
-                // Get fields from invoice request collection
-                const senderDeliveryOption = invoice.request_id?.sender_delivery_option || 'N/A';
-                const receiverDeliveryOption = invoice.request_id?.receiver_delivery_option || 'N/A';
-                const agentName = invoice.request_id?.verification?.agents_name || 'N/A';
+                // Enrich from invoicerequests collection
+                const invoiceRequestId =
+                    invoice?.request_id?._id ||
+                    invoice?.request_id ||
+                    invoice?.invoice_request_id ||
+                    extractObjectIdFromNotes(invoice?.notes);
+                const invoiceReq = invoiceRequestId ? invoiceRequestById.get(invoiceRequestId.toString()) : null;
+                const booking = invoiceReq?.booking_snapshot || invoiceReq?.booking_data || {};
+                const verification = invoiceReq?.verification || {};
+                const senderDeliveryOption =
+                    booking?.sender?.deliveryOption ||
+                    invoiceReq?.sender_delivery_option ||
+                    'N/A';
+                const receiverDeliveryOption =
+                    booking?.receiver?.deliveryOption ||
+                    invoiceReq?.receiver_delivery_option ||
+                    'N/A';
+                const agentName =
+                    verification?.agents_name ||
+                    booking?.sender?.agentName ||
+                    'N/A';
                 
                 // Debug: Log the extracted values
                 if (invoiceList.indexOf(invoice) === 0) {
                     console.log('📊 Excel Export - First Invoice Sample:', {
                         invoice_id: invoice.invoice_id,
-                        hasRequestId: !!invoice.request_id,
+                        hasRequestId: !!invoiceRequestId,
                         senderDeliveryOption,
                         receiverDeliveryOption,
                         agentName,
-                        requestIdKeys: invoice.request_id ? Object.keys(invoice.request_id) : []
+                        invoiceRequestId,
+                        invoiceRequestLoaded: !!invoiceReq
                     });
                 }
 
@@ -150,8 +250,8 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     invoice.receiver_address || 'N/A',
                     invoice.receiver_phone || 'N/A',
                     invoice.service_code || 'N/A',
-                    invoice.request_id?.verification?.total_kg || invoice.request_id?.verification?.weight || 'N/A',
-                    invoice.request_id?.verification?.number_of_boxes || 'N/A',
+                    verification?.total_kg || verification?.weight || invoice.request_id?.verification?.total_kg || invoice.request_id?.verification?.weight || 'N/A',
+                    verification?.number_of_boxes || invoice.request_id?.verification?.number_of_boxes || 'N/A',
                     invoice.volume_cbm || invoice.request_id?.shipment?.volume || 'N/A',
                     shippingCharge.toFixed(2),
                     pickupCharge.toFixed(2),
@@ -419,7 +519,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                             </TableRow>
                             );
                         })}
-                        {safeInvoices.length === 0 && (
+                         {safeInvoices.length === 0 && (
                             <TableRow>
                                 <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
                                     No invoices found. Try adjusting your search or filters.
