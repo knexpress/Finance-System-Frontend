@@ -1665,7 +1665,7 @@ export default function InvoicePage() {
             excelData.push(['Total KG', verification?.total_kg ?? 'N/A']);
             excelData.push(['Weight Type', verification?.weight_type || invoiceData.shipmentDetails?.weightType || 'N/A']);
             excelData.push(['Rate Bracket', verification?.rate_bracket || 'N/A']);
-            excelData.push(['Amount per kg (AED)', verification?.amount ?? verification?.calculated_rate ?? invoiceData.shipmentDetails?.rate || 'N/A']);
+            excelData.push(['Amount per kg (AED)', (verification?.amount ?? verification?.calculated_rate ?? invoiceData.shipmentDetails?.rate) || 'N/A']);
             excelData.push([]);
 
             // Charges Breakdown
