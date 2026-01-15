@@ -1,0 +1,225 @@
+GOAL
+Implement a single backend endpoint that powers the Finance System "Invoices → View Request Data" button.
+The endpoint must return data combined from BOTH collections:
+- invoices
+- invoicerequests (a.k.a. invoiceRequests / invoice-requests collection)
+
+Endpoint (NEW)
+GET /invoices-unified/:invoiceId/request-data
+
+High-level behavior
+1) Fetch the invoice document from the invoices collection using :invoiceId.
+2) Extract the related invoiceRequest id from the invoice document.
+3) Fetch the invoiceRequest document from invoicerequests using that id.
+4) Return BOTH sources to frontend in a single response:
+{
+  "success": true,
+  "data": {
+    "invoice": { ... },
+    "invoiceRequest": { ... } // can be null if not found
+  }
+}
+
+Why
+The frontend "View Request Data" dialog must render request details from invoicerequests (booking snapshot + verification),
+but also needs invoice-side fields (invoice number, AWB, charges, etc.) as the authoritative financial source.
+
+====================================================================
+REQUEST / RESPONSE CONTRACT
+====================================================================
+
+Request
+- Path param: invoiceId (string)
+
+Success response (200)
+{
+  "success": true,
+  "data": {
+    "invoice": { /* invoice fields from invoices collection */ },
+    "invoiceRequest": { /* request fields from invoicerequests collection */ }
+  }
+}
+
+If invoiceRequest is not found (still 200)
+{
+  "success": true,
+  "data": {
+    "invoice": { /* invoice */ },
+    "invoiceRequest": null
+  }
+}
+
+Error responses
+- 404 if invoice is not found:
+{ "success": false, "error": "Invoice not found" }
+- 400 if invoiceId is invalid:
+{ "success": false, "error": "Invalid invoiceId" }
+
+====================================================================
+LINKING RULE (HOW TO FIND THE REQUEST)
+====================================================================
+
+From the invoice document, determine invoiceRequestId using the first available:
+1) invoice.request_id._id   (if request_id is populated)
+2) invoice.request_id       (if request_id is an ObjectId/string)
+3) invoice.invoice_request_id
+4) invoice.requestId / invoice.invoiceRequestId (only if your backend uses camelCase)
+
+NOTE: This endpoint should NOT rely on embedded request data inside the invoice payload.
+It must fetch the fresh invoicerequests document from the database.
+
+====================================================================
+FETCH ONLY REQUIRED FIELDS (PROJECTIONS)
+====================================================================
+
+The frontend dialog displays the following (current implementation):
+- Request header: Request ID, Invoice Number, AWB/Tracking Code, Reference Number, Service Code, Status, Cargo Service, Agent Name
+- Sender: name, phone, email, country, full address, deliveryOption
+- Receiver: name, phone, email, country, full address, deliveryOption
+- Shipment & Verification: weights (actual/volumetric/chargeable/total), boxes, weight_type, classification, rate_bracket, amount/calculated_rate
+- Insurance: insured flag, declared_value
+- Additional: verification_notes, listed_commodities, booking notes/additionalDetails, verified timestamps (if present)
+
+Use MongoDB projections to fetch ONLY what is required.
+
+Invoice projection (from invoices collection) - MINIMUM REQUIRED
+{
+  _id: 1,
+  invoice_id: 1,
+  invoice_number: 1,
+  awb_number: 1,
+  batch_number: 1,
+  service_code: 1,
+  request_id: 1,              // required to link to invoiceRequests
+  invoice_request_id: 1,      // fallback link if used
+  status: 1,
+  notes: 1,
+
+  // Charges / totals (invoice is authoritative for financials)
+  amount: 1,
+  pickup_charge: 1,
+  delivery_charge: 1,
+  cod_delivery_charge: 1,
+  delivery_base_amount: 1,
+  pickup_base_amount: 1,
+  insurance_charge: 1,
+  tax_rate: 1,
+  tax_amount: 1,
+  base_amount: 1,
+  total_amount_cod: 1,
+  total_amount_tax_invoice: 1,
+
+  // Dates
+  issue_date: 1,
+  due_date: 1,
+  createdAt: 1,
+  updatedAt: 1,
+
+  // Receiver fallback fields used by the dialog (in case request snapshot lacks them)
+  receiver_name: 1,
+  receiver_phone: 1,
+  receiver_address: 1,
+
+  // Sender fallback fields used by the dialog (in case request snapshot lacks them)
+  customer_name: 1,
+  customer_phone: 1,
+  customer_email: 1,
+  origin_place: 1
+}
+
+InvoiceRequest projection (from invoicerequests collection) - MINIMUM REQUIRED
+{
+  _id: 1,
+  status: 1,
+  service_code: 1,
+  tracking_code: 1,
+  awb_number: 1,
+  invoice_number: 1,
+  insured: 1,
+  declared_value: 1,
+
+  // verification object (used heavily by the dialog)
+  verification: 1,
+  // If you want a tighter projection than `verification: 1`, project these nested fields at least:
+  // "verification.invoice_number": 1,
+  // "verification.tracking_code": 1,
+  // "verification.service_code": 1,
+  // "verification.cargo_service": 1,
+  // "verification.agents_name": 1,
+  // "verification.receiver_name": 1,
+  // "verification.receiver_phone": 1,
+  // "verification.receiver_address": 1,
+  // "verification.actual_weight": 1,
+  // "verification.volumetric_weight": 1,
+  // "verification.total_vm": 1,
+  // "verification.chargeable_weight": 1,
+  // "verification.total_kg": 1,
+  // "verification.number_of_boxes": 1,
+  // "verification.weight_type": 1,
+  // "verification.shipment_classification": 1,
+  // "verification.rate_bracket": 1,
+  // "verification.amount": 1,
+  // "verification.calculated_rate": 1,
+  // "verification.declared_value": 1,
+  // "verification.verification_notes": 1,
+  // "verification.listed_commodities": 1,
+  // "verification.verified_at": 1,
+
+  // booking snapshot (sender/receiver/items)
+  booking_snapshot: 1,
+  booking_data: 1
+  // If you want a tighter projection than snapshot/data: at least include sender + receiver + core places + weight + notes
+}
+
+IMPORTANT
+- Do not fetch entire documents without projection (performance).
+- Do not populate big arrays/documents unnecessarily; only include what the dialog renders.
+- This endpoint is called on-demand (when user opens the dialog), so it can return richer data than list endpoints, but still should be projected.
+
+====================================================================
+REFERENCE IMPLEMENTATION (PSEUDOCODE)
+====================================================================
+
+// Express-style example
+router.get('/invoices-unified/:invoiceId/request-data', async (req, res) => {
+  const { invoiceId } = req.params;
+
+  // 1) Validate invoiceId
+  if (!ObjectId.isValid(invoiceId)) {
+    return res.status(400).json({ success: false, error: 'Invalid invoiceId' });
+  }
+
+  // 2) Fetch invoice with projection
+  const invoice = await db.collection('invoices').findOne(
+    { _id: new ObjectId(invoiceId) },
+    { projection: INVOICE_PROJECTION }
+  );
+  if (!invoice) {
+    return res.status(404).json({ success: false, error: 'Invoice not found' });
+  }
+
+  // 3) Extract invoiceRequestId
+  const invoiceRequestId =
+    invoice?.request_id?._id ||
+    invoice?.request_id ||
+    invoice?.invoice_request_id ||
+    invoice?.requestId ||
+    invoice?.invoiceRequestId;
+
+  // 4) Fetch invoiceRequest with projection
+  let invoiceRequest = null;
+  if (invoiceRequestId && ObjectId.isValid(invoiceRequestId.toString())) {
+    invoiceRequest = await db.collection('invoicerequests').findOne(
+      { _id: new ObjectId(invoiceRequestId.toString()) },
+      { projection: INVOICE_REQUEST_PROJECTION }
+    );
+  }
+
+  // 5) Return both sources
+  return res.status(200).json({
+    success: true,
+    data: { invoice, invoiceRequest }
+  });
+});
+
+

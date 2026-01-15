@@ -64,6 +64,11 @@ export default function InvoicePage() {
     const [showCodEditDialog, setShowCodEditDialog] = useState(false);
     const [showTaxEditDialog, setShowTaxEditDialog] = useState(false);
     const [showRequestDataDialog, setShowRequestDataDialog] = useState(false);
+    const [requestDataSources, setRequestDataSources] = useState<{
+        invoice: any | null;
+        invoiceRequest: any | null;
+    } | null>(null);
+    const [loadingRequestDataSources, setLoadingRequestDataSources] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
     // Local state for COD invoice edits (frontend-only, does not affect backend)
     const [localCodEdits, setLocalCodEdits] = useState<any>(null);
@@ -438,6 +443,61 @@ export default function InvoicePage() {
 
         fetchInvoice();
     }, [invoiceId]);
+
+    // Fetch request data from BOTH sources when the dialog is opened:
+    // - invoices collection (via /invoices-unified/:id)
+    // - invoiceRequests collection (via /invoice-requests/:id)
+    useEffect(() => {
+        const fetchRequestDataSources = async () => {
+            if (!showRequestDataDialog || !invoiceId) return;
+
+            setLoadingRequestDataSources(true);
+            try {
+                // Always refetch invoice so dialog uses fresh invoice data
+                const invoiceRes = await apiClient.getInvoiceUnified(invoiceId);
+                const freshInvoice = (invoiceRes as any)?.success ? (invoiceRes as any).data : null;
+
+                const baseInvoice = freshInvoice || invoice;
+                // Extract invoiceRequestId robustly:
+                // - invoice.request_id (ObjectId/string) or populated invoice.request_id._id
+                // - invoice.invoice_request_id
+                // - sometimes backend stores it in notes; parse the first 24-hex ObjectId from notes as fallback
+                const notesText = ((baseInvoice as any)?.notes || '').toString();
+                const idFromNotesMatch = notesText.match(/\b[a-fA-F0-9]{24}\b/);
+                const invoiceRequestId =
+                    (baseInvoice as any)?.request_id?._id ||
+                    (baseInvoice as any)?.request_id ||
+                    (baseInvoice as any)?.requestId ||
+                    (baseInvoice as any)?.invoice_request_id ||
+                    (baseInvoice as any)?.invoiceRequestId ||
+                    (idFromNotesMatch ? idFromNotesMatch[0] : undefined);
+
+                let invoiceRequest: any | null = null;
+                if (invoiceRequestId) {
+                    // Avoid cached stale request when opening the dialog
+                    const reqRes = await apiClient.getInvoiceRequest(invoiceRequestId.toString());
+                    invoiceRequest = (reqRes as any)?.success ? (reqRes as any).data : null;
+                }
+
+                setRequestDataSources({
+                    invoice: baseInvoice || null,
+                    invoiceRequest
+                });
+            } catch (err) {
+                console.error('Failed to fetch request data sources:', err);
+                setRequestDataSources({
+                    invoice: invoice || null,
+                    invoiceRequest: null
+                });
+            } finally {
+                setLoadingRequestDataSources(false);
+            }
+        };
+
+        fetchRequestDataSources();
+        // We intentionally exclude `invoice` from deps to avoid refetch loops; we refetch by invoiceId anyway.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showRequestDataDialog, invoiceId]);
 
     // Track invoice state changes to ensure re-renders
     useEffect(() => {
@@ -3266,13 +3326,31 @@ export default function InvoicePage() {
                         </DialogHeader>
                         <div className="space-y-6 mt-4">
                             {(() => {
-                                const requestData = invoice.request_id || invoice;
+                                // IMPORTANT: This dialog must be backed by BOTH sources:
+                                // - invoiceRequests collection (invoiceRequest)
+                                // - invoices collection (invoice)
+                                const invoiceFromDb = requestDataSources?.invoice || invoice;
+                                const invoiceRequestFromDb = requestDataSources?.invoiceRequest;
+
+                                const requestData = invoiceRequestFromDb || invoiceFromDb?.request_id || invoiceFromDb || {};
                                 const bookingSnapshot = requestData.booking_snapshot || requestData.booking_data || {};
-                                // Get verification from multiple possible paths - check invoice directly too
-                                const verification = invoice.verification || requestData.verification || {};
+                                // Verification should prioritize invoiceRequests.verification, then invoice.verification
+                                const verification = requestData.verification || invoiceFromDb?.verification || {};
                                 const sender = bookingSnapshot.sender || requestData.sender || {};
                                 const receiver = bookingSnapshot.receiver || requestData.receiver || verification || {};
                                 const items = bookingSnapshot.items || requestData.items || [];
+
+                                const deriveListedCommoditiesFromItems = (srcItems: any[]): string | null => {
+                                    if (!Array.isArray(srcItems) || srcItems.length === 0) return null;
+                                    const names = srcItems
+                                        .map((it: any) => (it?.name || it?.item || it?.description || it?.item_name || '').toString().trim())
+                                        .filter(Boolean);
+                                    if (names.length === 0) return null;
+                                    // De-dupe and keep order
+                                    const seen = new Set<string>();
+                                    const unique = names.filter(n => (seen.has(n) ? false : (seen.add(n), true)));
+                                    return unique.join(', ');
+                                };
                                 
                                 // Helper to safely parse numeric values (handles Decimal128, numbers, strings)
                                 const safeParseDecimal = (value: any): number | null => {
@@ -3297,6 +3375,20 @@ export default function InvoicePage() {
                                 
                                 return (
                                     <>
+                                        {loadingRequestDataSources && (
+                                            <Card className="border border-muted">
+                                                <CardContent className="py-4 text-sm text-muted-foreground">
+                                                    Fetching latest data from <span className="font-semibold">invoices</span> and <span className="font-semibold">invoiceRequests</span>...
+                                                </CardContent>
+                                            </Card>
+                                        )}
+                                        {!loadingRequestDataSources && !invoiceRequestFromDb && (
+                                            <Card className="border border-amber-200 bg-amber-50/50">
+                                                <CardContent className="py-4 text-sm text-amber-900">
+                                                    InvoiceRequest data was not found/loaded, so this view is falling back to invoice data only. This usually means the invoice is missing a valid <span className="font-mono">request_id</span> (or the invoice-request record doesn’t exist).
+                                                </CardContent>
+                                            </Card>
+                                        )}
                                         {/* Header Information */}
                                         <Card className="border-2 border-primary/20">
                                             <CardHeader className="bg-primary/5">
@@ -3309,15 +3401,15 @@ export default function InvoicePage() {
                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Request ID</p>
-                                                        <p className="text-sm font-mono font-semibold">{requestData._id || 'N/A'}</p>
+                                                        <p className="text-sm font-mono font-semibold">{invoiceRequestFromDb?._id || requestData._id || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Invoice Number</p>
-                                                        <p className="text-sm font-mono font-semibold">{verification.invoice_number || requestData.invoice_number || 'N/A'}</p>
+                                                        <p className="text-sm font-mono font-semibold">{verification.invoice_number || (invoiceFromDb as any)?.invoice_id || (invoiceFromDb as any)?.invoice_number || requestData.invoice_number || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">AWB / Tracking Code</p>
-                                                        <p className="text-sm font-mono font-semibold">{verification.tracking_code || bookingSnapshot.tracking_code || bookingSnapshot.awb || requestData.tracking_code || requestData.awb_number || 'N/A'}</p>
+                                                        <p className="text-sm font-mono font-semibold">{verification.tracking_code || (invoiceFromDb as any)?.awb_number || bookingSnapshot.tracking_code || bookingSnapshot.awb || requestData.tracking_code || requestData.awb_number || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Reference Number</p>
@@ -3325,7 +3417,7 @@ export default function InvoicePage() {
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Service Code</p>
-                                                        <p className="text-sm font-semibold">{verification.service_code || bookingSnapshot.service_code || requestData.service_code || bookingSnapshot.service || 'N/A'}</p>
+                                                        <p className="text-sm font-semibold">{verification.service_code || (invoiceFromDb as any)?.service_code || bookingSnapshot.service_code || requestData.service_code || bookingSnapshot.service || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Status</p>
@@ -3355,15 +3447,15 @@ export default function InvoicePage() {
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Full Name</p>
-                                                        <p className="text-sm font-semibold">{sender.fullName || sender.name || requestData.customer_name || 'N/A'}</p>
+                                                        <p className="text-sm font-semibold">{sender.fullName || sender.name || requestData.customer_name || (invoiceFromDb as any)?.customer_name || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Phone</p>
-                                                        <p className="text-sm">{sender.phone || sender.phoneNumber || sender.contactNo || requestData.customer_phone || 'N/A'}</p>
+                                                        <p className="text-sm">{sender.phone || sender.phoneNumber || sender.contactNo || requestData.customer_phone || (invoiceFromDb as any)?.customer_phone || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Email</p>
-                                                        <p className="text-sm">{sender.email || sender.emailAddress || requestData.customer_email || 'N/A'}</p>
+                                                        <p className="text-sm">{sender.email || sender.emailAddress || requestData.customer_email || (invoiceFromDb as any)?.customer_email || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Country</p>
@@ -3371,7 +3463,7 @@ export default function InvoicePage() {
                                                     </div>
                                                     <div className="md:col-span-2">
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Complete Address</p>
-                                                        <p className="text-sm">{sender.completeAddress || sender.address || sender.addressLine1 || bookingSnapshot.origin_place || requestData.origin_place || 'N/A'}</p>
+                                                        <p className="text-sm">{sender.completeAddress || sender.address || sender.addressLine1 || bookingSnapshot.origin_place || requestData.origin_place || (invoiceFromDb as any)?.origin_place || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Delivery Option</p>
@@ -3393,11 +3485,11 @@ export default function InvoicePage() {
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Full Name</p>
-                                                        <p className="text-sm font-semibold">{receiver.fullName || receiver.name || verification.receiver_name || requestData.receiver_name || 'N/A'}</p>
+                                                        <p className="text-sm font-semibold">{receiver.fullName || receiver.name || verification.receiver_name || requestData.receiver_name || (invoiceFromDb as any)?.receiver_name || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Phone</p>
-                                                        <p className="text-sm">{receiver.phone || receiver.phoneNumber || receiver.contactNo || verification.receiver_phone || requestData.receiver_phone || 'N/A'}</p>
+                                                        <p className="text-sm">{receiver.phone || receiver.phoneNumber || receiver.contactNo || verification.receiver_phone || requestData.receiver_phone || (invoiceFromDb as any)?.receiver_phone || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Email</p>
@@ -3409,7 +3501,7 @@ export default function InvoicePage() {
                                                     </div>
                                                     <div className="md:col-span-2">
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Complete Address</p>
-                                                        <p className="text-sm">{receiver.completeAddress || receiver.address || receiver.addressLine1 || verification.receiver_address || bookingSnapshot.destination_place || requestData.destination_place || requestData.receiver_address || 'N/A'}</p>
+                                                        <p className="text-sm">{receiver.completeAddress || receiver.address || receiver.addressLine1 || verification.receiver_address || bookingSnapshot.destination_place || requestData.destination_place || requestData.receiver_address || (invoiceFromDb as any)?.receiver_address || 'N/A'}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Delivery Option</p>
@@ -3540,7 +3632,11 @@ export default function InvoicePage() {
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Listed Commodities</p>
-                                                        <p className="text-sm">{verification.listed_commodities || 'N/A'}</p>
+                                                        <p className="text-sm">
+                                                            {verification.listed_commodities ||
+                                                                deriveListedCommoditiesFromItems(items) ||
+                                                                'N/A'}
+                                                        </p>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Booking Notes</p>

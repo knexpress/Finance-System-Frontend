@@ -140,22 +140,31 @@ class ApiClient {
 
       // Log request for debugging (only in development)
       if (process.env.NODE_ENV === 'development') {
-        console.log(`[API] ${options.method || 'GET'} ${url}`);
+        const runtime = typeof window === 'undefined' ? 'server' : 'client';
+        console.log(`[API:${runtime}] ${options.method || 'GET'} ${url}`);
         if (options.body) {
           try {
             const bodyData = JSON.parse(options.body as string);
-            console.log('[API] Request Body:', bodyData);
+            console.log(`[API:${runtime}] Request Body:`, bodyData);
           } catch (e) {
-            console.log('[API] Request Body:', options.body);
+            console.log(`[API:${runtime}] Request Body:`, options.body);
           }
         }
       }
 
+      const startTime = Date.now();
       const response = await fetch(url, {
         headers,
         ...options,
         body: sanitizedBody,
       });
+
+      // Log response status in development
+      if (process.env.NODE_ENV === 'development') {
+        const runtime = typeof window === 'undefined' ? 'server' : 'client';
+        const durationMs = Date.now() - startTime;
+        console.log(`[API:${runtime}] ${options.method || 'GET'} ${url} -> ${response.status} (${durationMs}ms)`);
+      }
 
       if (!response.ok) {
         // Get response text first to check if there's content
@@ -714,6 +723,10 @@ class ApiClient {
 
   async getInvoiceRequestsByDeliveryStatus(deliveryStatus: string) {
     return this.request(`/invoice-requests/delivery-status/${deliveryStatus}`);
+  }
+
+  async getInvoiceRequest(id: string) {
+    return this.request(`/invoice-requests/${id}`);
   }
 
   async createInvoiceRequest(invoiceRequestData: any) {
