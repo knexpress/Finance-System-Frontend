@@ -1213,9 +1213,32 @@ export default function InvoicePage() {
         ? localCodEdits.receiver_phone 
         : (invoice.receiver_phone || invoice.request_id?.receiver?.phone || '+971XXXXXXXXX');
     
-    // Parse receiver address to extract city/emirate
-    const addressParts = receiverAddress.split(',').map((p: string) => p.trim());
-    const emirate = addressParts.length > 1 ? addressParts[addressParts.length - 2] : (invoice.request_id?.receiver?.city || 'Dubai');
+    // Get receiver emirate/city from invoice request booking data, then parse from address
+    const receiverEmirate = 
+        requestDataSources?.invoiceRequest?.booking_data?.receiver?.emirates ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.receiver?.emirates ||
+        requestDataSources?.invoiceRequest?.booking_data?.receiver?.city ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.receiver?.city ||
+        requestDataSources?.invoiceRequest?.booking_data?.receiver?.province ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.receiver?.province ||
+        invoice.request_id?.receiver?.emirates ||
+        invoice.request_id?.receiver?.city ||
+        null;
+    
+    // If not found in booking data, try to parse from address
+    let emirate = receiverEmirate;
+    if (!emirate && receiverAddress) {
+        const addressParts = receiverAddress.split(',').map((p: string) => p.trim());
+        if (addressParts.length > 1) {
+            // Try to extract from address parts (usually second to last or last)
+            emirate = addressParts[addressParts.length - 2] || addressParts[addressParts.length - 1];
+        }
+    }
+    
+    // Final fallback only if nothing found
+    if (!emirate) {
+        emirate = 'N/A';
+    }
     
     // Get shipment details - use direct fields first (priority: direct invoice fields > nested request_id fields)
     // Note: weight and numberOfBoxes are already defined above for tax invoice recalculation
@@ -1255,14 +1278,24 @@ export default function InvoicePage() {
         invoice.client_id?.contact_name ||
         'N/A';
     const senderAddress =
+        requestDataSources?.invoiceRequest?.booking_data?.sender?.completeAddress ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.sender?.completeAddress ||
+        requestDataSources?.invoiceRequest?.booking_data?.sender?.addressLine1 ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.sender?.addressLine1 ||
         invoice.origin_place ||
         invoice.request_id?.origin_place ||
         invoice.request_id?.sender?.address ||
+        invoice.request_id?.sender?.completeAddress ||
         'Address not provided';
     const senderPhone =
+        requestDataSources?.invoiceRequest?.booking_data?.sender?.contactNo ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.sender?.contactNo ||
+        requestDataSources?.invoiceRequest?.booking_data?.sender?.phoneNumber ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.sender?.phoneNumber ||
         invoice.customer_phone ||
         invoice.request_id?.customer_phone ||
         invoice.request_id?.sender?.phone ||
+        invoice.request_id?.sender?.contactNo ||
         invoice.client_id?.contact_phone ||
         '+971XXXXXXXXX';
     const senderEmail =
