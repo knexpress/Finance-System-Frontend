@@ -444,6 +444,42 @@ export default function InvoicePage() {
         fetchInvoice();
     }, [invoiceId]);
 
+    // Fetch invoice request data when invoice loads (for agent name in template)
+    useEffect(() => {
+        const fetchInvoiceRequestForTemplate = async () => {
+            if (!invoice) return;
+
+            try {
+                // Extract invoiceRequestId robustly
+                const notesText = ((invoice as any)?.notes || '').toString();
+                const idFromNotesMatch = notesText.match(/\b[a-fA-F0-9]{24}\b/);
+                const invoiceRequestId =
+                    (invoice as any)?.request_id?._id ||
+                    (invoice as any)?.request_id ||
+                    (invoice as any)?.requestId ||
+                    (invoice as any)?.invoice_request_id ||
+                    (invoice as any)?.invoiceRequestId ||
+                    (idFromNotesMatch ? idFromNotesMatch[0] : undefined);
+
+                if (invoiceRequestId) {
+                    const reqRes = await apiClient.getInvoiceRequestDetails(invoiceRequestId.toString(), false);
+                    const invoiceRequest = (reqRes as any)?.success ? (reqRes as any).data : null;
+                    
+                    // Update requestDataSources with invoice request (keep existing invoice if any)
+                    setRequestDataSources(prev => ({
+                        invoice: prev?.invoice || invoice,
+                        invoiceRequest: invoiceRequest
+                    }));
+                }
+            } catch (err) {
+                console.error('Failed to fetch invoice request for template:', err);
+                // Don't set error state - this is non-critical
+            }
+        };
+
+        fetchInvoiceRequestForTemplate();
+    }, [invoice]);
+
     // Fetch request data from BOTH sources when the dialog is opened:
     // - invoices collection (via /invoices-unified/:id)
     // - invoiceRequests collection (via /invoice-requests/:id)
@@ -772,7 +808,17 @@ export default function InvoicePage() {
     const getShipmentClassification = (): string | undefined => {
       const norm = (v: any) => (v || '').toString().trim().toUpperCase();
       
-      // Check top-level shipment classification first
+      // Prioritize shipment classification from invoice request's verification (from invoicerequests collection)
+      const invoiceRequestVerification = requestDataSources?.invoiceRequest?.verification;
+      const topClassFromRequest = norm(
+        invoiceRequestVerification?.shipment_classification ||
+        invoiceRequestVerification?.classification
+      );
+      if (topClassFromRequest && (topClassFromRequest === 'COMMERCIAL' || topClassFromRequest === 'FLOMIC' || topClassFromRequest === 'PERSONAL' || topClassFromRequest === 'GENERAL')) {
+        return topClassFromRequest;
+      }
+      
+      // Fallback to invoice.request_id data
       const topClass = norm(
         invoice.request_id?.verification?.shipment_classification ||
         invoice.request_id?.shipment?.classification
@@ -781,7 +827,18 @@ export default function InvoicePage() {
         return topClass;
       }
       
-      // Check box-level classification
+      // Check box-level classification from invoice request first
+      const boxesFromRequest = invoiceRequestVerification?.boxes || [];
+      if (Array.isArray(boxesFromRequest) && boxesFromRequest.length > 0) {
+        for (const box of boxesFromRequest) {
+          const sc = norm(box.shipment_classification);
+          const c = norm(box.classification);
+          if (sc === 'COMMERCIAL' || c === 'COMMERCIAL') return 'COMMERCIAL';
+          if (sc === 'FLOMIC' || c === 'FLOMIC' || sc === 'PERSONAL' || c === 'PERSONAL') return sc || c;
+        }
+      }
+      
+      // Fallback to box-level classification from invoice.request_id
       const boxes = invoice.request_id?.verification?.boxes || [];
       if (Array.isArray(boxes) && boxes.length > 0) {
         for (const box of boxes) {
@@ -1215,6 +1272,25 @@ export default function InvoicePage() {
         invoice.client_id?.contact_email ||
         '';
 
+    // Helper function to derive listed commodities from items array
+    const deriveListedCommoditiesFromItems = (srcItems: any[]): string | null => {
+        if (!Array.isArray(srcItems) || srcItems.length === 0) return null;
+        const names = srcItems
+            .map((it: any) => (it?.name || it?.item || it?.description || it?.item_name || it?.commodity || '').toString().trim())
+            .filter(Boolean);
+        if (names.length === 0) return null;
+        // De-dupe and keep order
+        const seen = new Set<string>();
+        const unique = names.filter(n => (seen.has(n) ? false : (seen.add(n), true)));
+        return unique.join(', ');
+    };
+
+    // Get items from invoice request booking_data or booking_snapshot
+    const bookingDataItems = requestDataSources?.invoiceRequest?.booking_data?.items || 
+                             requestDataSources?.invoiceRequest?.booking_snapshot?.items || 
+                             [];
+    const itemsFromBookingData = deriveListedCommoditiesFromItems(bookingDataItems);
+
     // Convert invoice to template format
     const invoiceData = {
         invoiceNumber: invoice.invoice_id || invoice._id,
@@ -1432,9 +1508,9 @@ export default function InvoicePage() {
         // Invoice type for determining which total to display
         invoiceType: invoiceType, // 'normal' or 'tax'
         remarks: {
-        boxNumbers: invoice.notes || 'No remarks',
-        agent: invoice.request_id?.verification?.agents_name || invoice.created_by?.full_name || 'SYSTEM',
-        items: invoice.request_id?.verification?.listed_commodities || invoice.notes || 'No remarks'
+        boxNumbers: '', // Removed - no longer displayed in invoice template
+        agent: requestDataSources?.invoiceRequest?.verification?.agents_name || invoice.request_id?.verification?.agents_name || invoice.created_by?.full_name || 'SYSTEM',
+        items: itemsFromBookingData || requestDataSources?.invoiceRequest?.verification?.listed_commodities || invoice.request_id?.verification?.listed_commodities || invoice.notes || 'No remarks'
         },
         termsAndConditions: 'Cash Upon Receipt of Goods',
         qrCode: qrCodeData ? {

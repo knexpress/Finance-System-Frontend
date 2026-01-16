@@ -95,10 +95,7 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
             {data.batchNumber ? (
               <p><span className="font-semibold">Batch #</span> {data.batchNumber}</p>
             ) : null}
-            {/* Show shipment classification for UAE TO PH (FLOMIC or COMMERCIAL only) */}
-            {data.isUaeToPh && data.shipmentClassification && 
-             (data.shipmentClassification.toUpperCase() === 'FLOMIC' || 
-              data.shipmentClassification.toUpperCase() === 'COMMERCIAL') ? (
+            {data.shipmentClassification ? (
               <p><span className="font-semibold">Classification:</span> {data.shipmentClassification.toUpperCase()}</p>
             ) : null}
           </div>
@@ -289,7 +286,7 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
         <div>
           <h4 className="font-semibold mb-2">REMARKS:</h4>
           <div className="space-y-1 text-sm">
-            <p>BOX# {data.remarks.boxNumbers}</p>
+            {data.remarks.boxNumbers && <p>BOX# {data.remarks.boxNumbers}</p>}
             <p>AGENT: {data.remarks.agent}</p>
             {data.remarks.items && <p>ITEMS: {data.remarks.items}</p>}
           </div>

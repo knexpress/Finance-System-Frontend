@@ -653,7 +653,7 @@ export default function ReviewRequestsPage() {
                                   className="text-xs text-foreground truncate" 
                                   title={booking.sender?.completeAddress || booking.origin_place || 'N/A'}
                                 >
-                                  {booking.sender?.completeAddress || booking.origin_place || 'N/A'}
+                                {booking.sender?.completeAddress || booking.origin_place || 'N/A'}
                                 </p>
                                 {booking.sender?.country && (
                                   <p className="text-xs text-muted-foreground">{booking.sender.country}</p>
@@ -680,7 +680,7 @@ export default function ReviewRequestsPage() {
                                   className="text-xs text-foreground truncate" 
                                   title={booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
                                 >
-                                  {booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
+                                {booking.receiver?.completeAddress || booking.destination_place || 'N/A'}
                                 </p>
                                 {booking.receiver?.country && (
                                   <p className="text-xs text-muted-foreground">{booking.receiver.country}</p>
@@ -694,12 +694,12 @@ export default function ReviewRequestsPage() {
                           {(() => {
                             const batchNumber = booking.invoice?.batch_number || booking.batch_no;
                             return batchNumber ? (
-                              <Badge variant="outline" className="flex items-center gap-1">
-                                <Layers className="h-3 w-3" />
+                            <Badge variant="outline" className="flex items-center gap-1">
+                              <Layers className="h-3 w-3" />
                                 {batchNumber}
-                              </Badge>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">-</span>
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
                             );
                           })()}
                         </TableCell>

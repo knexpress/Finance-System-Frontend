@@ -679,6 +679,13 @@ export default function InvoiceRequestsPage() {
       filtered = safeInvoiceRequests.filter(request => {
         const status = request.status;
         // Match the selected status exactly
+        // For CANCELLED status, also check delivery_status and request_id.status as fallbacks
+        if (statusFilter === 'CANCELLED') {
+          return status === 'CANCELLED' || 
+                 request.delivery_status === 'CANCELLED' ||
+                 request.request_id?.status === 'CANCELLED' ||
+                 request.request_id?.delivery_status === 'CANCELLED';
+        }
         return status === statusFilter;
       });
       secureLog.debug('Filtered by status', { statusFilter, count: filtered.length });
@@ -1009,17 +1016,22 @@ export default function InvoiceRequestsPage() {
       // Find the request to get booking_id
       const request = invoiceRequests.find(r => r._id === id);
       
-      // If cancelling, use the cancellation endpoint which handles deletion from all collections
+      // If cancelling, just update the status to CANCELLED (don't delete)
       if (newStatus === 'CANCELLED') {
-        if (!confirm('Are you sure you want to cancel this invoice request? This will delete it from Delivery Assignments, Invoice Requests, and Invoices collections, but keep it in audit reports for future reference.')) {
+        if (!confirm('Are you sure you want to cancel this invoice request? This will change the status to CANCELLED.')) {
           return;
         }
         
-        const result = await apiClient.cancelInvoiceRequest(id);
+        // Update status to CANCELLED using the regular status update endpoint
+        const result = await apiClient.updateInvoiceRequestStatus(id, { status: 'CANCELLED' });
         if (result.success) {
+          // Update shipment_status_history in booking if applicable
+          if (request) {
+            await updateBookingShipmentStatusHistory(request, 'CANCELLED');
+          }
           toast({
             title: 'Success',
-            description: 'Invoice request cancelled and removed from all collections. It will remain in audit reports.',
+            description: 'Invoice request status updated to CANCELLED.',
           });
           apiClient.invalidateCache('/invoice-requests');
           fetchInvoiceRequests(currentPage, false); // Skip cache after status update
@@ -1998,26 +2010,38 @@ export default function InvoiceRequestsPage() {
 
   const handleCancelInvoice = async (request: any) => {
     try {
-      // Get invoice ID from request - prefer _id (MongoDB ID) over invoice_number
-      // The request might have invoice_id (MongoDB ID) or invoice_number (string like INV-000300)
-      let invoiceId = request.invoice_id;
+      // Helper to check if a string is a MongoDB ObjectId (24 hex characters)
+      const isObjectId = (id: string) => /^[a-fA-F0-9]{24}$/.test(id);
       
-      // If invoice_id is not available, try to find invoice by invoice_number
-      if (!invoiceId && request.invoice_number) {
-        // Try to fetch invoice by invoice_number to get the _id
-        const invoiceResult = await apiClient.getInvoicesUnified();
+      // Get invoice identifier from request
+      const invoiceIdentifier = request.invoice_id || request.invoice_number;
+      
+      if (!invoiceIdentifier) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Invoice ID not found. Please ensure the invoice exists.',
+        });
+        return;
+      }
+      
+      let invoiceId: string | null = null;
+      
+      // If it's already a MongoDB ObjectId, use it directly
+      if (isObjectId(invoiceIdentifier)) {
+        invoiceId = invoiceIdentifier;
+      } else {
+        // Otherwise, it's an invoice number (like INV-000315), need to fetch the MongoDB _id
+        const invoiceResult = await apiClient.getInvoicesUnified(false); // Skip cache to get fresh data
         if (invoiceResult.success && Array.isArray(invoiceResult.data)) {
           const invoice = invoiceResult.data.find((inv: any) => 
-            inv.invoice_id === request.invoice_number || inv._id === request.invoice_number
+            inv.invoice_id === invoiceIdentifier || 
+            inv.invoice_number === invoiceIdentifier ||
+            inv._id === invoiceIdentifier
           );
           if (invoice) {
-            invoiceId = invoice._id;
-          } else {
-            // If not found, use invoice_number as fallback (backend should handle it)
-            invoiceId = request.invoice_number;
+            invoiceId = invoice._id; // Always use MongoDB _id
           }
-        } else {
-          invoiceId = request.invoice_number;
         }
       }
       
@@ -2025,7 +2049,7 @@ export default function InvoiceRequestsPage() {
         toast({
           variant: 'destructive',
           title: 'Error',
-          description: 'Invoice ID not found. Please ensure the invoice exists.',
+          description: `Invoice not found with identifier: ${invoiceIdentifier}. Please ensure the invoice exists.`,
         });
         return;
       }
@@ -3904,7 +3928,7 @@ export default function InvoiceRequestsPage() {
                           setInsuranceManualAmount('');
                         }
                       }}
-                    />
+                      />
                     <Label 
                       htmlFor="has-insurance" 
                       className="text-sm font-normal cursor-pointer"
@@ -3923,15 +3947,15 @@ export default function InvoiceRequestsPage() {
                         onChange={(e) => setInsuranceManualAmount(e.target.value)}
                         className="w-full"
                       />
-                    </div>
+                  </div>
                   )}
                 </div>
                 {(() => {
                   const declaredAmount = selectedRequestForInvoice ? getDeclaredAmount(selectedRequestForInvoice) : 0;
                   return declaredAmount > 0 ? (
-                    <p className="text-xs text-gray-500 mt-2">
+                <p className="text-xs text-gray-500 mt-2">
                       Declared Amount: {declaredAmount.toFixed(2)} AED
-                    </p>
+                </p>
                   ) : null;
                 })()}
               </div>

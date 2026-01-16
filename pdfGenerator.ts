@@ -381,47 +381,53 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   doc.text(data.sender.agentName || '', leftColumnX, yPos)
   yPos += 8
 
-  // Delivery Options (checkboxes) - Based on route and sender/receiver delivery options
-  doc.setFontSize(7)
+  // Delivery Options - Show descriptive text based on route and selected options
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'bold')
+  doc.text('DELIVERY OPTIONS:', leftColumnX, yPos)
+  yPos += 6
+  
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
   
   if (isPhToUae) {
-    // For PH to UAE: Show drop off options for sender (in Philippines)
-    const isDropOffToWarehouse = data.sender.deliveryOption === 'warehouse'
-    const isSchedulePickup = data.sender.deliveryOption === 'pickup'
+    // PH to UAE Route
+    doc.setFont('helvetica', 'bold')
+    doc.text('PH to UAE Route:', leftColumnX, yPos)
+    yPos += 5
     
-    // Sender options (Philippines side)
-    doc.text(isDropOffToWarehouse ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('DROP OFF TO WAREHOUSE', leftColumnX + 5, yPos)
-    yPos += 4
+    doc.setFont('helvetica', 'normal')
+    // Sender options
+    const senderOption = data.sender.deliveryOption === 'warehouse' 
+      ? 'Drop Off to Warehouse (Parañaque Address)'
+      : 'Schedule Pickup'
+    doc.text(`Sender: ${senderOption}`, leftColumnX, yPos)
+    yPos += 5
     
-    doc.text(isSchedulePickup ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('SCHEDULE A PICKUP', leftColumnX + 5, yPos)
-    yPos += 4
-    
-    // Receiver options (UAE side)
-    const isReceiverWarehouse = data.receiver.deliveryOption === 'warehouse'
-    const isReceiverDelivery = data.receiver.deliveryOption === 'address'
-    
-    doc.text(isReceiverWarehouse ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('UAE WAREHOUSE PICKUP', leftColumnX + 5, yPos)
-    yPos += 4
-    
-    doc.text(isReceiverDelivery ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('DELIVER TO UAE ADDRESS', leftColumnX + 5, yPos)
+    // Receiver options
+    const receiverOption = data.receiver.deliveryOption === 'warehouse'
+      ? 'UAE Warehouse Pickup'
+      : 'UAE Address Delivery'
+    doc.text(`Receiver: ${receiverOption}`, leftColumnX, yPos)
   } else {
-    // For UAE to PH: Show UAE warehouse pickup options
-    const isSchedulePickup = data.sender.deliveryOption === 'pickup'
-    // Receiver deliveryOption is 'warehouse' | 'address' where 'address' means delivery
-    const isDeliverToAddress = data.receiver.deliveryOption === 'address'
+    // UAE to PH Route
+    doc.setFont('helvetica', 'bold')
+    doc.text('UAE to PH Route:', leftColumnX, yPos)
+    yPos += 5
     
-    // Sender options (UAE side)
-    doc.text(isSchedulePickup ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('SCHEDULE A PICKUP', leftColumnX + 5, yPos)
-    yPos += 4
+    doc.setFont('helvetica', 'normal')
+    // Sender options
+    const senderOption = data.sender.deliveryOption === 'warehouse'
+      ? 'UAE Warehouse Drop Off'
+      : 'UAE Address Pickup'
+    doc.text(`Sender: ${senderOption}`, leftColumnX, yPos)
+    yPos += 5
     
-    // Receiver options (Philippines side)
-    doc.text(isDeliverToAddress ? '☑' : '☐', leftColumnX, yPos)
-    doc.text('DELIVER TO ADDRESS', leftColumnX + 5, yPos)
+    // Receiver options
+    const receiverOption = data.receiver.deliveryOption === 'warehouse'
+      ? 'Philippines Warehouse Pickup (Parañaque Address)'
+      : 'Philippines Address Delivery'
+    doc.text(`Receiver: ${receiverOption}`, leftColumnX, yPos)
   }
   
   yPos += 8
@@ -831,17 +837,17 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     : (data.customerImage ? [data.customerImage] : [])
   
   if (customerPhotos.length > 0) {
-    addNewPage()
-    const page4Number = doc.getNumberOfPages()
+  addNewPage()
+  const page4Number = doc.getNumberOfPages()
 
-    // Re-define image variables for page 4
-    const page4ImageMargin = 20
-    const page4ImageSpacing = 15
-    const page4ImageWidth = (pageWidth - (page4ImageMargin * 2) - page4ImageSpacing) / 2
-    const page4LeftImageX = page4ImageMargin
-    const page4RightImageX = page4ImageMargin + page4ImageWidth + page4ImageSpacing
-    const page4ImageStartY = 40
-    const page4MaxImageHeight = (pageHeight - page4ImageStartY - margin) * 0.8
+  // Re-define image variables for page 4
+  const page4ImageMargin = 20
+  const page4ImageSpacing = 15
+  const page4ImageWidth = (pageWidth - (page4ImageMargin * 2) - page4ImageSpacing) / 2
+  const page4LeftImageX = page4ImageMargin
+  const page4RightImageX = page4ImageMargin + page4ImageWidth + page4ImageSpacing
+  const page4ImageStartY = 40
+  const page4MaxImageHeight = (pageHeight - page4ImageStartY - margin) * 0.8
 
     if (customerPhotos.length === 1) {
       // Center single image if only one photo
@@ -909,7 +915,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
       const centerX = pageWidth / 2
       leftDocX = centerX - docImageWidth - (docSpacing / 2)
       rightDocX = centerX + (docSpacing / 2)
-    } else {
+  } else {
       // Center single document
       leftDocX = (pageWidth - docImageWidth) / 2
     }
@@ -919,7 +925,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
       doc.setPage(page5Number)
       
       // Label
-      doc.setFontSize(10)
+    doc.setFontSize(10)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(0, 0, 0)
       const labelY = page5YPos - 3

@@ -92,6 +92,9 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
             {data.batchNumber && (
               <p><span className="font-semibold">Batch #</span> {data.batchNumber}</p>
             )}
+            {data.shipmentClassification && (
+              <p><span className="font-semibold">Classification:</span> {data.shipmentClassification.toUpperCase()}</p>
+            )}
           </div>
         </div>
       </div>
@@ -304,7 +307,7 @@ export default function TaxInvoiceTemplate({ data }: TaxInvoiceTemplateProps) {
         <div>
           <h4 className="font-semibold mb-2">REMARKS:</h4>
           <div className="space-y-1 text-sm">
-            <p>BOX# {data.remarks.boxNumbers}</p>
+            {data.remarks.boxNumbers && <p>BOX# {data.remarks.boxNumbers}</p>}
             <p>AGENT: {data.remarks.agent}</p>
             {data.remarks.items && <p>ITEMS: {data.remarks.items}</p>}
           </div>

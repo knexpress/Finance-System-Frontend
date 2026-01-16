@@ -59,6 +59,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
   const [senderPhone, setSenderPhone] = useState('');
   const [senderEmail, setSenderEmail] = useState('');
   const [agentName, setAgentName] = useState('');
+  const [shipmentType, setShipmentType] = useState<'document' | 'non_document'>('non_document');
   const [isInsured, setIsInsured] = useState(false);
   const [declaredValue, setDeclaredValue] = useState('');
 
@@ -137,6 +138,21 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
     }
   }, [pinasIdBack]);
 
+  // Handle shipment type changes
+  useEffect(() => {
+    if (shipmentType === 'document') {
+      // Document: Insurance false, declared value 0
+      setIsInsured(false);
+      setDeclaredValue('0');
+    } else {
+      // Non Document: Insurance true, show declared value field
+      setIsInsured(true);
+      // Don't reset declared value if user already entered one
+      if (!declaredValue || declaredValue === '0') {
+        setDeclaredValue('');
+      }
+    }
+  }, [shipmentType]);
 
   const convertFileToBase64 = (file: File, imageName: string): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -298,11 +314,12 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
       return;
     }
 
-    if (isInsured && (!declaredValue.trim() || parseFloat(declaredValue) <= 0)) {
+    // Validate declared value for non-document shipments (insurance required)
+    if (shipmentType === 'non_document' && (!declaredValue.trim() || parseFloat(declaredValue) <= 0)) {
       toast({
         variant: 'destructive',
         title: 'Validation Error',
-        description: 'Declared value is required when insurance is selected',
+        description: 'Declared value is required for Non Document shipments',
       });
       setIsSubmitting(false);
       return;
@@ -347,6 +364,17 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
 
     // Validation based on booking type
     if (isUaeToPinas) {
+      // For UAE_TO_PH: Agent name is required
+      if (!agentName.trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'Validation Error',
+          description: 'Agent name is required for UAE to Philippines bookings',
+        });
+        setIsSubmitting(false);
+        return;
+      }
+      
       // For UAE_TO_PH: All 4 images required
       if (!uaeIdFront || !uaeIdBack) {
         toast({
@@ -507,8 +535,16 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         emailAddress: senderEmail.trim() || undefined,
       };
 
-      // Only include agentName for UAE sender (UAE_TO_PH)
-      if (isUaeToPinas && agentName.trim()) {
+      // Agent name is required for UAE sender (UAE_TO_PH)
+      if (isUaeToPinas) {
+        if (!agentName.trim()) {
+          toast({
+            variant: 'destructive',
+            title: 'Validation Error',
+            description: 'Agent name is required for UAE to Philippines bookings',
+          });
+          return;
+        }
         senderObject.agentName = agentName.trim();
       }
 
@@ -572,8 +608,9 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         })),
         number_of_boxes: validItems.reduce((sum, item) => sum + item.quantity, 0),
         identityDocuments: identityDocuments,
-        insured: isInsured,
-        declaredAmount: isInsured ? parseFloat(declaredValue) : null,
+        insured: shipmentType === 'non_document', // Insurance only for non-document
+        declaredAmount: shipmentType === 'document' ? 0 : (declaredValue ? parseFloat(declaredValue) : null),
+        shipmentType: shipmentType, // Include shipment type in booking data
         created_by_employee_id: currentUser.employee_id || currentUser.uid,
       };
 
@@ -687,6 +724,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
     setSenderPhone('');
     setSenderEmail('');
     setAgentName('');
+    setShipmentType('non_document');
     setIsInsured(false);
     setDeclaredValue('');
     setReceiverFirstName('');
@@ -1092,11 +1130,12 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
                   </div>
 
                   <div>
-                    <Label htmlFor="agent_name">Agent Name</Label>
+                    <Label htmlFor="agent_name">Agent Name {bookingType === 'uae_to_pinas' && '*'}</Label>
                     <Input
                       id="agent_name"
                       value={agentName}
                       onChange={(e) => setAgentName(e.target.value)}
+                      required={bookingType === 'uae_to_pinas'}
                     />
                   </div>
 
@@ -1105,16 +1144,19 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
                       <Checkbox
                         id="insured"
                         checked={isInsured}
+                        disabled={shipmentType === 'document'}
                         onCheckedChange={(checked) => {
-                          setIsInsured(checked as boolean);
-                          if (!checked) setDeclaredValue('');
+                          if (shipmentType !== 'document') {
+                            setIsInsured(checked as boolean);
+                            if (!checked) setDeclaredValue('');
+                          }
                         }}
                       />
-                      <Label htmlFor="insured" className="text-sm font-normal cursor-pointer">
-                        Insurance
+                      <Label htmlFor="insured" className={`text-sm font-normal ${shipmentType === 'document' ? 'text-muted-foreground cursor-not-allowed' : 'cursor-pointer'}`}>
+                        Insurance {shipmentType === 'document' && '(Disabled for Document shipments)'}
                       </Label>
                     </div>
-                    {isInsured && (
+                    {isInsured && shipmentType === 'non_document' && (
                       <div className="mt-2">
                         <Label htmlFor="declared_value">Declared Value (AED) *</Label>
                         <Input
@@ -1127,6 +1169,20 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
                           onChange={(e) => setDeclaredValue(e.target.value)}
                           required={isInsured}
                         />
+                      </div>
+                    )}
+                    {shipmentType === 'document' && (
+                      <div className="mt-2">
+                        <Label htmlFor="declared_value" className="text-muted-foreground">Declared Value (AED)</Label>
+                        <Input
+                          id="declared_value"
+                          type="number"
+                          step="0.01"
+                          value="0"
+                          disabled
+                          className="bg-muted"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">Automatically set to 0 for Document shipments</p>
                       </div>
                     )}
                   </div>
@@ -1218,6 +1274,65 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
                       value={receiverEmail}
                       onChange={(e) => setReceiverEmail(e.target.value)}
                     />
+                  </div>
+                </div>
+              </div>
+
+              {/* Shipment Type */}
+              <div className="space-y-4 bg-card rounded-xl border p-6 shadow-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="shipment_type">Shipment Type *</Label>
+                    <Select
+                      value={shipmentType}
+                      onValueChange={(value: 'document' | 'non_document') => setShipmentType(value)}
+                      required
+                    >
+                      <SelectTrigger id="shipment_type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="document">Document</SelectItem>
+                        <SelectItem value="non_document">Non Document</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {shipmentType === 'document' 
+                        ? 'Document shipments: Insurance disabled, declared value set to 0'
+                        : 'Non Document shipments: Insurance enabled, declared value required'}
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="declared_value_shipment">
+                      Declared Value (AED) {shipmentType === 'non_document' && '*'}
+                    </Label>
+                    <Input
+                      id="declared_value_shipment"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder={shipmentType === 'document' ? '0.00' : 'Enter declared value'}
+                      value={shipmentType === 'document' ? '0' : declaredValue}
+                      onChange={(e) => {
+                        if (shipmentType === 'non_document') {
+                          setDeclaredValue(e.target.value);
+                        }
+                      }}
+                      disabled={shipmentType === 'document'}
+                      required={shipmentType === 'non_document'}
+                      className={shipmentType === 'document' ? 'bg-muted' : ''}
+                    />
+                    {shipmentType === 'document' && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Automatically set to 0 for Document shipments
+                      </p>
+                    )}
+                    {shipmentType === 'non_document' && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Required for Non Document shipments
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

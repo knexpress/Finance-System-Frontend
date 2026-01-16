@@ -188,6 +188,19 @@ export default function InvoicesPage() {
 
     const handleCancelInvoice = async (invoiceId: string) => {
         try {
+            if (!invoiceId) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Error',
+                    description: 'Invoice ID not found. Please ensure the invoice exists.',
+                });
+                return;
+            }
+
+            if (!confirm('Are you sure you want to cancel this invoice? This will cancel the invoice, invoice request, booking, delivery assignments, and empost (if applicable).')) {
+                return;
+            }
+
             const result = await apiClient.cancelInvoiceUnified(invoiceId);
             
             if (result.success) {
@@ -195,8 +208,11 @@ export default function InvoicesPage() {
                     title: 'Success',
                     description: 'Invoice and related entities cancelled successfully',
                 });
+                // Invalidate cache to ensure fresh data
+                apiClient.invalidateCache('/invoice-requests');
+                apiClient.invalidateCache('/invoices-unified');
                 // Refresh invoices list
-                const updatedResult = await apiClient.getInvoicesUnified();
+                const updatedResult = await apiClient.getInvoicesUnified(false); // Skip cache
                 if (updatedResult.success && updatedResult.data) {
                     setInvoices(Array.isArray(updatedResult.data) ? updatedResult.data : []);
                 }
@@ -207,12 +223,12 @@ export default function InvoicesPage() {
                     description: result.error || 'Failed to cancel invoice'
                 });
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error cancelling invoice:', error);
             toast({
                 variant: 'destructive',
                 title: 'Error',
-                description: 'Failed to cancel invoice'
+                description: error.message || 'Failed to cancel invoice'
             });
         }
     };

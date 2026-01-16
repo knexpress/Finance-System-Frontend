@@ -355,7 +355,7 @@ export default function BookingReviewModal({
                               undefined;
       const tradeLicense = fullBooking.identityDocuments?.tradeLicense ||
                           fullBooking.collections?.identityDocuments?.tradeLicense ||
-                          undefined;
+                                 undefined;
 
       // Map to PDF data format
       const pdfData: BookingPDFData = {
