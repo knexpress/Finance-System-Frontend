@@ -52,33 +52,52 @@ const isPhToUaeService = (code?: string | null) => {
 
 // Get shipment statuses based on service code
 const getShipmentStatuses = (serviceCode?: string | null) => {
-  const isPhToUae = isPhToUaeService(serviceCode);
-  
   return [
     { value: 'SHIPMENT_RECEIVED', label: 'Shipment Received', icon: Package, color: 'default' },
     { value: 'SHIPMENT_PROCESSING', label: 'Shipment Processing', icon: Package, color: 'default' },
-    { 
-      value: 'DEPARTED_FROM_MANILA', 
-      label: isPhToUae ? 'Departed from Manila' : 'Departed from UAE', 
-      icon: Plane, 
-      color: 'default' 
-    },
-    { 
-      value: 'IN_TRANSIT_TO_DUBAI', 
-      label: isPhToUae ? 'In Transit going to Dubai Airport' : 'In Transit going to Manila Airport', 
-      icon: Truck, 
-      color: 'default' 
-    },
-    { 
-      value: 'ARRIVED_AT_DUBAI', 
-      label: isPhToUae ? 'Arrived at Dubai Airport' : 'Arrived at Manila Airport', 
-      icon: MapPin, 
-      color: 'default' 
-    },
-    { value: 'SHIPMENT_CLEARANCE', label: 'Shipment Clearance', icon: CheckCircle, color: 'default' },
-    { value: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', icon: Truck, color: 'default' },
-    { value: 'DELIVERED', label: 'Delivered', icon: CheckCircle, color: 'success' },
+    { value: 'SHIPMENT_DEPARTED', label: 'Shipment Departed', icon: Plane, color: 'default' },
+    { value: 'SHIPMENT_ARRIVED', label: 'Shipment Arrived', icon: MapPin, color: 'default' },
+    { value: 'SHIPMENT_DELIVERED', label: 'Shipment Delivered', icon: CheckCircle, color: 'success' },
   ];
+};
+
+// Helper function to get display label from enum value
+const getStatusLabel = (enumValue: string): string => {
+  const allStatuses = getShipmentStatuses();
+  const status = allStatuses.find(s => s.value === enumValue);
+  return status?.label || enumValue;
+};
+
+// Helper function to get enum value from display label (for when backend returns display names)
+// Also handles old backend enum values
+const getStatusEnumFromLabel = (label: string): string => {
+  const allStatuses = getShipmentStatuses();
+  
+  // First try to find by label
+  const status = allStatuses.find(s => s.label === label);
+  if (status) return status.value;
+  
+  // Handle old backend enum values
+  const oldToNewMapping: Record<string, string> = {
+    'DELIVERED': 'SHIPMENT_DELIVERED',
+    'DEPARTED_FROM_MANILA': 'SHIPMENT_DEPARTED',
+    'IN_TRANSIT_TO_DUBAI': 'SHIPMENT_DEPARTED',
+    'ARRIVED_AT_DUBAI': 'SHIPMENT_ARRIVED',
+    'SHIPMENT_CLEARANCE': 'SHIPMENT_ARRIVED',
+    'OUT_FOR_DELIVERY': 'SHIPMENT_ARRIVED',
+  };
+  
+  if (oldToNewMapping[label]) {
+    return oldToNewMapping[label];
+  }
+  
+  // If it's already a new enum value, return as is
+  if (label.startsWith('SHIPMENT_')) {
+    return label;
+  }
+  
+  // Default fallback
+  return label;
 };
 
 interface Booking {
@@ -332,12 +351,16 @@ export default function ReviewRequestsPage() {
   // Get status badge with dynamic labels based on service
   const getStatusBadge = (booking: Booking) => {
     // Default to SHIPMENT_RECEIVED if status is missing
-    const status = booking.shipment_status || 'SHIPMENT_RECEIVED';
+    let status = booking.shipment_status || 'SHIPMENT_RECEIVED';
+    
+    // Convert display name or old enum value to new enum value
+    status = getStatusEnumFromLabel(status);
+    
     const serviceCode = getServiceCode(booking);
     const statuses = getShipmentStatuses(serviceCode);
     const statusConfig = statuses.find(s => s.value === status);
     if (!statusConfig) {
-      return <Badge variant="outline">{status}</Badge>;
+      return <Badge variant="outline">{booking.shipment_status || status}</Badge>;
     }
     const Icon = statusConfig.icon;
     return (
@@ -352,8 +375,10 @@ export default function ReviewRequestsPage() {
   const handleStatusUpdate = async (bookingId: string, status: string) => {
     try {
       setIsUpdating(true);
+      // Convert enum value to display label for backend
+      const statusLabel = getStatusLabel(status);
       const result = await apiClient.updateBookingShipmentStatus(bookingId, {
-        shipment_status: status,
+        shipment_status: statusLabel,
         updated_by: userProfile?.employee_id || userProfile?.email || 'unknown',
         notes: statusNotes,
       });
@@ -405,8 +430,10 @@ export default function ReviewRequestsPage() {
     try {
       setIsUpdating(true);
       const bookingIds = Array.from(selectedBookings);
+      // Convert enum value to display label for backend
+      const statusLabel = getStatusLabel(selectedStatus);
       const result = await apiClient.batchUpdateShipmentStatus(bookingIds, {
-        shipment_status: selectedStatus,
+        shipment_status: statusLabel,
         updated_by: userProfile?.employee_id || userProfile?.email || 'unknown',
         notes: statusNotes,
       });
@@ -721,7 +748,9 @@ export default function ReviewRequestsPage() {
                             size="sm"
                             onClick={() => {
                               setSelectedBookings(new Set([booking._id]));
-                              setSelectedStatus(booking.shipment_status || 'SHIPMENT_RECEIVED');
+                              // Convert display name or old enum value to new enum value
+                              const status = getStatusEnumFromLabel(booking.shipment_status || 'SHIPMENT_RECEIVED');
+                              setSelectedStatus(status);
                               setShowStatusDialog(true);
                             }}
                           >

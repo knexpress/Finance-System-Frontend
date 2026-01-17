@@ -1228,7 +1228,7 @@ export default function InvoicePage() {
     // If not found in booking data, try to parse from address
     let emirate = receiverEmirate;
     if (!emirate && receiverAddress) {
-        const addressParts = receiverAddress.split(',').map((p: string) => p.trim());
+    const addressParts = receiverAddress.split(',').map((p: string) => p.trim());
         if (addressParts.length > 1) {
             // Try to extract from address parts (usually second to last or last)
             emirate = addressParts[addressParts.length - 2] || addressParts[addressParts.length - 1];

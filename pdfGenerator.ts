@@ -410,7 +410,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     const senderLines = doc.splitTextToSize(senderText, deliveryOptionsWidth)
     senderLines.forEach((line: string) => {
       doc.text(line, leftColumnX, yPos)
-      yPos += 4
+    yPos += 4
     })
     yPos += 1 // Small gap between sender and receiver
     
@@ -440,7 +440,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     const senderLines = doc.splitTextToSize(senderText, deliveryOptionsWidth)
     senderLines.forEach((line: string) => {
       doc.text(line, leftColumnX, yPos)
-      yPos += 4
+    yPos += 4
     })
     yPos += 1 // Small gap between sender and receiver
     
@@ -614,7 +614,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
 
   // Insurance Information (if insured)
   if (data.insured) {
-    yPos += 5
+  yPos += 5
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(9)
     doc.setTextColor(0, 128, 0) // Green color

@@ -125,7 +125,7 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
             <p className="font-semibold text-lg">{data.receiverInfo.name}</p>
             <p className="text-sm leading-relaxed">{data.receiverInfo.address}</p>
             {data.receiverInfo.emirate && data.receiverInfo.emirate !== 'N/A' && (
-              <p className="text-sm">{data.receiverInfo.emirate}</p>
+            <p className="text-sm">{data.receiverInfo.emirate}</p>
             )}
             <p className="text-sm">{data.receiverInfo.mobile}</p>
           </div>
