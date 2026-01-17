@@ -3510,7 +3510,13 @@ export default function InvoicePage() {
                                 const verification = requestData.verification || invoiceFromDb?.verification || {};
                                 const sender = bookingSnapshot.sender || requestData.sender || {};
                                 const receiver = bookingSnapshot.receiver || requestData.receiver || verification || {};
-                                const items = bookingSnapshot.items || requestData.items || [];
+                                // Prioritize items from invoiceRequest.booking_data.items
+                                const items = 
+                                    invoiceRequestFromDb?.booking_data?.items ||
+                                    invoiceRequestFromDb?.booking_snapshot?.items ||
+                                    bookingSnapshot.items ||
+                                    requestData.items ||
+                                    [];
 
                                 const deriveListedCommoditiesFromItems = (srcItems: any[]): string | null => {
                                     if (!Array.isArray(srcItems) || srcItems.length === 0) return null;

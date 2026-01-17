@@ -37,15 +37,15 @@ export default function PriceBracketsPage() {
   const [originalPhToUaeBrackets, setOriginalPhToUaeBrackets] = useState<WeightBracket[]>([]);
   const [originalUaeToPhBrackets, setOriginalUaeToPhBrackets] = useState<WeightBracket[]>([]);
 
-  // Check if user has permission (Finance department only)
-  if (userProfile?.department?.name !== 'Finance') {
+  // Check if user has permission (Finance department or IT)
+  if (userProfile?.department?.name !== 'Finance' && userProfile?.department?.name !== 'IT') {
     return (
       <div className="flex items-center justify-center h-64">
         <Alert variant="destructive" className="max-w-md">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Access Denied</AlertTitle>
           <AlertDescription>
-            Only Finance department members can access price bracket management.
+            Only Finance department members and IT can access price bracket management.
           </AlertDescription>
         </Alert>
       </div>

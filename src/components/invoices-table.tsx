@@ -153,6 +153,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 'Sender Delivery Option',
                 'Receiver Delivery Option',
                 'Agent Name',
+                'Sender Address',
+                'ITEMS',
+                'Rate',
                 'Issue Date',
                 'Status',
                 'Notes'
@@ -228,6 +231,29 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     booking?.sender?.agentName ||
                     'N/A';
                 
+                // Extract Sender Address
+                const senderAddress =
+                    booking?.sender?.completeAddress ||
+                    'N/A';
+                
+                // Extract and format ITEMS from booking_data.items array
+                const deriveListedCommoditiesFromItems = (srcItems: any[]): string | null => {
+                    if (!Array.isArray(srcItems) || srcItems.length === 0) return null;
+                    const names = srcItems
+                        .map((it: any) => (it?.name || it?.item || it?.description || it?.item_name || it?.commodity || '').toString().trim())
+                        .filter(Boolean);
+                    if (names.length === 0) return null;
+                    // De-dupe and keep order
+                    const seen = new Set<string>();
+                    const unique = names.filter(n => (seen.has(n) ? false : (seen.add(n), true)));
+                    return unique.join(', ');
+                };
+                const itemsArray = booking?.items || [];
+                const itemsFormatted = deriveListedCommoditiesFromItems(itemsArray) || 'N/A';
+                
+                // Extract Rate from verification.calculated_rate
+                const rate = verification?.calculated_rate || 'N/A';
+                
                 // Debug: Log the extracted values
                 if (invoiceList.indexOf(invoice) === 0) {
                     console.log('📊 Excel Export - First Invoice Sample:', {
@@ -236,6 +262,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         senderDeliveryOption,
                         receiverDeliveryOption,
                         agentName,
+                        senderAddress,
+                        itemsFormatted,
+                        rate,
                         invoiceRequestId,
                         invoiceRequestLoaded: !!invoiceReq
                     });
@@ -266,6 +295,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     senderDeliveryOption,
                     receiverDeliveryOption,
                     agentName,
+                    senderAddress,
+                    itemsFormatted,
+                    typeof rate === 'number' ? rate.toFixed(2) : rate,
                     issueDate,
                     invoice.status || 'N/A',
                     invoice.notes || ''
@@ -302,6 +334,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 { wch: 22 }, // Sender Delivery Option
                 { wch: 22 }, // Receiver Delivery Option
                 { wch: 15 }, // Agent Name
+                { wch: 30 }, // Sender Address
+                { wch: 40 }, // ITEMS
+                { wch: 12 }, // Rate
                 { wch: 15 }, // Issue Date
                 { wch: 15 }, // Status
                 { wch: 30 }  // Notes
