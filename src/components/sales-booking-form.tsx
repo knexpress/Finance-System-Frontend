@@ -1139,53 +1139,6 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
                     />
                   </div>
 
-                  <div className="md:col-span-2">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="insured"
-                        checked={isInsured}
-                        disabled={shipmentType === 'document'}
-                        onCheckedChange={(checked) => {
-                          if (shipmentType !== 'document') {
-                            setIsInsured(checked as boolean);
-                            if (!checked) setDeclaredValue('');
-                          }
-                        }}
-                      />
-                      <Label htmlFor="insured" className={`text-sm font-normal ${shipmentType === 'document' ? 'text-muted-foreground cursor-not-allowed' : 'cursor-pointer'}`}>
-                        Insurance {shipmentType === 'document' && '(Disabled for Document shipments)'}
-                      </Label>
-                    </div>
-                    {isInsured && shipmentType === 'non_document' && (
-                      <div className="mt-2">
-                        <Label htmlFor="declared_value">Declared Value (AED) *</Label>
-                        <Input
-                          id="declared_value"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          value={declaredValue}
-                          onChange={(e) => setDeclaredValue(e.target.value)}
-                          required={isInsured}
-                        />
-                      </div>
-                    )}
-                    {shipmentType === 'document' && (
-                      <div className="mt-2">
-                        <Label htmlFor="declared_value" className="text-muted-foreground">Declared Value (AED)</Label>
-                        <Input
-                          id="declared_value"
-                          type="number"
-                          step="0.01"
-                          value="0"
-                          disabled
-                          className="bg-muted"
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">Automatically set to 0 for Document shipments</p>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
 

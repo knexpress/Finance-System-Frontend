@@ -313,6 +313,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   const leftColumnX = margin
   const rightColumnX = margin * 2 + columnWidth
   const startY = yPos
+  let leftColumnY = yPos // Track left column's Y position
 
   // Left Column - Sender Details
   doc.setFontSize(11)
@@ -390,47 +391,73 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   
+  // Calculate available width for delivery options text (within left column)
+  const deliveryOptionsWidth = columnWidth - 2
+  
   if (isPhToUae) {
     // PH to UAE Route
     doc.setFont('helvetica', 'bold')
-    doc.text('PH to UAE Route:', leftColumnX, yPos)
+    const routeLine = 'PH to UAE Route:'
+    doc.text(routeLine, leftColumnX, yPos)
     yPos += 5
     
     doc.setFont('helvetica', 'normal')
-    // Sender options
+    // Sender options - wrap text if needed
     const senderOption = data.sender.deliveryOption === 'warehouse' 
-      ? 'Drop Off to Warehouse (Parañaque Address)'
+      ? 'Drop Off to Warehouse - Paranaque Address: 81 Dr Arcadio Santos Ave, Parañaque, 1700 Metro Manila, Philippines'
       : 'Schedule Pickup'
-    doc.text(`Sender: ${senderOption}`, leftColumnX, yPos)
-    yPos += 5
+    const senderText = `Sender: ${senderOption}`
+    const senderLines = doc.splitTextToSize(senderText, deliveryOptionsWidth)
+    senderLines.forEach((line: string) => {
+      doc.text(line, leftColumnX, yPos)
+      yPos += 4
+    })
+    yPos += 1 // Small gap between sender and receiver
     
-    // Receiver options
+    // Receiver options - wrap text if needed
     const receiverOption = data.receiver.deliveryOption === 'warehouse'
       ? 'UAE Warehouse Pickup'
       : 'UAE Address Delivery'
-    doc.text(`Receiver: ${receiverOption}`, leftColumnX, yPos)
+    const receiverText = `Receiver: ${receiverOption}`
+    const receiverLines = doc.splitTextToSize(receiverText, deliveryOptionsWidth)
+    receiverLines.forEach((line: string) => {
+      doc.text(line, leftColumnX, yPos)
+      yPos += 4
+    })
   } else {
     // UAE to PH Route
     doc.setFont('helvetica', 'bold')
-    doc.text('UAE to PH Route:', leftColumnX, yPos)
+    const routeLine = 'UAE to PH Route:'
+    doc.text(routeLine, leftColumnX, yPos)
     yPos += 5
     
     doc.setFont('helvetica', 'normal')
-    // Sender options
+    // Sender options - wrap text if needed
     const senderOption = data.sender.deliveryOption === 'warehouse'
       ? 'UAE Warehouse Drop Off'
       : 'UAE Address Pickup'
-    doc.text(`Sender: ${senderOption}`, leftColumnX, yPos)
-    yPos += 5
+    const senderText = `Sender: ${senderOption}`
+    const senderLines = doc.splitTextToSize(senderText, deliveryOptionsWidth)
+    senderLines.forEach((line: string) => {
+      doc.text(line, leftColumnX, yPos)
+      yPos += 4
+    })
+    yPos += 1 // Small gap between sender and receiver
     
-    // Receiver options
+    // Receiver options - wrap text if needed
     const receiverOption = data.receiver.deliveryOption === 'warehouse'
-      ? 'Philippines Warehouse Pickup (Parañaque Address)'
+      ? 'Philippines Warehouse Pickup - Paranaque Address: 81 Dr Arcadio Santos Ave, Parañaque, 1700 Metro Manila, Philippines'
       : 'Philippines Address Delivery'
-    doc.text(`Receiver: ${receiverOption}`, leftColumnX, yPos)
+    const receiverText = `Receiver: ${receiverOption}`
+    const receiverLines = doc.splitTextToSize(receiverText, deliveryOptionsWidth)
+    receiverLines.forEach((line: string) => {
+      doc.text(line, leftColumnX, yPos)
+      yPos += 4
+    })
   }
   
-  yPos += 8
+  yPos += 6
+  leftColumnY = yPos // Store final left column Y position
 
   // Right Column - Receiver Details
   yPos = startY
@@ -501,8 +528,10 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   yPos += 8
 
   // Find the maximum Y position from both columns
-  const maxY = Math.max(yPos, startY + 80)
-  yPos = maxY + 5
+  // Use actual left column height instead of fixed estimate
+  const rightColumnY = yPos
+  const maxY = Math.max(leftColumnY, rightColumnY)
+  yPos = maxY + 10 // Increased spacing to prevent overlap
 
   // Items Declaration Table
   doc.setFontSize(10)
@@ -605,8 +634,22 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     yPos += 4
   }
 
+  // Check if there's enough space for the declaration section on current page
+  // Declaration needs approximately: 6 (title) + 6 (spacing) + ~40 (text lines) + 8 (checkbox) = ~60mm
+  const declarationSpaceNeeded = 60
+  const spaceRemaining = pageHeight - yPos - margin - 20 // Reserve 20mm for footer
+  const needsNewPage = spaceRemaining < declarationSpaceNeeded
+
+  if (needsNewPage) {
+    // Move to next page for declaration
+    addNewPage()
+    yPos = margin + 10
+  } else {
+    // Add some spacing before declaration on current page
+    yPos += 5
+  }
+
   // Important Declaration
-  yPos += 5
   doc.setFontSize(11)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(0, 128, 0) // Green color for consistency
