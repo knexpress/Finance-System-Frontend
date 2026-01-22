@@ -4,7 +4,7 @@ import InvoicesTable from "@/components/invoices-table";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/hooks/use-auth";
 import { useNotifications } from '@/contexts/NotificationContext';
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useToast } from '@/hooks/use-toast';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,97 +24,111 @@ export default function InvoicesPage() {
     const { clearCount } = useNotifications();
     const [invoices, setInvoices] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [refreshKey, setRefreshKey] = useState(0);
     const { toast } = useToast();
-    const { userProfile } = useAuth();
     
     // Search and filter states
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     const [filterDateFrom, setFilterDateFrom] = useState('');
     const [filterDateTo, setFilterDateTo] = useState('');
+    
+    // Backend pagination states
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pagination, setPagination] = useState<{
+        page: number;
+        limit: number;
+        total: number;
+        pages: number;
+    } | null>(null);
+    const itemsPerPage = 50;
 
+    // Debounce search query to avoid too many API calls
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery);
+        }, 500); // 500ms delay
+
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
+
+    // Reset to page 1 when search or filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [debouncedSearchQuery, filterStatus, filterDateFrom, filterDateTo]);
+
+    // Load invoices from backend with pagination and search
     useEffect(() => {
         // Clear invoices notification count when page is visited
         clearCount('invoices');
         
         const loadInvoiceData = async () => {
+            setLoading(true);
             try {
-                console.log('🔄 Loading invoices from API...');
-                const result = await apiClient.getInvoicesUnified();
+                console.log('🔄 Loading invoices from API...', {
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    search: debouncedSearchQuery || undefined
+                });
+                
+                const result = await apiClient.getInvoicesUnified({
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    search: debouncedSearchQuery || undefined,
+                    useCache: currentPage === 1 && !debouncedSearchQuery // Only cache first page without search
+                });
+                
                 console.log('📊 Invoices API result:', result);
-                console.log('📊 Type of result:', typeof result);
-                console.log('📊 Full result structure:', JSON.stringify(result, null, 2));
                 
                 if (result && result.success && result.data) {
                     console.log('✅ Invoices loaded successfully');
                     const invoiceData = result.data as any;
+                    const paginationData = (result as any).pagination;
+                    
                     console.log('📋 Number of invoices:', Array.isArray(invoiceData) ? invoiceData.length : 0);
-                    console.log('📋 Invoice data:', invoiceData);
+                    console.log('📋 Pagination:', paginationData);
+                    
                     setInvoices(Array.isArray(invoiceData) ? invoiceData : []);
+                    setPagination(paginationData || null);
                 } else {
                     console.error('❌ Error loading invoices:', result?.error || 'Unknown error');
-                    console.error('❌ Full error result:', result);
                     toast({
                         variant: 'destructive',
                         title: 'Error',
                         description: result?.error || 'Failed to load invoices',
                     });
-                    setInvoices([]); // Set empty array on error
+                    setInvoices([]);
+                    setPagination(null);
                 }
             } catch (error) {
                 console.error('❌ Error loading invoice data:', error);
-                console.error('❌ Error details:', error instanceof Error ? error.message : error);
                 toast({
                     variant: 'destructive',
                     title: 'Error',
                     description: 'Failed to load invoices: ' + (error instanceof Error ? error.message : 'Unknown error'),
                 });
-                setInvoices([]); // Set empty array on error
+                setInvoices([]);
+                setPagination(null);
             } finally {
                 setLoading(false);
             }
         };
 
         loadInvoiceData();
-    }, [refreshKey]);
+    }, [currentPage, debouncedSearchQuery, clearCount]);
 
-    // Filter invoices based on search and filters
+    // Apply frontend filters (status and date) to the invoices from backend
     const filteredInvoices = useMemo(() => {
         let filtered = [...invoices];
 
-        // Search filter
-        if (searchQuery.trim()) {
-            const query = searchQuery.toLowerCase();
-            filtered = filtered.filter((invoice) => {
-                const invoiceId = (invoice.invoice_id || '').toLowerCase();
-                const awb = (invoice.awb_number || '').toLowerCase();
-                const clientName = (invoice.client_id?.company_name || '').toLowerCase();
-                const receiverName = (invoice.receiver_name || '').toLowerCase();
-                const receiverPhone = (invoice.receiver_phone || '').toLowerCase();
-                const receiverAddress = (invoice.receiver_address || '').toLowerCase();
-                const serviceCode = (invoice.service_code || '').toLowerCase();
-                
-                return (
-                    invoiceId.includes(query) ||
-                    awb.includes(query) ||
-                    clientName.includes(query) ||
-                    receiverName.includes(query) ||
-                    receiverPhone.includes(query) ||
-                    receiverAddress.includes(query) ||
-                    serviceCode.includes(query)
-                );
-            });
-        }
-
-        // Status filter
+        // Status filter (frontend only, backend doesn't support this yet)
         if (filterStatus !== 'all') {
             filtered = filtered.filter((invoice) => {
                 return invoice.status === filterStatus;
             });
         }
 
-        // Date range filter
+        // Date range filter (frontend only, backend doesn't support this yet)
         if (filterDateFrom) {
             const fromDate = new Date(filterDateFrom);
             fromDate.setHours(0, 0, 0, 0);
@@ -138,10 +152,11 @@ export default function InvoicesPage() {
         }
 
         return filtered;
-    }, [invoices, searchQuery, filterStatus, filterDateFrom, filterDateTo]);
+    }, [invoices, filterStatus, filterDateFrom, filterDateTo]);
 
     const clearFilters = () => {
         setSearchQuery('');
+        setDebouncedSearchQuery('');
         setFilterStatus('all');
         setFilterDateFrom('');
         setFilterDateTo('');
@@ -164,10 +179,17 @@ export default function InvoicesPage() {
                         ? 'Invoice marked as collected successfully'
                         : 'Invoice marked as remitted successfully',
                 });
-                // Refresh invoices list
-                const updatedResult = await apiClient.getInvoicesUnified();
+                // Refresh current page
+                const updatedResult = await apiClient.getInvoicesUnified({
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    search: debouncedSearchQuery || undefined,
+                    useCache: false
+                });
                 if (updatedResult.success && updatedResult.data) {
                     setInvoices(Array.isArray(updatedResult.data) ? updatedResult.data : []);
+                    const paginationData = (updatedResult as any).pagination;
+                    setPagination(paginationData || null);
                 }
             } else {
                 toast({
@@ -211,10 +233,17 @@ export default function InvoicesPage() {
                 // Invalidate cache to ensure fresh data
                 apiClient.invalidateCache('/invoice-requests');
                 apiClient.invalidateCache('/invoices-unified');
-                // Refresh invoices list
-                const updatedResult = await apiClient.getInvoicesUnified(false); // Skip cache
+                // Refresh current page
+                const updatedResult = await apiClient.getInvoicesUnified({
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    search: debouncedSearchQuery || undefined,
+                    useCache: false
+                });
                 if (updatedResult.success && updatedResult.data) {
                     setInvoices(Array.isArray(updatedResult.data) ? updatedResult.data : []);
+                    const paginationData = (updatedResult as any).pagination;
+                    setPagination(paginationData || null);
                 }
             } else {
                 toast({
@@ -233,7 +262,13 @@ export default function InvoicesPage() {
         }
     };
 
-    if (loading) {
+    // Calculate display counts
+    const totalInvoices = pagination?.total || 0;
+    const totalPages = pagination?.pages || 1;
+    const startIndex = (currentPage - 1) * itemsPerPage + 1;
+    const endIndex = Math.min(currentPage * itemsPerPage, totalInvoices);
+
+    if (loading && invoices.length === 0) {
         return (
             <div className="flex items-center justify-center h-64">
                 <div className="text-lg">Loading invoices...</div>
@@ -257,12 +292,17 @@ export default function InvoicesPage() {
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                 <Input
                                     id="search"
-                                    placeholder="Invoice ID, AWB, Client, Receiver..."
+                                    placeholder="Invoice ID, AWB, Batch, Receiver..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     className="pl-9"
                                 />
                             </div>
+                            {debouncedSearchQuery && (
+                                <p className="text-xs text-muted-foreground">
+                                    Searching all invoices...
+                                </p>
+                            )}
                         </div>
 
                         {/* Status Filter */}
@@ -317,7 +357,8 @@ export default function InvoicesPage() {
                                 Clear Filters
                             </Button>
                             <span className="ml-4 text-sm text-muted-foreground">
-                                Showing {filteredInvoices.length} of {invoices.length} invoices
+                                Showing {filteredInvoices.length} of {totalInvoices} invoices
+                                {debouncedSearchQuery && ` (searching: "${debouncedSearchQuery}")`}
                             </span>
                         </div>
                     )}
@@ -330,6 +371,41 @@ export default function InvoicesPage() {
                 onRemit={handleRemitInvoice}
                 onCancel={handleCancelInvoice}
             />
+
+            {/* Pagination Controls */}
+            {!loading && pagination && pagination.pages > 1 && (
+                <Card className="sticky bottom-6 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+                    <CardContent className="pt-6">
+                        <div className="flex items-center justify-between">
+                            <div className="text-sm text-muted-foreground">
+                                Showing {startIndex} to {endIndex} of {totalInvoices} invoices
+                                {debouncedSearchQuery && ` (matching "${debouncedSearchQuery}")`}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                    disabled={currentPage === 1 || loading}
+                                >
+                                    Previous
+                                </Button>
+                                <div className="text-sm">
+                                    Page {currentPage} of {totalPages}
+                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                    disabled={currentPage >= totalPages || loading}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
         </div>
     );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { Department } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,6 +28,7 @@ interface InvoicesTableProps {
 
 export default function InvoicesTable({ invoices, department, onRemit, onCancel }: InvoicesTableProps) {
     const { toast } = useToast();
+    const [isExporting, setIsExporting] = useState(false);
 
     // Ensure invoices is always an array
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
@@ -35,7 +37,12 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
     // IMPORTANT: Enrich export data with invoicerequests collection (invoiceRequests) for:
     // - sender/receiver deliveryOption
     // - agent name
-    const handleDownloadExcel = async (invoiceList: any[]) => {
+    const getExportFilename = () => {
+        const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+        return `Invoices-${timestamp}.xlsx`;
+    };
+
+    const handleDownloadExcel = async (invoiceList: any[], preferredFilename?: string, fileHandle?: any) => {
         if (!invoiceList || invoiceList.length === 0) {
             toast({
                 variant: 'destructive',
@@ -346,12 +353,16 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             // Add worksheet to workbook
             XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
 
-            // Generate filename with timestamp
-            const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-            const filename = `Invoices-${timestamp}.xlsx`;
+            const filename = preferredFilename || getExportFilename();
 
-            // Download file
-            XLSX.writeFile(wb, filename);
+            if (fileHandle) {
+                const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const writable = await fileHandle.createWritable();
+                await writable.write(buffer);
+                await writable.close();
+            } else {
+                XLSX.writeFile(wb, filename);
+            }
 
             toast({
                 title: 'Excel Export Successful',
@@ -367,6 +378,71 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
         }
     };
 
+    const handleDownloadAllInvoices = async () => {
+        if (isExporting) {
+            return;
+        }
+        setIsExporting(true);
+
+        const filename = getExportFilename();
+        let fileHandle: any = null;
+        if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+            try {
+                fileHandle = await (window as any).showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [
+                        {
+                            description: 'Excel Workbook',
+                            accept: {
+                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+                            }
+                        }
+                    ]
+                });
+            } catch (error: any) {
+                setIsExporting(false);
+                if (error?.name !== 'AbortError') {
+                    console.error('Error selecting export file:', error);
+                    toast({
+                        variant: 'destructive',
+                        title: 'Export Failed',
+                        description: 'Unable to select a file for export.',
+                    });
+                }
+                return;
+            }
+        }
+
+        try {
+            toast({
+                title: 'Preparing Excel…',
+                description: 'Fetching all invoices from the database.',
+            });
+
+            const result = await apiClient.getAllInvoicesUnified(undefined, false);
+            if (!result.success || !result.data || !Array.isArray(result.data)) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Export Failed',
+                    description: 'Unable to load invoices for export.',
+                });
+                setIsExporting(false);
+                return;
+            }
+
+            await handleDownloadExcel(result.data, filename, fileHandle);
+            setIsExporting(false);
+        } catch (error) {
+            console.error('Error fetching invoices for export:', error);
+            toast({
+                variant: 'destructive',
+                title: 'Export Failed',
+                description: 'Unable to load invoices for export.',
+            });
+            setIsExporting(false);
+        }
+    };
+
     return (
         <div className="space-y-8">
             <Card>
@@ -378,11 +454,12 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         </div>
                         <Button
                             variant="outline"
-                            onClick={() => handleDownloadExcel(invoices)}
+                            onClick={handleDownloadAllInvoices}
                             className="ml-auto"
+                            disabled={isExporting}
                         >
                             <FileSpreadsheet className="h-4 w-4 mr-2" />
-                            Download Excel
+                            {isExporting ? 'Preparing…' : 'Download Excel'}
                         </Button>
                     </div>
                 </CardHeader>

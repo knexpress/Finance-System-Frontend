@@ -2032,7 +2032,7 @@ export default function InvoiceRequestsPage() {
         invoiceId = invoiceIdentifier;
       } else {
         // Otherwise, it's an invoice number (like INV-000315), need to fetch the MongoDB _id
-        const invoiceResult = await apiClient.getInvoicesUnified(false); // Skip cache to get fresh data
+        const invoiceResult = await apiClient.getInvoicesUnified({ useCache: false }); // Skip cache to get fresh data
         if (invoiceResult.success && Array.isArray(invoiceResult.data)) {
           const invoice = invoiceResult.data.find((inv: any) => 
             inv.invoice_id === invoiceIdentifier || 

@@ -869,8 +869,69 @@ class ApiClient {
 
   // Invoices
   // Invoices (Unified)
-  async getInvoicesUnified(useCache: boolean = true) {
-    return this.request('/invoices-unified', {}, useCache, 30000); // Cache for 30 seconds
+  async getInvoicesUnified(
+    options?: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      useCache?: boolean;
+    }
+  ) {
+    const {
+      page = 1,
+      limit = 50,
+      search,
+      useCache = true
+    } = options || {};
+    
+    const queryParams = new URLSearchParams();
+    queryParams.append('page', page.toString());
+    queryParams.append('limit', limit.toString());
+    if (search && search.trim()) {
+      queryParams.append('search', search.trim());
+    }
+    
+    const endpoint = `/invoices-unified?${queryParams.toString()}`;
+    return this.request(endpoint, {}, useCache, 30000); // Cache for 30 seconds
+  }
+
+  // Fetch all invoices by paginating through all pages
+  async getAllInvoicesUnified(search?: string, useCache: boolean = true) {
+    const allInvoices: any[] = [];
+    let currentPage = 1;
+    let totalPages = 1;
+    const limit = 200; // Use max limit for efficiency
+    
+    do {
+      const result = await this.getInvoicesUnified({
+        page: currentPage,
+        limit,
+        search,
+        useCache: useCache && currentPage === 1 // Only cache first page
+      });
+      
+      if (result.success && result.data) {
+        const invoiceData = Array.isArray(result.data) ? result.data : [];
+        allInvoices.push(...invoiceData);
+        
+        const pagination = (result as any).pagination;
+        if (pagination) {
+          totalPages = pagination.pages || 1;
+          currentPage++;
+        } else {
+          // No pagination info, assume we got all
+          break;
+        }
+      } else {
+        break; // Stop on error
+      }
+    } while (currentPage <= totalPages);
+    
+    return {
+      success: true,
+      data: allInvoices,
+      total: allInvoices.length
+    };
   }
 
   async getInvoiceUnified(id: string) {

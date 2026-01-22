@@ -89,7 +89,7 @@ export async function calculateCompanyMetrics(): Promise<CompanyMetrics> {
   try {
     // Fetch all necessary data
     const [invoicesResult, requestsResult] = await Promise.all([
-      apiClient.getInvoicesUnified(),
+      apiClient.getAllInvoicesUnified(), // Fetch all invoices for metrics
       apiClient.getInvoiceRequests()
     ]);
 

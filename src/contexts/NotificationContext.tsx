@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 // import { apiClient } from '@/lib/api-client'; // Disabled: Notification endpoints removed
 import { secureLog } from '@/lib/secure-logger';
 
@@ -47,41 +47,41 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
   const [isLoading, setIsLoading] = useState(true);
   const [lastFetchTime, setLastFetchTime] = useState<number>(0);
 
-  const updateCount = (type: keyof NotificationCounts, count: number) => {
+  const updateCount = useCallback((type: keyof NotificationCounts, count: number) => {
     setCounts(prev => ({
       ...prev,
       [type]: count,
     }));
-  };
+  }, []);
 
-  const incrementCount = (type: keyof NotificationCounts) => {
+  const incrementCount = useCallback((type: keyof NotificationCounts) => {
     setCounts(prev => ({
       ...prev,
       [type]: prev[type] + 1,
     }));
-  };
+  }, []);
 
-  const decrementCount = (type: keyof NotificationCounts) => {
+  const decrementCount = useCallback((type: keyof NotificationCounts) => {
     setCounts(prev => ({
       ...prev,
       [type]: Math.max(0, prev[type] - 1),
     }));
-  };
+  }, []);
 
-  const clearCount = async (type: keyof NotificationCounts) => {
+  const clearCount = useCallback(async (type: keyof NotificationCounts) => {
     // Disabled: Notification endpoints removed
     // Just update local state without API call
     setCounts(prev => ({
       ...prev,
       [type]: 0,
     }));
-  };
+  }, []);
 
-  const refreshCounts = async () => {
+  const refreshCounts = useCallback(async () => {
     // Disabled: Notification endpoints removed
     // No API calls, just set loading to false
     setIsLoading(false);
-  };
+  }, []);
 
   // Disabled: Notification endpoints removed
   // No automatic fetching or refresh intervals
@@ -90,7 +90,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
     // No interval setup - notifications disabled
   }, []);
 
-  const value: NotificationContextType = {
+  const value: NotificationContextType = useMemo(() => ({
     counts,
     updateCount,
     incrementCount,
@@ -98,7 +98,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
     clearCount,
     refreshCounts,
     isLoading,
-  };
+  }), [counts, updateCount, incrementCount, decrementCount, clearCount, refreshCounts, isLoading]);
 
   return (
     <NotificationContext.Provider value={value}>
