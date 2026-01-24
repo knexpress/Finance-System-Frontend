@@ -204,9 +204,10 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 const shippingCharge = parseAmount(invoice.amount);
                 const pickupCharge = parseAmount(invoice.pickup_charge);
                 const deliveryCharge = parseAmount(invoice.delivery_charge);
-                const insuranceCharge = invoice.line_items?.find((item: any) => 
-                    item.description?.toLowerCase().includes('insurance')
-                )?.total || 0;
+                const insuranceCharge = parseAmount(invoice.insurance_charge) ||
+                    invoice.line_items?.find((item: any) =>
+                        item.description?.toLowerCase().includes('insurance')
+                    )?.total || 0;
                 const subtotal = parseAmount(invoice.subtotal);
                 const taxRate = parseAmount(invoice.tax_rate);
                 const taxAmount = parseAmount(invoice.tax_amount);
@@ -356,10 +357,18 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             const filename = preferredFilename || getExportFilename();
 
             if (fileHandle) {
-                const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                const writable = await fileHandle.createWritable();
-                await writable.write(buffer);
-                await writable.close();
+                try {
+                    const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(buffer);
+                    await writable.close();
+                } catch (error: any) {
+                    if (error?.name !== 'AbortError') {
+                        console.warn('File handle write failed, falling back to download.', error);
+                    }
+                    // Fallback for browsers/contexts that block File System Access API
+                    XLSX.writeFile(wb, filename);
+                }
             } else {
                 XLSX.writeFile(wb, filename);
             }
@@ -467,7 +476,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     <div className="relative">
                         {/* Table Container */}
                         <div
-                            className="overflow-x-hidden overflow-y-auto scrollbar-thin"
+                            className="flex overflow-x-hidden overflow-y-auto scrollbar-thin"
                             style={{
                                 maxHeight: 'calc(100vh - 400px)',
                             }}
@@ -555,10 +564,23 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                             <TableCell className="font-mono text-xs">{invoice.service_code ?? 'N/A'}</TableCell>
                             <TableCell>{invoice.weight_kg != null ? invoice.weight_kg : 'N/A'}</TableCell>
                             <TableCell>
-                                {invoice.number_of_boxes ??
-                                  invoice.request_id?.shipment?.number_of_boxes ??
-                                  invoice.request_id?.verification?.number_of_boxes ??
-                                  'N/A'}
+                                {(() => {
+                                    const boxArrays = [
+                                        invoice.boxes,
+                                        invoice.request_id?.shipment?.boxes,
+                                        invoice.request_id?.boxes,
+                                    ];
+                                    const arrayCount = boxArrays.find((arr: any) => Array.isArray(arr));
+                                    const computedCount = Array.isArray(arrayCount)
+                                        ? Math.max(0, arrayCount.length - 1)
+                                        : null;
+                                    const fallbackCount =
+                                        invoice.number_of_boxes ??
+                                        invoice.request_id?.shipment?.number_of_boxes ??
+                                        invoice.request_id?.verification?.number_of_boxes ??
+                                        null;
+                                    return (computedCount ?? fallbackCount) ?? 'N/A';
+                                })()}
                             </TableCell>
                             <TableCell>{invoice.volume_cbm != null ? invoice.volume_cbm : 'N/A'}</TableCell>
                             <TableCell>{invoice.receiver_name ?? 'N/A'}</TableCell>
