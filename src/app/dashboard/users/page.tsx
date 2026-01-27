@@ -258,7 +258,7 @@ export default function UserManagement() {
       email: user.email,
       full_name: user.full_name,
       role: user.role,
-      department_id: user.department_id._id,
+      department_id: user.department_id?._id || '',
       isActive: user.isActive,
     });
     setIsEditDialogOpen(true);
@@ -604,7 +604,7 @@ export default function UserManagement() {
                 <TableRow key={user._id}>
                   <TableCell className="font-medium">{user.full_name}</TableCell>
                   <TableCell>{user.email}</TableCell>
-                  <TableCell>{user.department_id.name}</TableCell>
+                  <TableCell>{user.department_id?.name || 'N/A'}</TableCell>
                   <TableCell>
                     <Badge className={getRoleBadgeColor(user.role)}>
                       {user.role}
