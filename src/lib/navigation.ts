@@ -81,7 +81,7 @@ const allLinks: NavLink[] = [
     href: '/dashboard/delivery-assignments',
     label: 'Delivery Assignments',
     icon: Truck,
-    departments: ['Operations', 'Finance', 'Management', 'IT'],
+    departments: ['Finance', 'Management', 'IT'],
   },
   {
     href: '/dashboard/reports/audit',

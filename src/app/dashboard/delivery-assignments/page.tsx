@@ -82,6 +82,7 @@ interface Driver {
 export default function DeliveryAssignmentsPage() {
   const { toast } = useToast();
   const { userProfile } = useAuth();
+  const isOperations = userProfile?.department?.name === 'Operations';
   
   const [assignments, setAssignments] = useState<DeliveryAssignment[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -103,10 +104,23 @@ export default function DeliveryAssignmentsPage() {
   });
 
   useEffect(() => {
+    if (!userProfile) return;
+    if (isOperations) {
+      setLoading(false);
+      return;
+    }
     fetchAssignments();
     fetchDrivers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userProfile, isOperations]);
+
+  if (isOperations) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-lg text-muted-foreground">Access denied.</div>
+      </div>
+    );
+  }
 
   const fetchAssignments = async () => {
     try {

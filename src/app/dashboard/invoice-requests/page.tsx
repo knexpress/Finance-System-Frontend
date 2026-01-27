@@ -4474,6 +4474,80 @@ export default function InvoiceRequestsPage() {
                   </Card>
                 )}
 
+                {/* Item List (from invoiceRequests.booking_data.items) */}
+                {(() => {
+                  const items =
+                    requestData.booking_data?.items ||
+                    requestData.booking_snapshot?.items ||
+                    requestData.booking?.items ||
+                    requestData.items ||
+                    [];
+                  if (!Array.isArray(items) || items.length === 0) return null;
+                  return (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Package className="h-5 w-5" />
+                          Item List
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          {items.map((item: any, index: number) => (
+                            <div key={item?._id || index} className="border rounded-lg p-4">
+                              <h4 className="font-semibold mb-3">Item {index + 1}</h4>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <Label className="text-sm font-semibold text-gray-600">Commodity</Label>
+                                  <p className="text-base">{item?.commodity || 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-semibold text-gray-600">Description</Label>
+                                  <p className="text-base">{item?.description || 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-semibold text-gray-600">Quantity</Label>
+                                  <p className="text-base">{parseNumericValue(item?.qty ?? item?.quantity) || 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-semibold text-gray-600">Weight</Label>
+                                  <p className="text-base">{formatWeight(item?.weight)}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-semibold text-gray-600">Dimensions (L × W × H cm)</Label>
+                                  <p className="text-base">
+                                    {(() => {
+                                      const length = parseNumericValue(item?.length);
+                                      const width = parseNumericValue(item?.width);
+                                      const height = parseNumericValue(item?.height);
+                                      if (length === 'N/A' || width === 'N/A' || height === 'N/A') {
+                                        return 'N/A';
+                                      }
+                                      const l = typeof length === 'number' ? length.toFixed(2) : length;
+                                      const w = typeof width === 'number' ? width.toFixed(2) : width;
+                                      const h = typeof height === 'number' ? height.toFixed(2) : height;
+                                      return `${l} × ${w} × ${h}`;
+                                    })()}
+                                  </p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-semibold text-gray-600">Number of Boxes</Label>
+                                  <p className="text-base">
+                                    {(() => {
+                                      const boxes = parseNumericValue(item?.number_of_boxes ?? item?.boxes);
+                                      return boxes === 'N/A' ? 'N/A' : boxes.toString();
+                                    })()}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+
                 {/* Status Information */}
                 <Card>
                   <CardHeader>

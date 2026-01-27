@@ -1324,6 +1324,34 @@ export default function InvoicePage() {
                              [];
     const itemsFromBookingData = deriveListedCommoditiesFromItems(bookingDataItems);
 
+    const formatDeliveryOption = (value?: string): string => {
+        if (!value) return '';
+        const normalized = value.toString().toLowerCase();
+        if (normalized === 'pickup') return 'Pickup';
+        if (normalized === 'delivery') return 'Delivery';
+        return value;
+    };
+
+    const senderDeliveryOption = formatDeliveryOption(
+        requestDataSources?.invoiceRequest?.booking_data?.sender?.deliveryOption ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.sender?.deliveryOption ||
+        requestDataSources?.invoiceRequest?.sender_delivery_option ||
+        requestDataSources?.invoiceRequest?.request_id?.sender_delivery_option ||
+        invoice.request_id?.sender_delivery_option ||
+        invoice.request_id?.sender?.deliveryOption ||
+        invoice.request_id?.sender?.delivery_option
+    );
+
+    const receiverDeliveryOption = formatDeliveryOption(
+        requestDataSources?.invoiceRequest?.booking_data?.receiver?.deliveryOption ||
+        requestDataSources?.invoiceRequest?.booking_snapshot?.receiver?.deliveryOption ||
+        requestDataSources?.invoiceRequest?.receiver_delivery_option ||
+        requestDataSources?.invoiceRequest?.request_id?.receiver_delivery_option ||
+        invoice.request_id?.receiver_delivery_option ||
+        invoice.request_id?.receiver?.deliveryOption ||
+        invoice.request_id?.receiver?.delivery_option
+    );
+
     // Convert invoice to template format
     const invoiceData = {
         invoiceNumber: invoice.invoice_id || invoice._id,
@@ -1336,13 +1364,15 @@ export default function InvoicePage() {
             address: receiverAddress,
             emirate: emirate,
             mobile: receiverPhone,
-            trn: invoice.customer_trn || invoice.request_id?.customer_trn || undefined
+            trn: invoice.customer_trn || invoice.request_id?.customer_trn || undefined,
+            deliveryOption: receiverDeliveryOption || undefined
         },
         senderInfo: {
             name: senderName,
             address: senderAddress,
             email: senderEmail || undefined,
-            phone: senderPhone
+            phone: senderPhone,
+            deliveryOption: senderDeliveryOption || undefined
         },
         shipmentDetails: {
             numberOfBoxes: numberOfBoxes,
@@ -1894,6 +1924,102 @@ export default function InvoicePage() {
         });
     };
 
+    const getDeliveryAssignmentAmount = (invoiceData: any): number => {
+        if (!invoiceData) return 0;
+        const totalAmountCod = (invoiceData as any).total_amount_cod || (invoiceData as any).totalAmountCod;
+        const totalAmountTaxInvoice = (invoiceData as any).total_amount_tax_invoice || (invoiceData as any).totalAmountTaxInvoice;
+        const totalAmount = invoiceData.total_amount || invoiceData.total;
+        const amount = invoiceData.amount;
+        const candidates = [totalAmountCod, totalAmountTaxInvoice, totalAmount, amount];
+        const raw = candidates.find((value) => value !== undefined && value !== null && value !== '');
+        const parsed = raw != null ? parseFloat(raw.toString()) : 0;
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const reinitiateDeliveryAssignment = async (invoiceData: any) => {
+        if (!invoiceData) return;
+        const invoiceIdentifier = invoiceData?._id || invoiceId;
+        if (!invoiceIdentifier) return;
+
+        const amount = getDeliveryAssignmentAmount(invoiceData);
+        if (amount <= 0) {
+            console.warn('Delivery assignment update skipped: amount is invalid.', {
+                invoiceId: invoiceIdentifier,
+                amount
+            });
+            return;
+        }
+
+        const requestId =
+            invoiceData?.request_id?._id ||
+            invoiceData?.request_id ||
+            invoiceData?.requestId ||
+            invoiceData?.invoice_request_id;
+        const clientId = invoiceData?.client_id?._id || invoiceData?.client_id;
+        const deliveryAddress =
+            invoiceData?.receiver_address ||
+            invoiceData?.request_id?.receiver?.address ||
+            invoiceData?.request_id?.receiver_address ||
+            'Address to be confirmed';
+
+        try {
+            const assignmentResult = await apiClient.getDeliveryAssignmentByInvoice(invoiceIdentifier);
+            if (assignmentResult.success && assignmentResult.data) {
+                const assignment = assignmentResult.data as any;
+                const assignmentId = assignment?._id || assignment?.id;
+                if (!assignmentId) {
+                    console.warn('Delivery assignment update skipped: assignment ID missing.', assignment);
+                    return;
+                }
+
+                const updatePayload = {
+                    amount,
+                    delivery_address: deliveryAddress,
+                    client_id: clientId || assignment?.client_id,
+                    request_id: requestId || assignment?.request_id,
+                    invoice_id: invoiceIdentifier,
+                    delivery_type: assignment?.delivery_type || 'COD',
+                    driver_id: assignment?.driver_id || ''
+                };
+                const updateResult = await apiClient.updateDeliveryAssignment(assignmentId, updatePayload);
+                if (updateResult.success && updateResult.data) {
+                    setQrCodeData(updateResult.data);
+                } else {
+                    console.warn('Delivery assignment update failed:', updateResult?.error || updateResult);
+                }
+                return;
+            }
+
+            if (!requestId || !clientId) {
+                console.warn('Delivery assignment creation skipped: missing requestId/clientId.', {
+                    invoiceId: invoiceIdentifier,
+                    requestId,
+                    clientId
+                });
+                return;
+            }
+
+            const createPayload = {
+                request_id: requestId,
+                driver_id: '',
+                invoice_id: invoiceIdentifier,
+                client_id: clientId,
+                amount,
+                delivery_type: 'COD',
+                delivery_address: deliveryAddress,
+                delivery_instructions: 'Deliver to customer address. Driver will use QR code for payment verification.'
+            };
+            const createResult = await apiClient.createDeliveryAssignment(createPayload);
+            if (createResult.success && createResult.data) {
+                setQrCodeData(createResult.data);
+            } else {
+                console.warn('Delivery assignment creation failed:', createResult?.error || createResult);
+            }
+        } catch (error) {
+            console.warn('Delivery assignment reinitiation failed:', error);
+        }
+    };
+
     const handleSaveEdit = async () => {
         const invoiceIdentifier = invoice?._id || invoiceId;
         if (!invoiceIdentifier) return;
@@ -2008,7 +2134,8 @@ export default function InvoicePage() {
             
             if (result.success) {
                 // Re-fetch the invoice to ensure we have the latest data from backend
-                await refreshInvoiceAfterEdit();
+                const refreshedInvoice = await refreshInvoiceAfterEdit();
+                await reinitiateDeliveryAssignment(refreshedInvoice || (result as any)?.data);
                 toast({
                     title: 'Invoice updated',
                     description: 'Changes have been saved successfully.',
@@ -2105,9 +2232,10 @@ export default function InvoicePage() {
             if (result.success) {
                 // Refresh invoice data to get updated values from database
                 // This will update the invoice state and trigger a re-render
-                await refreshInvoiceAfterEdit();
+                const refreshedInvoice = await refreshInvoiceAfterEdit();
                 // Small delay to ensure React processes the state update
                 await new Promise(resolve => setTimeout(resolve, 50));
+                await reinitiateDeliveryAssignment(refreshedInvoice || (result as any)?.data);
                 toast({
                     title: 'COD Invoice updated',
                     description: 'COD invoice changes have been saved successfully. The invoice will refresh automatically.',
@@ -2169,7 +2297,8 @@ export default function InvoicePage() {
 
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
             if (result.success) {
-                await refreshInvoiceAfterEdit();
+                const refreshedInvoice = await refreshInvoiceAfterEdit();
+                await reinitiateDeliveryAssignment(refreshedInvoice || (result as any)?.data);
                 toast({
                     title: 'Tax Invoice updated',
                     description: 'Tax invoice changes have been saved successfully.',
@@ -2470,10 +2599,12 @@ export default function InvoicePage() {
                         notes: invoiceData.notes || ''
                     });
                 }
+                return invoiceData;
             }
         } catch (refreshError) {
             console.error('Error refreshing invoice after update:', refreshError);
         }
+        return null;
     };
 
     return (

@@ -15,6 +15,7 @@ interface InvoiceData {
     emirate: string;
     mobile: string;
     trn?: string;
+    deliveryOption?: string;
   };
   senderInfo: {
     name?: string;
@@ -22,6 +23,7 @@ interface InvoiceData {
     email?: string;
     phone?: string;
     mobile?: string;
+    deliveryOption?: string;
   };
   shipmentDetails: {
     numberOfBoxes: number;
@@ -114,6 +116,9 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
             <p className="text-xs uppercase tracking-wide text-gray-500">{data.date}</p>
             <p className="leading-relaxed">{data.senderInfo.address}</p>
             {data.senderInfo.phone && <p>{data.senderInfo.phone}</p>}
+            {data.senderInfo.deliveryOption && (
+              <p className="text-xs text-gray-600">Delivery Option: {data.senderInfo.deliveryOption}</p>
+            )}
             {data.senderInfo.email && <p>{data.senderInfo.email}</p>}
           </div>
         </div>
@@ -128,6 +133,9 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
             <p className="text-sm">{data.receiverInfo.emirate}</p>
             )}
             <p className="text-sm">{data.receiverInfo.mobile}</p>
+            {data.receiverInfo.deliveryOption && (
+              <p className="text-xs text-gray-600">Delivery Option: {data.receiverInfo.deliveryOption}</p>
+            )}
           </div>
         </div>
       </div>
