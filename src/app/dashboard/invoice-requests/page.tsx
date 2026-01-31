@@ -874,7 +874,12 @@ export default function InvoiceRequestsPage() {
     'request_id'
   ];
 
-  const fetchInvoiceRequests = useCallback(async (page: number = currentPage, useCache: boolean = true, filterOverride?: string) => {
+  const fetchInvoiceRequests = useCallback(async (
+    page: number = currentPage,
+    useCache: boolean = true,
+    filterOverride?: string,
+    searchOverride?: string
+  ) => {
     // If a fetch is already in progress, queue this request
     if (isFetchingRef.current) {
       // Store the pending request - use filterOverride if provided, otherwise use current statusFilter
@@ -911,6 +916,11 @@ export default function InvoiceRequestsPage() {
           filters = { status: 'IN_PROGRESS' };
         }
         // Sales: No status filter (can see all)
+      }
+
+      // If a search override is provided, attach it to the filter
+      if (searchOverride && searchOverride.trim()) {
+        filters = { ...(filters || {}), search: searchOverride.trim() };
       }
       
       // Use optimized single-page fetch instead of loading all pages
@@ -1245,6 +1255,24 @@ export default function InvoiceRequestsPage() {
 
       return () => clearTimeout(timeoutId);
   }, [awbSearch]);
+
+  // For Operations: fetch search results into current page
+  useEffect(() => {
+    if (userProfile?.department?.name !== 'Operations') {
+      return;
+    }
+    const term = awbSearch.trim() || nameSearch.trim();
+    // Debounce to avoid excessive calls while typing
+    const timer = setTimeout(() => {
+      if (term) {
+        setCurrentPage(1);
+        fetchInvoiceRequests(1, false, undefined, term);
+      } else {
+        fetchInvoiceRequests(1, false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [awbSearch, nameSearch, userProfile?.department?.name, fetchInvoiceRequests]);
 
   // Intelligent name search - automatically filters as user types
   useEffect(() => {
