@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -30,6 +31,7 @@ export default function RejectedRequestsPage() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showPrintView, setShowPrintView] = useState(false);
@@ -63,7 +65,7 @@ export default function RejectedRequestsPage() {
   const fetchRejectedBookings = async (useCache: boolean = true) => {
     try {
       // Check cache first for instant display
-      const cacheKey = '/bookings/status/rejected';
+      const cacheKey = '/bookings/status/rejected/all';
       const cached = apiCache.get(cacheKey, {});
       
       if (cached && cached.success && cached.data && useCache) {
@@ -75,11 +77,19 @@ export default function RejectedRequestsPage() {
         setLoading(true);
       }
 
-      const result = await apiClient.getBookingsByStatus('rejected', undefined, useCache);
+      // Fetch all pages to avoid missing entries from paginated backend
+      let result = await apiClient.getAllBookingsByStatus('rejected', undefined, useCache);
+      let bookingData = result.success && Array.isArray(result.data) ? result.data : [];
+
+      // Fallback to uppercase status if backend is case-sensitive
+      if (bookingData.length === 0) {
+        result = await apiClient.getAllBookingsByStatus('REJECTED', undefined, useCache);
+        bookingData = result.success && Array.isArray(result.data) ? result.data : [];
+      }
 
       if (result.success) {
-        const bookingData = Array.isArray(result.data) ? result.data : [];
         setBookings(bookingData);
+        apiCache.set(cacheKey, { success: true, data: bookingData }, {}, 30000);
       } else {
         // Only show error if we don't have cached data
         if (!cached || !cached.success) {
@@ -269,7 +279,9 @@ export default function RejectedRequestsPage() {
   const formatValue = (value: any): string => {
     if (value === undefined || value === null) return 'N/A';
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return String(value);
+      const strValue = String(value).trim();
+      if (strValue === '[]' || strValue === '[ ]') return 'N/A';
+      return strValue;
     }
     if (value instanceof Date) return value.toLocaleString();
 
@@ -301,7 +313,30 @@ export default function RejectedRequestsPage() {
       }
     }
 
-    // Arrays or other types
+    // Arrays
+    if (Array.isArray(value)) {
+      if (value.length === 0) return 'N/A';
+      // Prefer readable address/name fields if objects
+      const parts = value.map((item) => {
+        if (item && typeof item === 'object') {
+          return (
+            item.completeAddress ||
+            item.address ||
+            item.addressLine1 ||
+            item.name ||
+            item.full_name ||
+            item.fullName ||
+            item.description ||
+            JSON.stringify(item)
+          );
+        }
+        return String(item);
+      });
+      const joined = parts.filter(Boolean).join(', ');
+      return joined || 'N/A';
+    }
+
+    // Other types
     try {
       const s = JSON.stringify(value);
       return s.length > 120 ? s.slice(0, 117) + '...' : s;
@@ -309,6 +344,41 @@ export default function RejectedRequestsPage() {
       return String(value);
     }
   };
+
+  const filteredBookings = bookings.filter((booking) => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase().trim();
+
+    const customerName = formatValue(getField(booking, ['customer_name','customerName','name','full_name','sender_name','customer','sender']));
+    const receiverName = formatValue(getField(booking, ['receiver_name','receiverName','consignee_name','to_name','receiver','consignee']));
+    const agentName = getAgentName(booking);
+    const origin = formatValue(
+      getField(booking, ['origin_place','origin','from','pickup_location','pickup_city','pickup']) ||
+      booking.sender?.completeAddress ||
+      booking.sender?.address ||
+      booking.sender?.city
+    );
+    const destination = formatValue(
+      booking.receiver?.completeAddress ||
+      getField(booking, ['destination_place','destination','to','delivery_location','delivery_city','dropoff','delivery']) ||
+      booking.receiver?.address ||
+      booking.receiver?.city
+    );
+    const awb = formatValue(getField(booking, ['awb','awb_number','tracking_code','trackingNumber']));
+    const reason = formatValue(booking.reason);
+
+    return [
+      customerName,
+      receiverName,
+      agentName,
+      origin,
+      destination,
+      awb,
+      reason,
+    ]
+      .filter(Boolean)
+      .some((value) => value.toLowerCase().includes(query));
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -319,132 +389,119 @@ export default function RejectedRequestsPage() {
               <XCircle className="h-5 w-5 text-destructive" />
               Rejected Requests
             </CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                apiCache.invalidate('/bookings/status/rejected');
-                fetchRejectedBookings(false);
-              }}
-            >
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-muted-foreground">
+                {filteredBookings.length} of {bookings.length} shown
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  apiCache.invalidate('/bookings/status/rejected');
+                  fetchRejectedBookings(false);
+                }}
+              >
+                Refresh
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
+            <div className="relative w-full md:max-w-sm">
+              <Input
+                placeholder="Search by customer, receiver, AWB, agent, or reason..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <p className="text-muted-foreground">Loading rejected bookings...</p>
             </div>
-          ) : bookings.length === 0 ? (
+          ) : filteredBookings.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12">
               <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
               <p className="text-muted-foreground text-lg">No rejected bookings found</p>
               <p className="text-sm text-muted-foreground mt-2">
-                Rejected booking requests will appear here
+                Try adjusting your search terms
               </p>
             </div>
           ) : (
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Customer Name</TableHead>
-                    <TableHead>Receiver Name</TableHead>
-                    <TableHead>Agent Name</TableHead>
-                    <TableHead>Origin</TableHead>
-                    <TableHead>Destination</TableHead>
-                    <TableHead>Shipment Type</TableHead>
-                    <TableHead>Rejection Reason</TableHead>
-                    <TableHead>Rejected At</TableHead>
-                    <TableHead>Created At</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {bookings.map((booking) => (
-                    <TableRow key={booking._id}>
-                      <TableCell className="font-medium">
-                        {formatValue(getField(booking, ['customer_name','customerName','name','full_name','sender_name','customer','sender']))}
-                      </TableCell>
-                      <TableCell>
-                        {formatValue(getField(booking, ['receiver_name','receiverName','consignee_name','to_name','receiver','consignee']))}
-                      </TableCell>
-                      <TableCell>
-                        {getAgentName(booking)}
-                      </TableCell>
-                      <TableCell>
-                        {formatValue(
-                          getField(booking, ['origin_place','origin','from','pickup_location','pickup_city','pickup'])
-                          || booking.sender?.completeAddress
-                          || booking.sender?.address
-                          || booking.sender?.city
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {formatValue(
-                          getField(booking, ['destination_place','destination','to','delivery_location','delivery_city','dropoff','delivery'])
-                          || booking.receiver?.completeAddress
-                          || booking.receiver?.address
-                          || booking.receiver?.city
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {formatValue(getField(booking, ['shipment_type','shipmentType','service_type','service']))}
-                      </TableCell>
-                      <TableCell>
-                        <div className="max-w-[200px]">
-                          {booking.reason ? (
-                            <p className="text-sm text-muted-foreground truncate" title={booking.reason}>
-                              {booking.reason}
-                            </p>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">No reason provided</span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {booking.reviewedAt
-                          ? new Date(booking.reviewedAt).toLocaleDateString()
-                          : booking.updatedAt
-                          ? new Date(booking.updatedAt).toLocaleDateString()
-                          : booking.updated_at
-                          ? new Date(booking.updated_at).toLocaleDateString()
-                          : 'N/A'}
-                      </TableCell>
-                      <TableCell>
-                        {booking.submittedAt
-                          ? new Date(booking.submittedAt).toLocaleDateString()
-                          : booking.createdAt
-                          ? new Date(booking.createdAt).toLocaleDateString()
-                          : booking.created_at
-                          ? new Date(booking.created_at).toLocaleDateString()
-                          : 'N/A'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handlePrint(booking)}
-                          >
-                            <Printer className="h-4 w-4 mr-2" />
-                            Print
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleViewDetails(booking)}
-                          >
-                            <Eye className="h-4 w-4 mr-2" />
-                            View Details
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {filteredBookings.map((booking) => {
+                const customerName = formatValue(getField(booking, ['customer_name','customerName','name','full_name','sender_name','customer','sender']));
+                const receiverName = formatValue(getField(booking, ['receiver_name','receiverName','consignee_name','to_name','receiver','consignee']));
+                const awb = formatValue(getField(booking, ['awb','awb_number','tracking_code','trackingNumber']));
+                const origin = formatValue(
+                  getField(booking, ['origin_place','origin','from','pickup_location','pickup_city','pickup'])
+                  || booking.sender?.completeAddress
+                  || booking.sender?.address
+                  || booking.sender?.city
+                );
+                const destination = formatValue(
+                  booking.receiver?.completeAddress
+                  || getField(booking, ['destination_place','destination','to','delivery_location','delivery_city','dropoff','delivery'])
+                  || booking.receiver?.address
+                  || booking.receiver?.city
+                );
+                const shipmentType = formatValue(getField(booking, ['shipment_type','shipmentType','service_type','service']));
+                const rejectedAt = booking.reviewedAt
+                  ? new Date(booking.reviewedAt).toLocaleDateString()
+                  : booking.updatedAt
+                  ? new Date(booking.updatedAt).toLocaleDateString()
+                  : booking.updated_at
+                  ? new Date(booking.updated_at).toLocaleDateString()
+                  : 'N/A';
+
+                return (
+                  <Card key={booking._id} className="border-border/60">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base">{customerName}</CardTitle>
+                        {getStatusBadge(booking.review_status || 'rejected')}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        AWB: {awb || 'N/A'}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm">
+                        <div className="font-medium">{receiverName}</div>
+                        <div className="text-muted-foreground">{destination}</div>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        From {origin} · {shipmentType}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Agent: {getAgentName(booking)} · Rejected: {rejectedAt}
+                      </div>
+                      <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs">
+                        {booking.reason || 'No rejection reason provided.'}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePrint(booking)}
+                        >
+                          <Printer className="h-4 w-4 mr-2" />
+                          Print
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleViewDetails(booking)}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          View Details
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -494,8 +551,8 @@ export default function RejectedRequestsPage() {
                   <p className="text-sm font-medium text-muted-foreground">Destination</p>
                   <p className="text-sm">
                     {formatValue(
-                      getField(selectedBooking, ['destination_place','destination','to','delivery_location','delivery_city','dropoff','delivery'])
-                      || selectedBooking.receiver?.completeAddress
+                      selectedBooking.receiver?.completeAddress
+                      || getField(selectedBooking, ['destination_place','destination','to','delivery_location','delivery_city','dropoff','delivery'])
                       || selectedBooking.receiver?.address
                       || selectedBooking.receiver?.city
                     )}
