@@ -96,7 +96,7 @@ export default function RejectedRequestsPage() {
           toast({
             variant: 'destructive',
             title: 'Error',
-            description: result.error || 'Failed to fetch rejected bookings',
+            description: 'Failed to fetch rejected bookings',
           });
         }
       }
