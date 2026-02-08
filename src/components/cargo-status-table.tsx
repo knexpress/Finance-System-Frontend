@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { secureLog } from '@/lib/secure-logger';
 import {
   Table,
   TableBody,
@@ -93,17 +94,17 @@ export default function CargoStatusTable() {
   const fetchCargoList = async () => {
     try {
       setLoading(true);
-      console.log('📦 Fetching cargo list...');
+      secureLog.debug('Fetching cargo list');
       
       const response = await apiClient.getInvoiceRequestsByStatus('VERIFIED');
       if (response.success && response.data) {
-        console.log('✅ Cargo list received:', response.data);
+        secureLog.debug('Cargo list received', { count: Array.isArray(response.data) ? response.data.length : 0 });
         setCargoList(response.data as CargoStatus[]);
       } else {
-        console.log('❌ Failed to fetch cargo list:', response);
+        secureLog.debug('Failed to fetch cargo list', { success: response.success });
       }
     } catch (error) {
-      console.error('❌ Error fetching cargo list:', error);
+      secureLog.error('Error fetching cargo list', error);
       toast({
         title: "Error",
         description: "Failed to fetch cargo list",
@@ -159,7 +160,7 @@ export default function CargoStatusTable() {
     if (!selectedCargo || !newStatus) return;
 
     try {
-      console.log('🔄 Updating cargo status:', {
+      secureLog.debug('Updating cargo status', {
         id: selectedCargo._id,
         delivery_status: newDeliveryStatus,
         notes: notes
@@ -171,7 +172,7 @@ export default function CargoStatusTable() {
       });
 
       if (response.success) {
-        console.log('✅ Status updated successfully:', response.data);
+        secureLog.debug('Status updated successfully', response.data);
         
         toast({
           title: "Status Updated",
@@ -190,7 +191,7 @@ export default function CargoStatusTable() {
         throw new Error(response.error || 'Failed to update status');
       }
     } catch (error) {
-      console.error('❌ Error updating cargo status:', error);
+      secureLog.error('Error updating cargo status', error);
       toast({
         title: "Error",
         description: `Failed to update cargo status: ${error instanceof Error ? error.message : 'Unknown error'}`,

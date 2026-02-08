@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { CashFlowTransaction, TransactionType } from '@/lib/types';
+import { secureLog } from '@/lib/secure-logger';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -143,7 +144,7 @@ export default function CashFlowTracker({
 }) {
   // Ensure transactions is always an array
   const safeTransactions = Array.isArray(transactions) ? transactions : [];
-  console.log('CashFlowTracker received transactions:', safeTransactions); // Debug log
+  secureLog.debug('CashFlowTracker received transactions', { count: safeTransactions.length });
   
   const { totalIncome, totalExpenses, netCashFlow } = useMemo(() => {
     const income = safeTransactions

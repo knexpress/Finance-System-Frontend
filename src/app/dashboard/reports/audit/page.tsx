@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import dynamic from 'next/dynamic';
 import { apiClient } from "@/lib/api-client";
+import { secureLog } from '@/lib/secure-logger';
 
 // Dynamically import AuditReportTable to reduce initial bundle size
 const AuditReportTable = dynamic(() => import("@/components/audit-report-table"), {
@@ -20,23 +21,23 @@ export default function AuditReportPage() {
                 // First, try to fetch audit reports from the Report model
                 try {
                     const reportsResult = await apiClient.getReports();
-                    console.log('📋 Reports API response:', reportsResult);
+                    secureLog.debug('Reports API response', { success: (reportsResult as any)?.success });
                     
                     // The API might return { success: true, data: [...] } or just the array directly
                     let reportsArray = reportsResult;
                     if (reportsResult && !Array.isArray(reportsResult) && (reportsResult as any).data) {
                         reportsArray = (reportsResult as any).data;
-                        console.log('📦 Extracted data from response object');
+                        secureLog.debug('Extracted data from response object');
                     } else if (reportsResult && !Array.isArray(reportsResult) && (reportsResult as any).success) {
                         // Already an object but no data field, could be array directly
-                        console.log('📝 Response is already an object with success field');
+                        secureLog.debug('Response is already an object with success field');
                     }
                     
                     if (reportsArray && Array.isArray(reportsArray) && reportsArray.length > 0) {
-                        console.log(`✅ Found ${reportsArray.length} audit reports`);
+                        secureLog.debug('Found audit reports', { count: reportsArray.length });
                         
                         // Log the first report structure for debugging
-                        console.log('📄 Sample report structure:', reportsArray[0]);
+                        secureLog.debug('Sample report structure', reportsArray[0]);
                         
                         // Collect all invoice IDs from reports
                         const invoiceIds = new Set<string>();
@@ -54,7 +55,7 @@ export default function AuditReportPage() {
                         // Fetch all invoices in parallel
                         const invoiceMap = new Map<string, any>();
                         if (invoiceIds.size > 0) {
-                            console.log(`📦 Fetching ${invoiceIds.size} invoices from invoices collection...`);
+                            secureLog.debug('Fetching invoices from collection', { count: invoiceIds.size });
                             const invoicePromises = Array.from(invoiceIds).map(async (invoiceId) => {
                                 try {
                                     const invoiceResult = await apiClient.getInvoiceUnified(invoiceId);
@@ -63,7 +64,7 @@ export default function AuditReportPage() {
                                     }
                                     return null;
                                 } catch (error) {
-                                    console.error(`❌ Error fetching invoice ${invoiceId}:`, error);
+                                    secureLog.error('Error fetching invoice', { invoiceId, error });
                                     return null;
                                 }
                             });
@@ -74,7 +75,7 @@ export default function AuditReportPage() {
                                     invoiceMap.set(result.id, result.invoice);
                                 }
                             });
-                            console.log(`✅ Fetched ${invoiceMap.size} invoices`);
+                            secureLog.debug('Fetched invoices', { count: invoiceMap.size });
                         }
                         
                         // Convert reports to the format expected by AuditReportTable
@@ -226,12 +227,12 @@ export default function AuditReportPage() {
                         return;
                     }
                 } catch (reportsError) {
-                    console.error('❌ Error fetching audit reports:', reportsError);
+                    secureLog.error('Error fetching audit reports', reportsError);
                     // If reports API fails, show empty state instead of fallback
                     setAllData([]);
                 }
             } catch (error) {
-                console.error('Error loading audit data:', error);
+                secureLog.error('Error loading audit data', error);
             } finally {
                 setLoading(false);
             }

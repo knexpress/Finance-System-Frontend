@@ -1,5 +1,6 @@
 import { UserProfile, Client, Request, Invoice, InternalRequest, Department, CashFlowTransaction } from './types';
 import { apiClient } from './api-client';
+import { secureLog } from './secure-logger';
 
 // Functions to fetch data from MongoDB API - NO MOCK DATA
 export async function fetchClients(): Promise<Client[]> {
@@ -10,12 +11,12 @@ export async function fetchClients(): Promise<Client[]> {
     }
     // Handle rate limiting gracefully
     if (result.error === 'Rate limited') {
-      console.log('Rate limited for clients, returning empty array');
+      secureLog.debug('Rate limited for clients, returning empty array');
       return [];
     }
     throw new Error(result.error || 'Failed to fetch clients');
   } catch (error) {
-    console.error('Error fetching clients:', error);
+    secureLog.error('Error fetching clients', error);
     return []; // Return empty array instead of mock data
   }
 }
@@ -28,12 +29,12 @@ export async function fetchRequests(): Promise<Request[]> {
     }
     // Handle rate limiting gracefully
     if (result.error === 'Rate limited') {
-      console.log('Rate limited for requests, returning empty array');
+      secureLog.debug('Rate limited for requests, returning empty array');
       return [];
     }
     throw new Error(result.error || 'Failed to fetch requests');
   } catch (error) {
-    console.error('Error fetching requests:', error);
+    secureLog.error('Error fetching requests', error);
     return []; // Return empty array instead of mock data
   }
 }
@@ -49,7 +50,7 @@ export async function fetchInvoices(): Promise<Invoice[]> {
     }
     throw new Error(result.error || 'Failed to fetch invoices');
   } catch (error) {
-    console.error('Error fetching invoices:', error);
+    secureLog.error('Error fetching invoices', error);
     return []; // Return empty array instead of mock data
   }
 }
@@ -57,12 +58,11 @@ export async function fetchInvoices(): Promise<Invoice[]> {
 export async function fetchCashFlowTransactions(): Promise<CashFlowTransaction[]> {
   try {
     const result = await apiClient.getCashTransactions();
-    console.log('Cash transactions API result:', result); // Debug log
-    
+    secureLog.debug('Cash transactions API result', { success: result.success });
+
     if (result.success && result.data) {
       // Ensure data is an array before mapping
       const dataArray = Array.isArray(result.data) ? result.data : [];
-      console.log('Data array:', dataArray); // Debug log
       
       // Convert CashTracker/CashFlowTransaction data to CashFlowTransaction format
       const transactions = dataArray.map((transaction: any) => {
@@ -84,7 +84,7 @@ export async function fetchCashFlowTransactions(): Promise<CashFlowTransaction[]
         
         // Validate amount
         if (isNaN(amountValue) || !isFinite(amountValue)) {
-          console.warn('Invalid amount for transaction:', transaction);
+          secureLog.warn('Invalid amount for transaction', transaction);
           amountValue = 0;
         }
         
@@ -100,14 +100,12 @@ export async function fetchCashFlowTransactions(): Promise<CashFlowTransaction[]
         };
       });
       
-      console.log('Converted transactions:', transactions); // Debug log
       return transactions;
     }
-    
-    console.log('No data or unsuccessful response:', result);
+
     return []; // Return empty array if no data
   } catch (error) {
-    console.error('Error fetching cash flow transactions:', error);
+    secureLog.error('Error fetching cash flow transactions', error);
     return []; // Return empty array instead of mock data
   }
 }
@@ -120,7 +118,7 @@ export async function fetchInternalRequests(): Promise<InternalRequest[]> {
     }
     throw new Error(result.error || 'Failed to fetch internal requests');
   } catch (error) {
-    console.error('Error fetching internal requests:', error);
+    secureLog.error('Error fetching internal requests', error);
     return []; // Return empty array instead of mock data
   }
 }

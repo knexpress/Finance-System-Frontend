@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { secureLog } from '@/lib/secure-logger';
 import QRCode from './qr-code';
 
 interface InvoiceData {
@@ -219,7 +220,7 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
                       if (data.invoiceType === 'tax' && data.totalAmountTaxInvoice && data.totalAmountTaxInvoice > 0) {
                         // Tax invoice: Use totalAmountTaxInvoice
                         totalValue = data.totalAmountTaxInvoice;
-                        console.log('✅ Template: Using totalAmountTaxInvoice for Tax invoice', {
+                        secureLog.debug('Template: Using totalAmountTaxInvoice for Tax invoice', {
                           invoiceType: data.invoiceType,
                           totalAmountTaxInvoice: data.totalAmountTaxInvoice
                         });
@@ -227,7 +228,7 @@ export default function InvoiceTemplate({ data }: InvoiceTemplateProps) {
                         // Normal (COD) invoice or default: Use totalAmountCod
                         // This handles both explicit 'normal' type and undefined (defaults to COD)
                         totalValue = data.totalAmountCod;
-                        console.log('✅ Template: Using totalAmountCod for Normal (COD) invoice', {
+                        secureLog.debug('Template: Using totalAmountCod for Normal (COD) invoice', {
                           invoiceType: data.invoiceType,
                           totalAmountCod: data.totalAmountCod,
                           chargesTotal: data.charges?.total

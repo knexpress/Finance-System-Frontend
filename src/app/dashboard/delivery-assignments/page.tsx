@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Plus, Eye, QrCode, MapPin, Package, User, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
+import { secureLog } from '@/lib/secure-logger';
 
 interface DeliveryAssignment {
   _id: string;
@@ -126,15 +127,14 @@ export default function DeliveryAssignmentsPage() {
     try {
       setLoading(true);
       const result = await apiClient.getDeliveryAssignments();
-      console.log('Delivery assignments API result:', result); // Debug log
-      
+      secureLog.debug('Delivery assignments API result', { success: result.success });
+
       if (result.success && result.data) {
         // Ensure data is an array before setting
         const dataArray = Array.isArray(result.data) ? result.data : [];
-        console.log('Assignments data array:', dataArray); // Debug log
         setAssignments(dataArray);
       } else {
-        console.log('No data or unsuccessful response:', result);
+        secureLog.debug('No data or unsuccessful response', { success: result.success });
         setAssignments([]); // Set empty array instead of undefined
         toast({
           variant: 'destructive',
@@ -143,7 +143,7 @@ export default function DeliveryAssignmentsPage() {
         });
       }
     } catch (error) {
-      console.error('Error fetching assignments:', error);
+      secureLog.error('Error fetching assignments', error);
       setAssignments([]); // Set empty array on error
       toast({
         variant: 'destructive',
@@ -158,19 +158,18 @@ export default function DeliveryAssignmentsPage() {
   const fetchDrivers = async () => {
     try {
       const result = await apiClient.getDrivers();
-      console.log('Drivers API result:', result); // Debug log
-      
+      secureLog.debug('Drivers API result', { success: result.success });
+
       if (result.success && result.data) {
         // Ensure data is an array before setting
         const dataArray = Array.isArray(result.data) ? result.data : [];
-        console.log('Drivers data array:', dataArray); // Debug log
         setDrivers(dataArray);
       } else {
-        console.log('No drivers data or unsuccessful response:', result);
+        secureLog.debug('No drivers data or unsuccessful response', { success: result.success });
         setDrivers([]); // Set empty array instead of undefined
       }
     } catch (error) {
-      console.error('Error fetching drivers:', error);
+      secureLog.error('Error fetching drivers', error);
       setDrivers([]); // Set empty array on error
     }
   };
@@ -204,7 +203,7 @@ export default function DeliveryAssignmentsPage() {
         });
       }
     } catch (error) {
-      console.error('Error creating assignment:', error);
+      secureLog.error('Error creating assignment', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -231,7 +230,7 @@ export default function DeliveryAssignmentsPage() {
         });
       }
     } catch (error) {
-      console.error('Error updating status:', error);
+      secureLog.error('Error updating status', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -259,7 +258,7 @@ export default function DeliveryAssignmentsPage() {
     
     // Check if number is valid
     if (isNaN(numAmount) || !isFinite(numAmount)) {
-      console.warn('Invalid amount for formatting:', amount);
+      secureLog.warn('Invalid amount for formatting', { amount });
       return 'AED 0.00';
     }
     
@@ -554,16 +553,55 @@ export default function DeliveryAssignmentsPage() {
                     );
                   })()}
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      {assignment.payment_collected ? (
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <XCircle className="h-4 w-4 text-red-500" />
-                      )}
-                      <span className="text-sm">
-                        {assignment.payment_collected ? 'Collected' : 'Pending'}
-                      </span>
-                    </div>
+                    <Select
+                      value={assignment.payment_collected ? 'collected' : 'pending'}
+                      onValueChange={async (value) => {
+                        const collected = value === 'collected';
+                        try {
+                          const result = await apiClient.updateDeliveryAssignment(assignment._id, {
+                            payment_collected: collected,
+                          });
+                          if (result.success) {
+                            toast({
+                              title: 'Success',
+                              description: collected ? 'Marked as Collected' : 'Marked as Pending',
+                            });
+                            fetchAssignments();
+                          } else {
+                            toast({
+                              variant: 'destructive',
+                              title: 'Error',
+                              description: result.error || 'Failed to update payment status',
+                            });
+                          }
+                        } catch (error) {
+                          secureLog.error('Error updating payment status', error);
+                          toast({
+                            variant: 'destructive',
+                            title: 'Error',
+                            description: 'Failed to update payment status',
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">
+                          <span className="flex items-center gap-2">
+                            <XCircle className="h-4 w-4 text-red-500 shrink-0" aria-hidden />
+                            Pending
+                          </span>
+                        </SelectItem>
+                        <SelectItem value="collected">
+                          <span className="flex items-center gap-2">
+                            <CheckCircle className="h-4 w-4 text-green-500 shrink-0" aria-hidden />
+                            Collected
+                          </span>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">

@@ -30,6 +30,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { secureLog } from '@/lib/secure-logger';
 import { getDepartmentPerformanceMetrics, calculateOverallScore, type PerformanceMetric } from '@/lib/performance-metrics';
 import { calculateCompanyMetrics } from '@/lib/metrics-calculator';
 import type { Department } from '@/lib/types';
@@ -95,24 +96,23 @@ export default function PerformanceMetrics({ department }: PerformanceMetricsPro
         setOverallScore(calculateOverallScore(performanceMetrics));
       } else {
         // For other departments (Sales, Operations, Finance, etc.), use API endpoint
-        console.log(`📊 [Performance Metrics] Fetching metrics for department: ${department}`);
+        secureLog.debug('[Performance Metrics] Fetching metrics for department', { department });
         const response = await apiClient.getDepartmentPerformance(department);
-        console.log(`📊 [Performance Metrics] API response for ${department}:`, response);
-        
+        secureLog.debug('[Performance Metrics] API response', { department, success: response.success });
+
         if (response.success && response.data) {
           const performanceMetrics = getDepartmentPerformanceMetrics(department, response.data);
-          console.log(`📊 [Performance Metrics] Processed metrics for ${department}:`, performanceMetrics);
           setMetrics(performanceMetrics);
           setOverallScore(calculateOverallScore(performanceMetrics));
         } else {
-          console.warn(`⚠️ [Performance Metrics] API returned error for ${department}:`, response.error);
+          secureLog.warn('[Performance Metrics] API returned error', { department, error: response.error });
           // Set empty metrics if API fails
           setMetrics([]);
           setOverallScore(0);
         }
       }
     } catch (error) {
-      console.error(`❌ [Performance Metrics] Error fetching performance data for ${department}:`, error);
+      secureLog.error('[Performance Metrics] Error fetching performance data', { department, error });
       // Set empty metrics on error
       setMetrics([]);
       setOverallScore(0);

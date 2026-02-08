@@ -122,7 +122,7 @@ export default function BookingRequestsPage() {
 
       if (result.success) {
         const bookingData = Array.isArray(result.data) ? result.data : [];
-        console.log(`📦 Fetched ${bookingData.length} bookings from backend (all pages, status: ${filterStatus}, awb: ${awbSearch || 'none'})`);
+        secureLog.debug('Fetched bookings from backend', { count: bookingData.length, filterStatus, awb: awbSearch || 'none' });
         setBookings(bookingData);
       } else {
         // Only show error if we don't have cached data
@@ -135,7 +135,7 @@ export default function BookingRequestsPage() {
         }
       }
     } catch (error) {
-      console.error('Error fetching bookings:', error);
+      secureLog.error('Error fetching bookings', error);
       // Only show error if we don't have cached data
       const filters = {
         status: filterStatus === 'all' ? undefined : filterStatus,
@@ -176,7 +176,7 @@ export default function BookingRequestsPage() {
         setShowReviewModal(true);
       }
     } catch (error) {
-      console.error('Error fetching booking details:', error);
+      secureLog.error('Error fetching booking details', error);
       // Fallback to using the booking from list
       toast({
         variant: 'destructive',
@@ -209,7 +209,7 @@ export default function BookingRequestsPage() {
         setShowViewModal(true);
       }
     } catch (error) {
-      console.error('Error fetching booking details:', error);
+      secureLog.error('Error fetching booking details', error);
       // Fallback to using the booking from list
       toast({
         variant: 'destructive',
@@ -456,7 +456,7 @@ export default function BookingRequestsPage() {
         description: 'PDF generated and downloaded successfully',
         });
     } catch (error) {
-      console.error('Error generating PDF:', error);
+      secureLog.error('Error generating PDF', error);
       secureLog.error('Error generating PDF', error);
       toast({
         variant: 'destructive',
@@ -804,7 +804,7 @@ export default function BookingRequestsPage() {
                     
                     // Debug log for first booking when showing N/A (only in development)
                     if (!awbNumber && paginatedBookings.indexOf(booking) === 0 && process.env.NODE_ENV === 'development') {
-                      console.log('🔍 [AWB Debug] No AWB found for booking:', {
+                      secureLog.debug('[AWB Debug] No AWB found for booking', {
                         _id: booking._id,
                         review_status: booking.review_status,
                         filterStatus,

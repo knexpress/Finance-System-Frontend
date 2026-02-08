@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import InvoiceTemplate from "@/components/invoice-template";
 import TaxInvoiceTemplate from "@/components/tax-invoice-template";
 import { apiClient } from "@/lib/api-client";
+import { secureLog } from '@/lib/secure-logger';
+import { isPhToUaeService, isUaeToPhService } from '@/lib/invoice-request-utils';
+import { parseDecimal } from '@/lib/invoice-utils';
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, FileText, Receipt, AlertCircle, Download, Printer, FileSpreadsheet, Database } from 'lucide-react';
@@ -24,26 +27,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-
-const normalizeServiceCode = (code?: string | null) =>
-  (code || '')
-    .toString()
-    .toUpperCase()
-    .replace(/[\s-]+/g, '_');
-
-const isPhToUaeService = (code?: string | null) => {
-  const normalized = normalizeServiceCode(code);
-  return normalized === 'PH_TO_UAE' || normalized.startsWith('PH_TO_UAE_');
-};
-
-const isUaeToPhService = (code?: string | null) => {
-  const normalized = normalizeServiceCode(code);
-  return normalized === 'UAE_TO_PH' || 
-         normalized === 'UAE_TO_PINAS' ||
-         normalized.startsWith('UAE_TO_PH_') ||
-         normalized.startsWith('UAE_TO_PINAS_') ||
-         normalized.includes('UAE_TO_PINAS');
-};
 
 export default function InvoicePage() {
     const params = useParams();
@@ -177,32 +160,6 @@ export default function InvoicePage() {
     });
     const { toast } = useToast();
 
-    // Helper function to parse and round decimals (handles Decimal128, numbers, strings)
-    // Must be defined before useEffect to avoid initialization errors
-    const parseDecimal = (value: any, decimals: number = 2): number => {
-        let num = 0;
-        if (value === null || value === undefined || value === '') {
-            return 0;
-        }
-        if (typeof value === 'number') {
-            num = value;
-        } else if (typeof value === 'string') {
-            num = parseFloat(value) || 0;
-        } else if (value && typeof value === 'object') {
-            // Handle Decimal128 objects or objects with toString method
-            if (value.toString && typeof value.toString === 'function') {
-                num = parseFloat(value.toString()) || 0;
-            } else if (value.$numberDecimal) {
-                // MongoDB Decimal128 format
-                num = parseFloat(value.$numberDecimal) || 0;
-            } else {
-                num = 0;
-            }
-        }
-        // Round to specified decimal places
-        return Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
-    };
-
     useEffect(() => {
         const fetchInvoice = async () => {
             if (!invoiceId) {
@@ -211,14 +168,14 @@ export default function InvoicePage() {
                 return;
             }
 
-            console.log('🔍 Fetching invoice with ID:', invoiceId);
+            secureLog.debug('🔍 Fetching invoice with ID:', invoiceId);
             
             try {
                 const result = await apiClient.getInvoiceUnified(invoiceId);
-                console.log('📄 Invoice API result:', result);
-                console.log('📄 Invoice API result.data:', result.data);
-                console.log('📄 Invoice API result.success:', result.success);
-                console.log('🔍 Initial invoice fetch - cod_delivery_charge check:', {
+                secureLog.debug('📄 Invoice API result:', result);
+                secureLog.debug('📄 Invoice API result.data:', result.data);
+                secureLog.debug('📄 Invoice API result.success:', result.success);
+                secureLog.debug('🔍 Initial invoice fetch - cod_delivery_charge check:', {
                     cod_delivery_charge: (result.data as any)?.cod_delivery_charge,
                     cod_delivery_charge_type: typeof (result.data as any)?.cod_delivery_charge,
                     delivery_charge: (result.data as any)?.delivery_charge,
@@ -226,7 +183,7 @@ export default function InvoicePage() {
                     all_keys: result.data ? Object.keys(result.data) : []
                 });
                 if (result.success && result.data) {
-                    console.log('✅ Setting invoice data:', {
+                    secureLog.debug('✅ Setting invoice data:', {
                         invoice_id: (result.data as any).invoice_id || (result.data as any)._id,
                         cod_delivery_charge: (result.data as any).cod_delivery_charge,
                         delivery_charge: (result.data as any).delivery_charge,
@@ -421,20 +378,20 @@ export default function InvoicePage() {
                     try {
                         const assignmentResult = await apiClient.getDeliveryAssignmentByInvoice(invoiceId);
                         if (assignmentResult.success && assignmentResult.data) {
-                            console.log('📱 QR Code data fetched:', assignmentResult.data);
+                            secureLog.debug('📱 QR Code data fetched:', assignmentResult.data);
                             setQrCodeData(assignmentResult.data);
                         } else {
-                            console.log('ℹ️ No delivery assignment found for this invoice');
+                            secureLog.debug('ℹ️ No delivery assignment found for this invoice');
                         }
                     } catch (assignmentError) {
-                        console.warn('Could not fetch delivery assignment:', assignmentError);
+                        secureLog.warn('Could not fetch delivery assignment:', assignmentError);
                         // Not a critical error - invoice might not have a delivery assignment yet
                     }
                 } else {
                     setError(result.error || 'Invoice not found');
                 }
             } catch (err: any) {
-                console.error('Error fetching invoice:', err);
+                secureLog.error('Error fetching invoice:', err);
                 setError(err.message || 'Failed to load invoice');
             } finally {
                 setLoading(false);
@@ -472,7 +429,7 @@ export default function InvoicePage() {
                     }));
                 }
             } catch (err) {
-                console.error('Failed to fetch invoice request for template:', err);
+                secureLog.error('Failed to fetch invoice request for template:', err);
                 // Don't set error state - this is non-critical
             }
         };
@@ -521,7 +478,7 @@ export default function InvoicePage() {
                     invoiceRequest
                 });
             } catch (err) {
-                console.error('Failed to fetch request data sources:', err);
+                secureLog.error('Failed to fetch request data sources:', err);
                 setRequestDataSources({
                     invoice: invoice || null,
                     invoiceRequest: null
@@ -540,7 +497,7 @@ export default function InvoicePage() {
     useEffect(() => {
         if (invoice) {
             const codDeliveryCharge = (invoice as any).cod_delivery_charge;
-            console.log('🔄 Invoice state changed (useEffect):', {
+            secureLog.debug('🔄 Invoice state changed (useEffect):', {
                 refreshKey,
                 forceUpdate,
                 cod_delivery_charge: codDeliveryCharge,
@@ -587,23 +544,23 @@ export default function InvoicePage() {
     }
 
     // Debug: Log invoice data
-    console.log('🔍 Invoice data for mapping:', invoice);
+    secureLog.debug('🔍 Invoice data for mapping:', invoice);
     if (!invoice) {
-        console.error('❌ Invoice is null or undefined');
+        secureLog.error('❌ Invoice is null or undefined');
         return null;
     }
 
     // Parse amounts from API (round to 2 decimals)
-    console.log('💰 Raw invoice amount:', invoice.amount, typeof invoice.amount);
-    console.log('💰 Raw invoice delivery_charge:', invoice.delivery_charge, typeof invoice.delivery_charge);
-    console.log('💰 Raw invoice base_amount:', invoice.base_amount, typeof invoice.base_amount);
-    console.log('💰 Raw invoice total_amount:', invoice.total_amount, typeof invoice.total_amount);
+    secureLog.debug('Raw invoice amount', { value: invoice.amount, type: typeof invoice.amount });
+    secureLog.debug('Raw invoice delivery_charge', { value: invoice.delivery_charge, type: typeof invoice.delivery_charge });
+    secureLog.debug('Raw invoice base_amount', { value: invoice.base_amount, type: typeof invoice.base_amount });
+    secureLog.debug('Raw invoice total_amount', { value: invoice.total_amount, type: typeof invoice.total_amount });
     
     const baseAmount = parseDecimal(invoice.amount, 2); // Shipping amount only
     const deliveryChargeFromInvoice = parseDecimal(invoice.delivery_charge || 0, 2); // Delivery charge from invoice
     const baseAmountWithDelivery = parseDecimal(invoice.base_amount || (baseAmount + deliveryChargeFromInvoice), 2); // Shipping + Delivery
     
-    console.log('💰 Parsed amounts:', {
+    secureLog.debug('💰 Parsed amounts:', {
         baseAmount,
         deliveryChargeFromInvoice,
         baseAmountWithDelivery
@@ -629,7 +586,7 @@ export default function InvoicePage() {
         const pickupBaseAmount = parseDecimal((invoice as any).pickup_base_amount || 0, 2);
         if (pickupBaseAmount > 0) {
             pickupCharge = pickupBaseAmount;
-            console.log('📦 PH TO UAE: Using pickup_base_amount as pickup charge:', pickupCharge);
+            secureLog.debug('📦 PH TO UAE: Using pickup_base_amount as pickup charge:', pickupCharge);
         }
     }
     
@@ -668,7 +625,7 @@ export default function InvoicePage() {
     // This ensures we always show a weight value
     if (totalKg <= 0) {
         totalKg = weightForCalculation;
-        console.log('⚠️ total_kg not found or 0, using weightForCalculation for display', {
+        secureLog.debug('⚠️ total_kg not found or 0, using weightForCalculation for display', {
             totalKgFromVerification: invoice.request_id?.verification?.total_kg,
             weightForCalculation
         });
@@ -683,7 +640,7 @@ export default function InvoicePage() {
         : (totalKg > 0 ? totalKg : weightForCalculation); // Use total_kg for display (or weightForCalculation as fallback)
     
     // Debug logging for weight extraction
-    console.log('📊 Weight values for invoice display', {
+    secureLog.debug('📊 Weight values for invoice display', {
         totalKg,
         weightForCalculation,
         displayWeight,
@@ -723,7 +680,7 @@ export default function InvoicePage() {
     const hasDirectInsuranceCharge = invoice.insurance_charge !== undefined && invoice.insurance_charge !== null;
     if (hasDirectInsuranceCharge) {
         insuranceCharge = parseDecimal(invoice.insurance_charge, 2);
-        console.log('💰 Insurance charge from direct field:', {
+        secureLog.debug('💰 Insurance charge from direct field:', {
             insurance_charge: invoice.insurance_charge,
             parsed: insuranceCharge,
             willCheckLineItems: false
@@ -740,7 +697,7 @@ export default function InvoicePage() {
             // If insurance_charge is explicitly 0, we should NOT use line_items
             if (description.includes('insurance') && !hasDirectInsuranceCharge) {
                 insuranceCharge += itemTotal;
-                console.log('💰 Insurance charge from line_items (no direct field):', {
+                secureLog.debug('💰 Insurance charge from line_items (no direct field):', {
                     description: item.description,
                     total: item.total,
                     unit_price: item.unit_price,
@@ -757,7 +714,7 @@ export default function InvoicePage() {
                                   description.includes('pick_up');
             if ((pickupCharge === 0 || !invoice.pickup_charge) && isPickupCharge) {
                 pickupCharge += itemTotal; // Use += in case there are multiple pickup line items
-                console.log('✅ Found pickup charge in line_items:', {
+                secureLog.debug('✅ Found pickup charge in line_items:', {
                     description: item.description,
                     itemTotal,
                     accumulatedPickupCharge: pickupCharge
@@ -769,7 +726,7 @@ export default function InvoicePage() {
     }
     
     // Debug: Log final insurance charge value
-    console.log('💰 Final insurance charge for display:', {
+    secureLog.debug('💰 Final insurance charge for display:', {
         insuranceCharge,
         invoiceInsuranceCharge: invoice.insurance_charge,
         hasLineItems: !!invoice.line_items,
@@ -779,7 +736,7 @@ export default function InvoicePage() {
     
     // Debug: Log pickup charge for PH TO UAE COD invoices
     if (isPhToUae && invoiceType === 'normal') {
-        console.log('📦 PH TO UAE COD - Pickup Charge Debug:', {
+        secureLog.debug('📦 PH TO UAE COD - Pickup Charge Debug:', {
             invoicePickupCharge: invoice.pickup_charge,
             parsedPickupCharge: pickupCharge,
             hasLineItems: !!invoice.line_items,
@@ -909,7 +866,7 @@ export default function InvoicePage() {
         k.toLowerCase().includes('charge')
     );
     
-    console.log('🔍 COD Delivery Charge Debug (COMPONENT BODY):', {
+    secureLog.debug('🔍 COD Delivery Charge Debug (COMPONENT BODY):', {
         refreshKey,
         forceUpdate,
         invoice_exists: !!invoice,
@@ -939,7 +896,7 @@ export default function InvoicePage() {
         const calculatedShipping = parseDecimal(totalAmountCod, 2) - pickupCharge - codDeliveryAmount;
         if (calculatedShipping > 0) {
             shippingCharge = parseDecimal(calculatedShipping, 2);
-            console.log('✅ PH TO UAE COD: Calculated shipping charge from total_amount_cod (amount was 0):', {
+            secureLog.debug('✅ PH TO UAE COD: Calculated shipping charge from total_amount_cod (amount was 0):', {
                 totalAmountCod: parseDecimal(totalAmountCod, 2),
                 pickupCharge,
                 codDeliveryAmount,
@@ -971,7 +928,7 @@ export default function InvoicePage() {
                 const calculatedPickupCharge = parsedTotalAmountCod - shippingCharge - codDeliveryAmount;
                 if (calculatedPickupCharge > 0) {
                     pickupCharge = parseDecimal(calculatedPickupCharge, 2);
-                    console.log('📦 PH TO UAE COD: Calculated pickup charge from total:', {
+                    secureLog.debug('📦 PH TO UAE COD: Calculated pickup charge from total:', {
                         totalAmountCod: parsedTotalAmountCod,
                         shippingCharge,
                         codDeliveryAmount,
@@ -994,7 +951,7 @@ export default function InvoicePage() {
                     ? codDeliveryCharge 
                     : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryChargeFromInvoice);
             }
-            console.log('📊 PH TO UAE COD delivery charge:', { 
+            secureLog.debug('📊 PH TO UAE COD delivery charge:', { 
                 totalKg,
                 isWeight15kgOrMore: totalKg >= 15,
                 codDeliveryCharge,
@@ -1012,7 +969,7 @@ export default function InvoicePage() {
         } else {
             // Tax invoice: Always use delivery_charge (updated after Tax edit)
             deliveryCharge = deliveryChargeFromInvoice;
-            console.log('📊 PH TO UAE Tax delivery charge:', { 
+            secureLog.debug('📊 PH TO UAE Tax delivery charge:', { 
                 deliveryChargeFromInvoice, 
                 finalDeliveryCharge: deliveryCharge,
                 invoiceDeliveryCharge: invoice.delivery_charge
@@ -1020,7 +977,7 @@ export default function InvoicePage() {
         }
         
         // Debug: Log all PH TO UAE values for troubleshooting
-        console.log('📊 PH TO UAE Invoice Values:', {
+        secureLog.debug('📊 PH TO UAE Invoice Values:', {
             invoiceType,
             amount: invoice.amount,
             baseAmount,
@@ -1058,13 +1015,13 @@ export default function InvoicePage() {
       taxRate = 0;
       taxAmount = 0;
       useTotalAmountCod = true;
-      console.log('✅ PH TO UAE COD: Using total_amount_cod from database:', totalAmountCod);
+      secureLog.debug('✅ PH TO UAE COD: Using total_amount_cod from database:', totalAmountCod);
     }
     
     // Only recalculate if we haven't already set total from totalAmountCod
     if (!useTotalAmountCod && (!hasValidTaxAmount || total <= 0 || isPhToUaeCodInvoice)) {
       // Recalculate for other cases or if totalAmountCod is not available
-      console.log('⚠️ Database tax/total values missing or invalid, recalculating...', {
+      secureLog.debug('⚠️ Database tax/total values missing or invalid, recalculating...', {
         taxAmount,
         total,
         hasValidTaxAmount,
@@ -1094,7 +1051,7 @@ export default function InvoicePage() {
         // Priority: Use stored total_amount_cod if available and valid, otherwise recalculate
         if (totalAmountCod && totalAmountCod > 0) {
           total = parseDecimal(totalAmountCod, 2);
-          console.log('✅ Using stored total_amount_cod:', totalAmountCod);
+          secureLog.debug('✅ Using stored total_amount_cod:', totalAmountCod);
         } else {
           // Recalculate: For COD invoice when weight < 15kg: Use cod_delivery_charge directly
           // For weight >= 15kg: delivery is free (0)
@@ -1104,7 +1061,7 @@ export default function InvoicePage() {
           const calculatedCodTotal = shippingCharge + codDeliveryAmount;
           total = calculatedCodTotal > 0 ? parseDecimal(calculatedCodTotal, 2) : parseDecimal(subtotal, 2);
           
-          console.log('📊 PH TO UAE COD Invoice total calculation (recalculated):', {
+          secureLog.debug('📊 PH TO UAE COD Invoice total calculation (recalculated):', {
             totalAmountCod,
             shippingCharge,
             deliveryCharge,
@@ -1143,9 +1100,9 @@ export default function InvoicePage() {
           if (isLikelyCodInvoice && taxRate === 5) {
             taxRate = 0;
             taxAmount = 0;
-            console.log('⚠️ Correcting tax_rate from 5 to 0 (COD invoice detected)');
+            secureLog.debug('⚠️ Correcting tax_rate from 5 to 0 (COD invoice detected)');
           }
-          console.log('✅ PH TO UAE COD: Using total_amount_cod (overriding database total):', {
+          secureLog.debug('✅ PH TO UAE COD: Using total_amount_cod (overriding database total):', {
             totalAmountCod,
             databaseTotal,
             newTotal: total,
@@ -1160,7 +1117,7 @@ export default function InvoicePage() {
           const calculatedCodTotal = shippingCharge + codDeliveryAmount;
           if (calculatedCodTotal > 0) {
             total = parseDecimal(calculatedCodTotal, 2);
-            console.log('⚠️ PH TO UAE COD: Database total is 0, using calculated total:', {
+            secureLog.debug('⚠️ PH TO UAE COD: Database total is 0, using calculated total:', {
               calculatedCodTotal,
               shippingCharge,
               deliveryCharge,
@@ -1175,7 +1132,7 @@ export default function InvoicePage() {
         // For UAE to PH commercial shipments: Use database total_amount (trust database value)
         // Database total_amount is the source of truth
         total = parseDecimal(invoice.total_amount || subtotal, 2);
-        console.log('✅ UAE TO PH Commercial: Using database total_amount:', {
+        secureLog.debug('✅ UAE TO PH Commercial: Using database total_amount:', {
           databaseTotal: invoice.total_amount,
           subtotal,
           insuranceCharge,
@@ -1185,7 +1142,7 @@ export default function InvoicePage() {
           finalTotal: total
         });
       }
-      console.log('✅ Using database tax/total values:', {
+      secureLog.debug('✅ Using database tax/total values:', {
         taxRate,
         taxAmount,
         total,
@@ -1428,12 +1385,12 @@ export default function InvoicePage() {
                         // - If weight >= 15kg: Show 0 (free delivery) but keep cod_delivery_charge in DB
                         // - If weight < 15kg: Use local edit or cod_delivery_charge if available (even if 0), otherwise deliveryCharge
                         if (totalKg >= 15) {
-                            console.log('📦 PH TO UAE COD: Weight >= 15kg, showing 0 for delivery (free delivery)');
+                            secureLog.debug('📦 PH TO UAE COD: Weight >= 15kg, showing 0 for delivery (free delivery)');
                             return 0; // Show 0 for free delivery, but cod_delivery_charge stays in DB
                         }
                         // Use local COD edit if available, otherwise use cod_delivery_charge from database
                         if (localCodEdits?.delivery_base_amount !== undefined) {
-                            console.log('📦 PH TO UAE COD: Using local edit for delivery charge:', localCodEdits.delivery_base_amount);
+                            secureLog.debug('📦 PH TO UAE COD: Using local edit for delivery charge:', localCodEdits.delivery_base_amount);
                             return parseDecimal(localCodEdits.delivery_base_amount, 2);
                         }
                         // Prioritize cod_delivery_charge from database (this is the value saved after edit)
@@ -1441,7 +1398,7 @@ export default function InvoicePage() {
                         const finalDeliveryCharge = currentCodDeliveryCharge !== undefined
                             ? currentCodDeliveryCharge
                             : (currentDeliveryBaseAmount > 0 ? currentDeliveryBaseAmount : deliveryCharge);
-                        console.log('📦 PH TO UAE COD: Delivery charge calculation (RE-READ FROM STATE):', {
+                        secureLog.debug('📦 PH TO UAE COD: Delivery charge calculation (RE-READ FROM STATE):', {
                             refreshKey,
                             forceUpdate,
                             cod_delivery_charge_from_state: (invoice as any).cod_delivery_charge,
@@ -1513,7 +1470,7 @@ export default function InvoicePage() {
                             ? 0 
                             : (deliveryBaseAmount > 0 ? deliveryBaseAmount : deliveryCharge);
                         const calculatedCod = localShipping + localPickup + codDeliveryAmount;
-                        console.log('✅ PH TO UAE COD: Calculating total from displayed charges:', {
+                        secureLog.debug('✅ PH TO UAE COD: Calculating total from displayed charges:', {
                             totalKg,
                             isWeight15kgOrMore: totalKg >= 15,
                             localShipping,
@@ -1532,7 +1489,7 @@ export default function InvoicePage() {
                         const invoiceTotalAmountTaxInvoice = (invoice as any).total_amount_tax_invoice || (invoice as any).totalAmountTaxInvoice;
                         if (invoiceTotalAmountTaxInvoice && parseDecimal(invoiceTotalAmountTaxInvoice, 2) > 0) {
                             const taxTotal = parseDecimal(invoiceTotalAmountTaxInvoice, 2);
-                            console.log('✅ PH TO UAE Tax: Using totalAmountTaxInvoice from invoice object:', {
+                            secureLog.debug('✅ PH TO UAE Tax: Using totalAmountTaxInvoice from invoice object:', {
                                 invoiceType,
                                 invoiceTotalAmountTaxInvoice,
                                 taxTotal,
@@ -1545,7 +1502,7 @@ export default function InvoicePage() {
                         } else {
                             // Fallback: Calculate from delivery + tax
                             const calculatedTax = deliveryChargeFromInvoice + (deliveryChargeFromInvoice * 5 / 100);
-                            console.log('⚠️ PH TO UAE Tax: totalAmountTaxInvoice not in invoice, calculating:', {
+                            secureLog.debug('⚠️ PH TO UAE Tax: totalAmountTaxInvoice not in invoice, calculating:', {
                                 deliveryChargeFromInvoice,
                                 calculatedTax
                             });
@@ -1554,7 +1511,7 @@ export default function InvoicePage() {
                     }
                 }
                 // Use calculated total for other cases
-                console.log('⚠️ Using calculated total (non-PH TO UAE):', {
+                secureLog.debug('⚠️ Using calculated total (non-PH TO UAE):', {
                     isPhToUae,
                     invoiceType,
                     taxRate,
@@ -1598,7 +1555,7 @@ export default function InvoicePage() {
         taxRateForTaxInvoice = 5; // Always 5% VAT for PH TO UAE tax invoices
         // Calculate tax on delivery charge (5% VAT)
         taxAmountForTaxInvoice = parseDecimal((deliveryCharge * taxRateForTaxInvoice) / 100, 2);
-        console.log('📊 PH TO UAE Tax Invoice tax calculation:', {
+        secureLog.debug('📊 PH TO UAE Tax Invoice tax calculation:', {
             deliveryCharge,
             taxRate: taxRateForTaxInvoice,
             calculatedTax: taxAmountForTaxInvoice,
@@ -1642,7 +1599,7 @@ export default function InvoicePage() {
         };
 
     // Debug: Log mapped invoice data
-    console.log('📊 Mapped invoiceData:', {
+    secureLog.debug('📊 Mapped invoiceData:', {
         ...invoiceData,
         charges: {
             ...invoiceData.charges,
@@ -1682,7 +1639,7 @@ export default function InvoicePage() {
             
             await html2pdf().set(opt).from(invoiceElement).save();
         } catch (error) {
-            console.error('Error generating PDF:', error);
+            secureLog.error('Error generating PDF:', error);
             // Fallback to print dialog
             handlePrint();
         }
@@ -1889,7 +1846,7 @@ export default function InvoicePage() {
                 description: `Invoice exported to ${filename}`,
             });
         } catch (error) {
-            console.error('Error generating Excel:', error);
+            secureLog.error('Error generating Excel:', error);
             toast({
                 variant: 'destructive',
                 title: 'Export Failed',
@@ -1943,7 +1900,7 @@ export default function InvoicePage() {
 
         const amount = getDeliveryAssignmentAmount(invoiceData);
         if (amount <= 0) {
-            console.warn('Delivery assignment update skipped: amount is invalid.', {
+            secureLog.warn('Delivery assignment update skipped: amount is invalid.', {
                 invoiceId: invoiceIdentifier,
                 amount
             });
@@ -1968,7 +1925,7 @@ export default function InvoicePage() {
                 const assignment = assignmentResult.data as any;
                 const assignmentId = assignment?._id || assignment?.id;
                 if (!assignmentId) {
-                    console.warn('Delivery assignment update skipped: assignment ID missing.', assignment);
+                    secureLog.warn('Delivery assignment update skipped: assignment ID missing.', assignment);
                     return;
                 }
 
@@ -1985,13 +1942,13 @@ export default function InvoicePage() {
                 if (updateResult.success && updateResult.data) {
                     setQrCodeData(updateResult.data);
                 } else {
-                    console.warn('Delivery assignment update failed:', updateResult?.error || updateResult);
+                    secureLog.warn('Delivery assignment update failed:', updateResult?.error || updateResult);
                 }
                 return;
             }
 
             if (!requestId || !clientId) {
-                console.warn('Delivery assignment creation skipped: missing requestId/clientId.', {
+                secureLog.warn('Delivery assignment creation skipped: missing requestId/clientId.', {
                     invoiceId: invoiceIdentifier,
                     requestId,
                     clientId
@@ -2013,10 +1970,10 @@ export default function InvoicePage() {
             if (createResult.success && createResult.data) {
                 setQrCodeData(createResult.data);
             } else {
-                console.warn('Delivery assignment creation failed:', createResult?.error || createResult);
+                secureLog.warn('Delivery assignment creation failed:', createResult?.error || createResult);
             }
         } catch (error) {
-            console.warn('Delivery assignment reinitiation failed:', error);
+            secureLog.warn('Delivery assignment reinitiation failed:', error);
         }
     };
 
@@ -2080,7 +2037,7 @@ export default function InvoicePage() {
             }
             
             // Debug: Verify critical fields are in payload
-            console.log('🔍 [Edit Invoice] Payload verification:', {
+            secureLog.debug('🔍 [Edit Invoice] Payload verification:', {
                 hasWeightKg: payload.hasOwnProperty('weight_kg'),
                 weightKg: payload.weight_kg,
                 hasWeightType: payload.hasOwnProperty('weight_type'),
@@ -2116,7 +2073,7 @@ export default function InvoicePage() {
             payload.regenerate = true;
 
             // Debug: Log the payload being sent
-            console.log('📤 [Edit Invoice] Sending update request:', {
+            secureLog.debug('📤 [Edit Invoice] Sending update request:', {
                 invoiceId: invoiceIdentifier,
                 payload: payload,
                 payloadSize: JSON.stringify(payload).length,
@@ -2126,7 +2083,7 @@ export default function InvoicePage() {
             const result = await apiClient.updateInvoiceUnified(invoiceIdentifier, payload);
             
             // Debug: Log the response
-            console.log('📥 [Edit Invoice] Update response:', {
+            secureLog.debug('📥 [Edit Invoice] Update response:', {
                 success: result.success,
                 data: result.data,
                 error: result.error
@@ -2142,7 +2099,7 @@ export default function InvoicePage() {
                 });
                 setShowEditDialog(false);
             } else {
-                console.error('❌ [Edit Invoice] Update failed:', {
+                secureLog.error('❌ [Edit Invoice] Update failed:', {
                     error: result.error,
                     response: result
                 });
@@ -2153,7 +2110,7 @@ export default function InvoicePage() {
                 });
             }
         } catch (err: any) {
-            console.error('❌ [Edit Invoice] Exception during update:', {
+            secureLog.error('❌ [Edit Invoice] Exception during update:', {
                 error: err,
                 message: err.message,
                 stack: err.stack
@@ -2326,7 +2283,7 @@ export default function InvoicePage() {
     const refreshInvoiceAfterEdit = async () => {
         try {
             const refreshResult = await apiClient.getInvoiceUnified(invoiceId);
-            console.log('🔄 Raw API response:', {
+            secureLog.debug('🔄 Raw API response:', {
                 success: refreshResult.success,
                 hasData: !!refreshResult.data,
                 dataKeys: refreshResult.data ? Object.keys(refreshResult.data) : [],
@@ -2338,7 +2295,7 @@ export default function InvoicePage() {
                 const invoiceData = refreshResult.data as any;
                 // Debug: Log the refreshed invoice data to verify updated values
                 const codDeliveryChargeFromApi = (invoiceData as any).cod_delivery_charge;
-                console.log('🔄 Refreshed invoice after edit:', {
+                secureLog.debug('🔄 Refreshed invoice after edit:', {
                     amount: invoiceData.amount,
                     delivery_charge: invoiceData.delivery_charge,
                     cod_delivery_charge: codDeliveryChargeFromApi, // COD delivery charge for PH TO UAE
@@ -2371,7 +2328,7 @@ export default function InvoicePage() {
                 const updatedInvoice = JSON.parse(JSON.stringify(refreshResult.data));
                 
                 // Debug: Log insurance charge specifically BEFORE state update
-                console.log('🔄 Insurance charge after refresh (BEFORE state update):', {
+                secureLog.debug('🔄 Insurance charge after refresh (BEFORE state update):', {
                     directField: updatedInvoice.insurance_charge,
                     fromLineItems: updatedInvoice.line_items?.find((item: any) => 
                         item.description?.toLowerCase().includes('insurance')
@@ -2393,7 +2350,7 @@ export default function InvoicePage() {
                 setInvoice((prevInvoice: any) => {
                     // Create a completely new object to ensure React detects the change
                     const newInvoice = JSON.parse(JSON.stringify(updatedInvoice));
-                    console.log('🔄 setInvoice called with new invoice:', {
+                    secureLog.debug('🔄 setInvoice called with new invoice:', {
                         prev_cod_delivery_charge: (prevInvoice as any)?.cod_delivery_charge,
                         new_cod_delivery_charge: (newInvoice as any).cod_delivery_charge,
                         invoice_id: newInvoice._id || newInvoice.invoice_id
@@ -2405,7 +2362,7 @@ export default function InvoicePage() {
                 setForceUpdate(prev => prev + 1); // Additional trigger to force recalculation
                 
                 // Debug: Log critical fields AFTER state update
-                console.log('🔄 Invoice state updated after refresh:', {
+                secureLog.debug('🔄 Invoice state updated after refresh:', {
                     refreshKey: newRefreshKey,
                     cod_delivery_charge: codDeliveryChargeInUpdated,
                     cod_delivery_charge_type: typeof codDeliveryChargeInUpdated,
@@ -2602,7 +2559,7 @@ export default function InvoicePage() {
                 return invoiceData;
             }
         } catch (refreshError) {
-            console.error('Error refreshing invoice after update:', refreshError);
+            secureLog.error('Error refreshing invoice after update:', refreshError);
         }
         return null;
     };

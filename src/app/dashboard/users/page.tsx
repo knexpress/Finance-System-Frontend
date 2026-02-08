@@ -31,6 +31,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
+import { secureLog } from '@/lib/secure-logger';
 import { PlusCircle, Trash2, Edit, UserCheck, UserX, KeyRound } from 'lucide-react';
 
 interface Employee {
@@ -110,10 +111,10 @@ export default function UserManagement() {
         const usersData = Array.isArray(result.data) ? result.data : [];
         setUsers(usersData);
       } else {
-        console.error('Error fetching users:', (result as any).error);
+        secureLog.error('Error fetching users', (result as any).error);
       }
     } catch (error) {
-      console.error('Error fetching users:', error);
+      secureLog.error('Error fetching users', error);
     } finally {
       setLoading(false);
     }
@@ -122,10 +123,9 @@ export default function UserManagement() {
   const fetchAvailableEmployees = async () => {
     try {
       const result = await apiClient.getAvailableEmployees();
-      console.log('Available employees result:', result);
+      secureLog.debug('Available employees result', { success: result.success });
       if (result.success) {
         const employees = Array.isArray(result.data) ? result.data : [];
-        console.log('Available employees:', employees);
         setAvailableEmployees(employees);
         if (employees.length === 0) {
           toast({
@@ -135,7 +135,7 @@ export default function UserManagement() {
           });
         }
       } else {
-        console.error('Error fetching available employees:', result.error);
+        secureLog.error('Error fetching available employees', result.error);
         toast({
           variant: 'destructive',
           title: 'Error',
@@ -143,7 +143,7 @@ export default function UserManagement() {
         });
       }
     } catch (error) {
-      console.error('Error fetching available employees:', error);
+      secureLog.error('Error fetching available employees', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -159,10 +159,10 @@ export default function UserManagement() {
         const departmentsData = Array.isArray(result.data) ? result.data : [];
         setDepartments(departmentsData);
       } else {
-        console.error('Error fetching departments:', (result as any).error);
+        secureLog.error('Error fetching departments', (result as any).error);
       }
     } catch (error) {
-      console.error('Error fetching departments:', error);
+      secureLog.error('Error fetching departments', error);
     }
   };
 
@@ -312,14 +312,9 @@ export default function UserManagement() {
       // Get the password value - if empty, send undefined to use default
       const passwordValue = resetPasswordData.password.trim();
       const password = passwordValue.length > 0 ? passwordValue : undefined;
-      
-      console.log('Resetting password for user:', resetPasswordData.userId);
-      console.log('Password provided:', password ? 'Yes (custom)' : 'No (will use default)');
-      console.log('Password value:', password ? '***' : 'undefined');
-      
-      const result = await apiClient.resetUserPassword(resetPasswordData.userId, password);
+      secureLog.debug('Resetting password', { userId: resetPasswordData.userId, hasCustomPassword: !!password });
 
-      console.log('Reset password result:', result);
+      const result = await apiClient.resetUserPassword(resetPasswordData.userId, password);
 
       if (result.success) {
         toast({
@@ -332,7 +327,7 @@ export default function UserManagement() {
         // Invalidate users cache to refresh data
         apiClient.invalidateCache('/users');
       } else {
-        console.error('Password reset failed:', result.error);
+        secureLog.error('Password reset failed', result.error);
         toast({
           variant: 'destructive',
           title: 'Error',
@@ -340,7 +335,7 @@ export default function UserManagement() {
         });
       }
     } catch (error: any) {
-      console.error('Password reset error:', error);
+      secureLog.error('Password reset error', error);
       toast({
         variant: 'destructive',
         title: 'Error',

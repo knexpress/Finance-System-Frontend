@@ -18,6 +18,7 @@ import { Eye, TrendingUp, FileSpreadsheet, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
 import * as XLSX from 'xlsx';
 import { apiClient } from '@/lib/api-client';
+import { secureLog } from '@/lib/secure-logger';
 
 interface InvoicesTableProps {
     invoices: any[];
@@ -75,7 +76,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             // Debug: show extraction results for troubleshooting local "still N/A"
             if (process.env.NODE_ENV === 'development') {
                 const sample = invoiceList?.[0];
-                console.log('📤 Excel Export - RequestId Extraction Debug:', {
+                secureLog.debug('Excel Export - RequestId Extraction', {
                     invoicesCount: invoiceList?.length || 0,
                     requestIdsCount: requestIds.length,
                     firstInvoice: sample ? {
@@ -123,7 +124,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 });
 
                 if (process.env.NODE_ENV === 'development') {
-                    console.log('📤 Excel Export - invoiceRequests fetched:', {
+                    secureLog.debug('Excel Export - invoiceRequests fetched', {
                         requested: requestIds.length,
                         loaded: invoiceRequestById.size,
                         note: 'If loaded is 0, check backend /invoice-requests/:id availability and auth.'
@@ -264,7 +265,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 
                 // Debug: Log the extracted values
                 if (invoiceList.indexOf(invoice) === 0) {
-                    console.log('📊 Excel Export - First Invoice Sample:', {
+                    secureLog.debug('Excel Export - First Invoice Sample', {
                         invoice_id: invoice.invoice_id,
                         hasRequestId: !!invoiceRequestId,
                         senderDeliveryOption,
@@ -364,7 +365,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     await writable.close();
                 } catch (error: any) {
                     if (error?.name !== 'AbortError') {
-                        console.warn('File handle write failed, falling back to download.', error);
+                        secureLog.warn('File handle write failed, falling back to download', error);
                     }
                     // Fallback for browsers/contexts that block File System Access API
                     XLSX.writeFile(wb, filename);
@@ -378,7 +379,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 description: `${invoiceList.length} invoice(s) exported to ${filename}`,
             });
         } catch (error) {
-            console.error('Error generating Excel:', error);
+            secureLog.error('Error generating Excel', error);
             toast({
                 variant: 'destructive',
                 title: 'Export Failed',
@@ -411,7 +412,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             } catch (error: any) {
                 setIsExporting(false);
                 if (error?.name !== 'AbortError') {
-                    console.error('Error selecting export file:', error);
+                    secureLog.error('Error selecting export file', error);
                     toast({
                         variant: 'destructive',
                         title: 'Export Failed',
@@ -442,7 +443,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             await handleDownloadExcel(result.data, filename, fileHandle);
             setIsExporting(false);
         } catch (error) {
-            console.error('Error fetching invoices for export:', error);
+            secureLog.error('Error fetching invoices for export', error);
             toast({
                 variant: 'destructive',
                 title: 'Export Failed',
@@ -505,7 +506,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         {safeInvoices.map((invoice) => {
                             // Debug: Log batch_number for first invoice to verify data structure
                             if (safeInvoices.indexOf(invoice) === 0) {
-                                console.log('🔍 Invoice Batch Number Debug:', {
+                                secureLog.debug('Invoice Batch Number', {
                                     invoice_id: invoice.invoice_id,
                                     batch_number: invoice.batch_number,
                                     batch_number_type: typeof invoice.batch_number,

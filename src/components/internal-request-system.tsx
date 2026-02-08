@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { InternalRequest, UserProfile, Department } from '@/lib/types';
 import { departments } from '@/lib/data';
+import { secureLog } from '@/lib/secure-logger';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -61,7 +62,7 @@ export default function InternalRequestSystem({
   currentUser: UserProfile,
   onTicketUpdate?: () => void 
 }) {
-  console.log('InternalRequestSystem received requests:', requests, 'Type:', typeof requests, 'Is array:', Array.isArray(requests));
+  secureLog.debug('InternalRequestSystem received requests', { count: Array.isArray(requests) ? requests.length : 0, isArray: Array.isArray(requests) });
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const { toast } = useToast();

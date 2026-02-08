@@ -139,18 +139,13 @@ class ApiClient {
       }
 
       // Log request for debugging (only in development)
-      if (process.env.NODE_ENV === 'development') {
-        const runtime = typeof window === 'undefined' ? 'server' : 'client';
-        console.log(`[API:${runtime}] ${options.method || 'GET'} ${url}`);
-        if (options.body) {
-          try {
-            const bodyData = JSON.parse(options.body as string);
-            console.log(`[API:${runtime}] Request Body:`, bodyData);
-          } catch (e) {
-            console.log(`[API:${runtime}] Request Body:`, options.body);
-          }
+      secureLog.debug(`[API] ${options.method || 'GET'} ${url}`, options.body ? (() => {
+        try {
+          return JSON.parse(options.body as string);
+        } catch {
+          return undefined;
         }
-      }
+      })() : undefined);
 
       const startTime = Date.now();
       const response = await fetch(url, {
@@ -160,11 +155,7 @@ class ApiClient {
       });
 
       // Log response status in development
-      if (process.env.NODE_ENV === 'development') {
-        const runtime = typeof window === 'undefined' ? 'server' : 'client';
-        const durationMs = Date.now() - startTime;
-        console.log(`[API:${runtime}] ${options.method || 'GET'} ${url} -> ${response.status} (${durationMs}ms)`);
-      }
+      secureLog.debug(`[API] ${options.method || 'GET'} ${url} -> ${response.status} (${Date.now() - startTime}ms)`);
 
       if (!response.ok) {
         // Get response text first to check if there's content
@@ -328,10 +319,8 @@ class ApiClient {
   async resetUserPassword(userId: string, password?: string) {
     // If password is provided, include it in the body; otherwise send empty object for default reset
     const body = password && password.length > 0 ? { password } : {};
-    
-    console.log('[API] Reset Password - User ID:', userId);
-    console.log('[API] Reset Password - Body:', body);
-    
+    secureLog.debug('[API] Reset Password', { userId, hasCustomPassword: !!password });
+
     // Don't use cache for POST requests
     return this.request(`/users/${userId}/reset-password`, {
       method: 'POST',
@@ -702,7 +691,7 @@ class ApiClient {
         }
       } else {
         // Error occurred, break the loop
-        console.error('Error fetching invoice requests page', currentPage, ':', result.error);
+        secureLog.error('Error fetching invoice requests page', { currentPage, error: result.error });
         break;
       }
     } while (currentPage <= totalPages);

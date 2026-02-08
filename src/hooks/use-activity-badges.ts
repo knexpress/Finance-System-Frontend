@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import apiClient from '@/lib/api-client';
+import { secureLog } from '@/lib/secure-logger';
 
 type ActivityMap = Record<string, string>;
 type HasNewMap = Record<string, boolean>;
@@ -68,7 +69,7 @@ export function useActivityBadges() {
         if (isMounted && error?.message && !error.message.includes('404')) {
           // Only log non-404 errors in development
           if (process.env.NODE_ENV === 'development') {
-            console.debug('Activity last-updated endpoint not available:', error.message);
+            secureLog.debug('Activity last-updated endpoint not available', { message: error.message });
           }
         }
       }

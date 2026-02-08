@@ -18,6 +18,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { secureLog } from '@/lib/secure-logger';
 
 export default function InvoicesPage() {
     const { department } = useAuth();
@@ -65,12 +66,12 @@ export default function InvoicesPage() {
         const loadInvoiceData = async () => {
             setLoading(true);
             try {
-                console.log('🔄 Loading invoices from API...', {
+                secureLog.debug('Loading invoices from API', {
                     page: currentPage,
                     limit: itemsPerPage,
                     search: debouncedSearchQuery || undefined
                 });
-                
+
                 const result = await apiClient.getInvoicesUnified({
                     page: currentPage,
                     limit: itemsPerPage,
@@ -78,20 +79,17 @@ export default function InvoicesPage() {
                     useCache: currentPage === 1 && !debouncedSearchQuery // Only cache first page without search
                 });
                 
-                console.log('📊 Invoices API result:', result);
-                
+                secureLog.debug('Invoices API result', { success: result?.success });
+
                 if (result && result.success && result.data) {
-                    console.log('✅ Invoices loaded successfully');
                     const invoiceData = result.data as any;
                     const paginationData = (result as any).pagination;
-                    
-                    console.log('📋 Number of invoices:', Array.isArray(invoiceData) ? invoiceData.length : 0);
-                    console.log('📋 Pagination:', paginationData);
-                    
+                    secureLog.debug('Invoices loaded', { count: Array.isArray(invoiceData) ? invoiceData.length : 0, pagination: paginationData });
+
                     setInvoices(Array.isArray(invoiceData) ? invoiceData : []);
                     setPagination(paginationData || null);
                 } else {
-                    console.error('❌ Error loading invoices:', result?.error || 'Unknown error');
+                    secureLog.error('Error loading invoices', result?.error || 'Unknown error');
                     toast({
                         variant: 'destructive',
                         title: 'Error',
@@ -199,7 +197,7 @@ export default function InvoicesPage() {
                 });
             }
         } catch (error) {
-            console.error('Error updating invoice:', error);
+            secureLog.error('Error updating invoice', error);
             toast({
                 variant: 'destructive',
                 title: 'Error',
@@ -253,7 +251,7 @@ export default function InvoicesPage() {
                 });
             }
         } catch (error: any) {
-            console.error('Error cancelling invoice:', error);
+            secureLog.error('Error cancelling invoice', error);
             toast({
                 variant: 'destructive',
                 title: 'Error',

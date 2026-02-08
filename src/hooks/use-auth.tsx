@@ -51,7 +51,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         
         // Ensure API client has the token if user is logged in
         const storedToken = apiClient.getToken();
-        if (storedToken && !apiClient.getToken()) {
+        if (storedToken) {
           apiClient.setToken(storedToken);
         }
       }

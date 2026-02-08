@@ -30,6 +30,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { secureLog } from '@/lib/secure-logger';
+import { getAwbNumber, isPhToUaeService, isUaeToPhService } from '@/lib/invoice-request-utils';
+import InvoiceRequestCard from '@/components/invoice-request-card';
 // Dynamically import heavy form components to reduce initial bundle size
 const SalesBookingForm = dynamic(() => import('@/components/sales-booking-form'), {
   ssr: false
@@ -38,258 +40,6 @@ const VerificationForm = dynamic(() => import('@/components/verification-form'),
   ssr: false
 });
 import { Edit, Trash2, Package, Truck, CheckCircle, XCircle, FileText, ArrowRight, Phone, MapPin, AlertTriangle, Hash, Download, ChevronLeft, ChevronRight, Loader2, ArrowUp, X } from 'lucide-react';
-import BookingReviewModal from '@/components/booking-review-modal';
-
-const normalizeServiceCode = (code?: string | null) =>
-  (code || '')
-    .toString()
-    .toUpperCase()
-    .replace(/[\s-]+/g, '_');
-
-const isPhToUaeService = (code?: string | null) => {
-  const normalized = normalizeServiceCode(code);
-  return normalized === 'PH_TO_UAE' || normalized.startsWith('PH_TO_UAE_');
-};
-
-const isUaeToPhService = (code?: string | null) => {
-  const normalized = normalizeServiceCode(code);
-  // Check for UAE_TO_PH, UAE_TO_PINAS, and variations
-  return normalized === 'UAE_TO_PH' || 
-         normalized === 'UAE_TO_PINAS' ||
-         normalized.startsWith('UAE_TO_PH_') ||
-         normalized.startsWith('UAE_TO_PINAS_') ||
-         normalized.includes('UAE_TO_PINAS');
-};
-
-// Helper function to extract AWB number from request (moved outside component for performance)
-const getAwbNumber = (request: any): string => {
-  const awb = (
-    request.awb ||
-    request.tracking_code ||
-    request.awb_number ||
-    request.request_id?.awb ||
-    request.request_id?.tracking_code ||
-    request.request_id?.awb_number ||
-    request.booking?.awb ||
-    request.booking?.tracking_code ||
-    request.booking?.awb_number ||
-    ''
-  ).toString().trim();
-  
-  // Don't return _id as AWB - only return if it's actually an AWB format
-  // Made less strict: allow shorter AWBs and be more lenient with format
-  if (awb && awb !== request._id?.toString()) {
-    // Allow if it looks like an AWB (alphanumeric, reasonable length)
-    if (awb.length >= 3 && /^[A-Z0-9\-_]+$/i.test(awb)) {
-      return awb;
-    }
-  }
-  
-  return '';
-};
-
-// Memoized Invoice Request Card Component - Only re-renders when its props change
-interface InvoiceRequestCardProps {
-  request: any;
-  userProfile: any;
-  formatWeightValue: (value: any) => string | null;
-  formatDateLabel: (date: string | Date) => string;
-  formatServiceCode: (code?: string | null) => string;
-  getStatusBadgeColor: (status: string) => string;
-  renderActionControls: (request: any) => ReactNode;
-  fetchInvoiceRequests: () => void;
-  onBadgeClick?: (request: any) => void;
-}
-
-const InvoiceRequestCard = memo(({
-  request,
-  userProfile,
-  formatWeightValue,
-  formatDateLabel,
-  formatServiceCode,
-  getStatusBadgeColor,
-  renderActionControls,
-  fetchInvoiceRequests,
-  onBadgeClick,
-}: InvoiceRequestCardProps) => {
-  const shortId =
-    request.invoice_number ||
-    request.tracking_code ||
-    (request._id ? request._id.slice(-8) : 'REQUEST');
-  
-  // Extract AWB number from request
-  const awbNumber = 
-    request.tracking_code ||
-    request.awb_number ||
-    request.request_id?.tracking_code ||
-    request.request_id?.awb_number ||
-    'N/A';
-  
-  const weightDisplay =
-    formatWeightValue(request.weight) ||
-    formatWeightValue(request.weight_kg) ||
-    formatWeightValue(request.verification?.actual_weight);
-  const routeFrom = request.origin_place || 'Not set';
-  const routeTo = request.destination_place || 'Not set';
-  const createdLabel = formatDateLabel(request.createdAt);
-  const totalBoxes =
-    request.verification?.number_of_boxes ||
-    request.number_of_boxes ||
-    request.verification?.boxes?.length;
-  const actions = renderActionControls(request);
-
-  // Check if invoice is generated
-  const hasInvoice = !!(request.invoice_id || request.invoice_number);
-  
-  return (
-    <div
-      key={request._id}
-      className={`rounded-2xl border p-4 shadow-sm transition ${
-        hasInvoice 
-          ? 'border-green-500/50 bg-green-50/30 hover:border-green-500/70' 
-          : 'border-border/60 bg-card hover:border-primary/40'
-      }`}
-    >
-      <div className="flex flex-col gap-3 border-b border-dashed pb-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge 
-            variant="outline" 
-            className={`font-mono text-xs uppercase ${userProfile?.department?.name === 'Sales' && onBadgeClick ? 'cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors' : ''}`}
-            onClick={() => {
-              if (userProfile?.department?.name === 'Sales' && onBadgeClick) {
-                onBadgeClick(request);
-              }
-            }}
-          >
-            {shortId}
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            Created {createdLabel}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge className={getStatusBadgeColor(request.status)}>
-            {request.status}
-          </Badge>
-          {request.has_delivery && (
-            <Badge variant="secondary">Delivery</Badge>
-          )}
-        </div>
-      </div>
-
-      <div className="grid gap-4 pt-4 md:grid-cols-2 lg:grid-cols-5">
-        <div className="space-y-1">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">AWB Number</p>
-          <div className="flex items-center gap-1.5">
-            <Hash className="h-3.5 w-3.5 text-muted-foreground" />
-            <p className="font-mono font-semibold text-foreground text-sm">{awbNumber}</p>
-          </div>
-        </div>
-
-        <div className="space-y-1">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Customer</p>
-          <p className="font-semibold text-foreground">{request.customer_name}</p>
-          {request.customer_phone && (
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Phone className="h-3.5 w-3.5" />
-              <span>{request.customer_phone}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-1">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Receiver</p>
-          <p className="font-semibold text-foreground">{request.receiver_name}</p>
-          {request.receiver_company && (
-            <p className="text-sm text-muted-foreground">{request.receiver_company}</p>
-          )}
-          {request.receiver_phone && (
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Phone className="h-3.5 w-3.5" />
-              <span>{request.receiver_phone}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Route</p>
-          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-            <div className="flex-1 space-y-1">
-              <div className="flex items-start gap-1 font-medium text-foreground">
-                <MapPin className="mt-0.5 h-3.5 w-3.5 text-primary" />
-                <span className="break-words">{routeFrom}</span>
-              </div>
-              <p className="text-xs uppercase tracking-wide opacity-80">Origin</p>
-            </div>
-            <ArrowRight className="mt-1 h-4 w-4 text-primary" />
-            <div className="flex-1 space-y-1">
-              <div className="flex items-start gap-1 font-medium text-foreground">
-                <MapPin className="mt-0.5 h-3.5 w-3.5 text-orange-500" />
-                <span className="break-words">{routeTo}</span>
-              </div>
-              <p className="text-xs uppercase tracking-wide opacity-80">Destination</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Shipment</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">
-              {request.shipment_type === 'DOCUMENT' ? 'Document' : 'Non-Document'}
-            </Badge>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Weight:{' '}
-            {weightDisplay ? (
-              <span className="font-semibold text-foreground">{weightDisplay} kg</span>
-            ) : (
-              'Not set'
-            )}
-          </p>
-          {totalBoxes && (
-            <p className="text-sm text-muted-foreground">
-              Boxes:{' '}
-              <span className="font-semibold text-foreground">{totalBoxes}</span>
-            </p>
-          )}
-        </div>
-      </div>
-
-      {userProfile.department.name === 'Operations' && request.status === 'IN_PROGRESS' && (
-        <div className="mt-4 rounded-lg border border-dashed border-orange-200 bg-orange-50 p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-orange-700">
-            <AlertTriangle className="h-4 w-4" />
-            <span>Complete the verification before sending to Finance</span>
-          </div>
-          <div className="mt-3">
-            <VerificationForm
-              request={request}
-              onVerificationComplete={fetchInvoiceRequests}
-              currentUser={userProfile}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>Service:</span>
-          <Badge variant="outline">{formatServiceCode(request.service_code)}</Badge>
-          {request.has_delivery && <Badge variant="secondary">Delivery Required</Badge>}
-          {request.is_leviable && <Badge variant="outline">VAT applicable</Badge>}
-        </div>
-        {actions ? (
-          <div className="flex flex-wrap gap-2">{actions}</div>
-        ) : (
-          <div className="text-xs text-muted-foreground">No actions available</div>
-        )}
-      </div>
-    </div>
-  );
-});
-
-InvoiceRequestCard.displayName = 'InvoiceRequestCard';
 
 export default function InvoiceRequestsPage() {
   const [invoiceRequests, setInvoiceRequests] = useState<any[]>([]);
@@ -318,9 +68,6 @@ export default function InvoiceRequestsPage() {
   const isFetchingRef = useRef(false); // Track if a fetch is currently in progress
   const pendingFilterChangeRef = useRef<string | null>(null); // Track pending filter changes
   const [showTaxInputDialog, setShowTaxInputDialog] = useState(false);
-  const [selectedBooking, setSelectedBooking] = useState<any>(null);
-  const [showBookingModal, setShowBookingModal] = useState(false);
-  const [loadingBooking, setLoadingBooking] = useState(false);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [showShipmentDetailsDialog, setShowShipmentDetailsDialog] = useState(false);
   const [loadingShipmentDetails, setLoadingShipmentDetails] = useState(false);
@@ -1472,116 +1219,6 @@ export default function InvoiceRequestsPage() {
     }
   };
 
-  // Handle badge click for Sales users to view booking details
-  const handleBadgeClick = async (request: any) => {
-    if (userProfile?.department?.name !== 'Sales') return;
-    
-    setLoadingBooking(true);
-    setShowBookingModal(true);
-    
-    try {
-      // First, check if booking data is already embedded in the request
-      let bookingData = null;
-      
-      // Check various locations for embedded booking data
-      if (request.booking && typeof request.booking === 'object') {
-        bookingData = request.booking;
-      } else if (request.request_id && typeof request.request_id === 'object') {
-        // request_id might be the booking object
-        if (request.request_id.sender || request.request_id.receiver || request.request_id.service) {
-          bookingData = request.request_id;
-        }
-      }
-      
-      // If we have booking data, use it directly
-      if (bookingData) {
-        secureLog.debug('Using embedded booking data');
-        setSelectedBooking(bookingData);
-        setLoadingBooking(false);
-        return;
-      }
-      
-      // Otherwise, try to fetch booking by ID
-      // Try to get booking ID from various possible locations
-      const bookingId = 
-        request.booking_id ||
-        request.request_id?.booking_id ||
-        request.request_id?._id ||
-        request.booking?._id;
-      
-      // If no booking ID found, use request as booking data
-      if (!bookingId) {
-        secureLog.debug('No booking ID found, using request data');
-        setSelectedBooking(request);
-        setLoadingBooking(false);
-        return;
-      }
-      
-      // Validate booking ID format (should be a valid MongoDB ObjectId or string)
-      if (typeof bookingId !== 'string' || bookingId.trim().length === 0) {
-        secureLog.warn('Invalid booking ID format, using request data');
-        setSelectedBooking(request);
-        setLoadingBooking(false);
-        return;
-      }
-      
-      secureLog.debug('Fetching booking', { bookingId: bookingId?.substring(0, 20) });
-      const result = await apiClient.getBooking(bookingId.trim());
-      
-      if (result.success && result.data) {
-        setSelectedBooking(result.data);
-      } else {
-        // If booking not found via API, try using embedded data
-        let fallbackData = null;
-        
-        if (request.request_id && typeof request.request_id === 'object') {
-          // Check if request_id looks like booking data
-          if (request.request_id.sender || request.request_id.receiver || request.request_id.service) {
-            fallbackData = request.request_id;
-          }
-        }
-        
-        if (!fallbackData) {
-          // Use request as booking data (some requests are bookings)
-          fallbackData = request;
-        }
-        
-        setSelectedBooking(fallbackData);
-        
-        // Only show warning if it's not a 404 (not found is expected sometimes)
-        const errorMsg = result.error || '';
-        if (errorMsg && !errorMsg.includes('404') && !errorMsg.includes('Not Found') && !errorMsg.includes('Request failed')) {
-          toast({
-            variant: 'destructive',
-            title: 'Warning',
-            description: errorMsg,
-          });
-        }
-      }
-    } catch (error: any) {
-      secureLog.error('Error fetching booking', error);
-      
-      // Try to use request data as fallback
-      if (request.request_id && typeof request.request_id === 'object') {
-        setSelectedBooking(request.request_id);
-      } else {
-        setSelectedBooking(request);
-      }
-      
-      // Only show error if we can't use fallback data
-      const errorMessage = error?.message || error?.error || 'Failed to fetch booking details';
-      if (!errorMessage.includes('404') && !errorMessage.includes('Not Found')) {
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: errorMessage,
-        });
-      }
-    } finally {
-      setLoadingBooking(false);
-    }
-  };
-
   const handleFinanceAction = async (id: string) => {
     try {
       // CRITICAL: Fetch full invoice request details from backend to ensure ALL data is up-to-date
@@ -2103,7 +1740,7 @@ export default function InvoiceRequestsPage() {
         });
       }
     } catch (error: any) {
-      console.error('Error cancelling invoice:', error);
+      secureLog.error('Error cancelling invoice', error);
       toast({
         variant: 'destructive',
         title: 'Error',
@@ -2294,8 +1931,8 @@ export default function InvoiceRequestsPage() {
       });
       
       // Create invoice in database
-      console.log('Selected request for invoice:', selectedRequestForInvoice);
-      console.log('Client ID from request:', (selectedRequestForInvoice as any).client_id);
+      secureLog.debug('Selected request for invoice', selectedRequestForInvoice);
+      secureLog.debug('Client ID from request', (selectedRequestForInvoice as any).client_id);
       
       // For now, we'll create a client record from the customer information
       // In the future, you might want to add client_id to the InvoiceRequest schema
@@ -2337,7 +1974,7 @@ export default function InvoiceRequestsPage() {
         throw new Error('Client was created but no ID was returned');
       }
       
-      console.log('Client created successfully with ID:', clientId);
+      secureLog.debug('Client created successfully', { clientId });
       
       // Extract shipment classification for tax calculation
       const getShipmentClassification = (request: any): string | undefined => {
@@ -2386,8 +2023,7 @@ export default function InvoiceRequestsPage() {
       };
       
       const shipmentClassification = getShipmentClassification(selectedRequestForInvoice);
-      console.log('📦 Extracted shipment classification:', shipmentClassification);
-      console.log('🚚 Service code (already extracted):', serviceCode);
+      secureLog.debug('Extracted shipment classification', { shipmentClassification, serviceCode });
       
       // Calculate the invoice amount to send to backend
       // CRITICAL: Backend requires amount to be truthy (non-zero)
@@ -2449,7 +2085,7 @@ export default function InvoiceRequestsPage() {
       // Ensure delivery_base_amount is always sent for PH_TO_UAE when has_delivery is true
       // This allows backend to automatically calculate total_amount_cod
       if (isPhToUaeSelected && hasDeliveryFlag && !deliveryBaseAmountValue) {
-        console.warn('⚠️ delivery_base_amount is missing for PH_TO_UAE with delivery enabled, using default 20');
+        secureLog.warn('delivery_base_amount is missing for PH_TO_UAE with delivery enabled, using default 20');
       }
       
       // Determine pickup_base_amount for PH_TO_UAE
@@ -2658,7 +2294,7 @@ export default function InvoiceRequestsPage() {
         // If request_id doesn't exist, use invoice request _id as fallback
         // Some invoice requests may not have an associated shipment request
         if (!requestId) {
-          console.warn('⚠️ No shipment request_id found, using invoice request _id as fallback');
+          secureLog.warn('No shipment request_id found, using invoice request _id as fallback');
           requestId = (selectedRequestForInvoice as any)._id;
         }
         
@@ -2768,15 +2404,13 @@ export default function InvoiceRequestsPage() {
             });
             secureLog.success('Shipment status updated');
             } else {
-              console.warn('⚠️ Skipping shipment status update: requestId is missing');
+              secureLog.warn('Skipping shipment status update: requestId is missing');
             }
           } catch (statusError) {
-            console.error('❌ Failed to update shipment status:', statusError);
+            secureLog.error('Failed to update shipment status', statusError);
           }
         } else {
-          console.error('❌ Failed to create delivery assignment:', assignmentResult);
-          console.error('❌ Error details:', assignmentResult.error);
-          console.error('❌ Full response:', JSON.stringify(assignmentResult, null, 2));
+          secureLog.error('Failed to create delivery assignment', assignmentResult?.error ?? assignmentResult);
           
           toast({
             variant: 'destructive',
@@ -2836,7 +2470,7 @@ export default function InvoiceRequestsPage() {
         });
       }
     } catch (error) {
-      console.error('Error generating invoices:', error);
+      secureLog.error('Error generating invoices', error);
       
       let errorMessage = 'Failed to complete request';
       
@@ -2871,11 +2505,7 @@ export default function InvoiceRequestsPage() {
       totalKg?: number; // User-entered total kilograms for PH TO UAE (overrides verification weight)
     } = {}
   ) => {
-    console.log('🔄 Converting request to invoice data...');
-    console.log('📋 Request data:', request);
-    console.log('💰 Tax rate override:', taxRateOverride);
-    console.log('🔗 QR Code data:', qrCodeData);
-    console.log('🧾 Options:', options);
+    secureLog.debug('Converting request to invoice data', { taxRateOverride, hasRequest: !!request, hasQrCodeData: !!qrCodeData, hasOptions: !!options });
     const fallbackId = (request._id || Date.now().toString()).toString();
     const invoiceNumber =
       request.invoice_number ||
@@ -2992,7 +2622,7 @@ export default function InvoiceRequestsPage() {
       if (isPhToUae) {
         // PH TO UAE: Always use the value if provided (even if 0, user explicitly entered it)
         pickupChargeValue = parseFloat(options.pickupCharge.toFixed(2));
-        console.log('🔍 PH TO UAE Pickup Charge Extraction:', {
+        secureLog.debug('PH TO UAE Pickup Charge Extraction', {
           optionsPickupCharge: options.pickupCharge,
           pickupChargeValue,
           isPhToUae,
@@ -3008,7 +2638,7 @@ export default function InvoiceRequestsPage() {
       if (!isNaN(parsed)) {
         pickupChargeValue = isPhToUae ? parsed : (parsed > 0 ? parsed : 0);
         if (isPhToUae) {
-          console.log('🔍 PH TO UAE Pickup Charge Extraction (non-number):', {
+          secureLog.debug('PH TO UAE Pickup Charge Extraction (non-number)', {
             optionsPickupCharge: options.pickupCharge,
             parsed,
             pickupChargeValue
@@ -3337,7 +2967,7 @@ export default function InvoiceRequestsPage() {
         : (pickupChargeValue > 0); // Other routes: Only if > 0
       
       if (shouldAddPickupCharge) {
-        console.log('✅ Adding Pickup Charge to lineItems:', {
+        secureLog.debug('Adding Pickup Charge to lineItems', {
           isPhToUae,
           pickupChargeValue,
           optionsPickupCharge: options.pickupCharge,
@@ -3350,7 +2980,7 @@ export default function InvoiceRequestsPage() {
           total: pickupChargeValue
         });
       } else if (isPhToUae) {
-        console.log('❌ NOT Adding Pickup Charge to lineItems:', {
+        secureLog.debug('NOT Adding Pickup Charge to lineItems', {
           isPhToUae,
           pickupChargeValue,
           optionsPickupCharge: options.pickupCharge,
@@ -3685,7 +3315,7 @@ export default function InvoiceRequestsPage() {
                 Invoice Requests {pagination ? `(${pagination.displayText || `${pagination.startRecord || 0}-${pagination.endRecord || 0} of ${pagination.total || 0}`})` : `(${filteredRequests.length})`}
               </CardTitle>
             </div>
-            {filteredRequests.length > 0 && (
+            {filteredRequests.length > 0 && userProfile?.department?.name !== 'Sales' && (
               <Button
                 variant="outline"
                 size="sm"
@@ -3757,7 +3387,6 @@ export default function InvoiceRequestsPage() {
                   getStatusBadgeColor={getStatusBadgeColor}
                   renderActionControls={renderActionControls}
                   fetchInvoiceRequests={() => fetchInvoiceRequests(currentPage, false)}
-                  onBadgeClick={handleBadgeClick}
                 />
               ))}
             </div>
@@ -4624,25 +4253,6 @@ export default function InvoiceRequestsPage() {
         </div>
         );
       })()}
-
-      {/* Booking Details Modal for Sales Users */}
-      {selectedBooking && (
-        <BookingReviewModal
-          booking={selectedBooking}
-          open={showBookingModal}
-          onClose={() => {
-            setShowBookingModal(false);
-            setSelectedBooking(null);
-          }}
-          onReviewComplete={() => {
-            // Refresh data if needed
-            apiClient.invalidateCache('/invoice-requests');
-        fetchInvoiceRequests(currentPage, false); // Skip cache after verification complete
-          }}
-          currentUser={userProfile}
-          viewOnly={true}
-        />
-      )}
 
       {/* Reverify Modal for Operations */}
       {selectedRequestForReverify && (

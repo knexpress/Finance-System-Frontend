@@ -1,15 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Image as ImageIcon } from 'lucide-react';
 
 interface BookingPrintViewProps {
   booking: any;
@@ -18,37 +11,6 @@ interface BookingPrintViewProps {
 
 export default function BookingPrintView({ booking, onClose }: BookingPrintViewProps) {
   const printRef = useRef<HTMLDivElement>(null);
-  const [viewingImage, setViewingImage] = useState<string | null>(null);
-  const [viewingImageTitle, setViewingImageTitle] = useState<string>('');
-
-  // Helper function to open image viewer
-  const openImageViewer = (imageSrc: string, title: string) => {
-    setViewingImage(imageSrc);
-    setViewingImageTitle(title);
-  };
-
-  // Helper function to decode HTML entities (e.g., &#x2F; -> /)
-  const decodeHtmlEntities = (str: string): string => {
-    const textarea = document.createElement('textarea');
-    textarea.innerHTML = str;
-    return textarea.value;
-  };
-
-  // Helper function to get image source
-  const getImageSrc = (imageField: string | undefined) => {
-    if (!imageField) return null;
-    
-    // Decode HTML entities (fix for data stored with HTML encoding like &#x2F; instead of /)
-    let decodedField = imageField;
-    if (typeof imageField === 'string' && imageField.includes('&#x')) {
-      decodedField = decodeHtmlEntities(imageField);
-    }
-    
-    if (decodedField.startsWith('data:image') || decodedField.startsWith('http')) {
-      return decodedField;
-    }
-    return decodedField;
-  };
 
   // Helper to format values
   const formatValue = (value: any): string => {
@@ -81,63 +43,6 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
     Array.isArray(booking.listedItems) ? booking.listedItems :
     []
   ).filter(Boolean);
-
-  // Check images in order: identityDocuments (primary source) -> top-level -> collections (fallback)
-  const idFrontImage = getImageSrc(
-    booking.identityDocuments?.eidFrontImage
-    || booking.collections?.identityDocuments?.eidFrontImage
-    || booking.id_front_image
-    || booking.idFrontImage
-  );
-  const idBackImage = getImageSrc(
-    booking.identityDocuments?.eidBackImage
-    || booking.collections?.identityDocuments?.eidBackImage
-    || booking.id_back_image
-    || booking.idBackImage
-  );
-  const philippinesIdFront = getImageSrc(
-    booking.identityDocuments?.philippinesIdFront
-    || booking.collections?.identityDocuments?.philippinesIdFront
-    || booking.philippinesIdFront
-    || booking.philippines_id_front
-  );
-  const philippinesIdBack = getImageSrc(
-    booking.identityDocuments?.philippinesIdBack
-    || booking.collections?.identityDocuments?.philippinesIdBack
-    || booking.philippinesIdBack
-    || booking.philippines_id_back
-  );
-  const faceScanImage = getImageSrc(
-    booking.face_scan_image ||
-    booking.faceScanImage
-  );
-
-  // Collect customer images from all possible locations, prioritizing identityDocuments (primary source)
-  const allCustomerImages: string[] = [];
-  
-  // First, add from identityDocuments (primary source based on actual data structure)
-  if (Array.isArray(booking.identityDocuments?.customerImages)) {
-    allCustomerImages.push(...booking.identityDocuments.customerImages);
-  }
-  
-  // Then add from collections
-  if (Array.isArray(booking.collections?.identityDocuments?.customerImages)) {
-    allCustomerImages.push(...booking.collections.identityDocuments.customerImages);
-  }
-  
-  // Then add from top-level customerImages
-  if (Array.isArray(booking.customerImages)) {
-    allCustomerImages.push(...booking.customerImages);
-  }
-  
-  // Add singular customerImage if it exists and is not already in the array
-  // Prioritize identityDocuments.customerImage (where the actual data is)
-  const singularCustomerImage = booking.identityDocuments?.customerImage 
-    || booking.collections?.identityDocuments?.customerImage
-    || booking.customerImage;
-  const customerImages: string[] = singularCustomerImage && !allCustomerImages.includes(singularCustomerImage)
-    ? [...allCustomerImages, singularCustomerImage]
-    : allCustomerImages.filter(Boolean);
 
   useEffect(() => {
     // Generate and download PDF automatically
@@ -181,7 +86,7 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
       }
     };
 
-    // Small delay to ensure images are loaded
+    // Small delay to ensure content is rendered
     setTimeout(() => {
       generatePDF();
     }, 1000);
@@ -213,14 +118,6 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
           .avoid-break {
             break-inside: avoid;
             page-break-inside: avoid;
-          }
-          .img-wrap {
-            break-inside: avoid;
-            page-break-inside: avoid;
-          }
-          img {
-            max-width: 100%;
-            height: auto;
           }
         }
         @media screen {
@@ -363,162 +260,10 @@ export default function BookingPrintView({ booking, onClose }: BookingPrintViewP
         </Card>
       )}
 
-      {/* Verification Images - start on a new page */}
-      <Card className="mb-6 page-break avoid-break">
-        <CardHeader>
-          <CardTitle className="text-xl flex items-center gap-2">
-            <ImageIcon className="h-5 w-5" />
-            Verification Images
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-6">
-            {/* ID Front Image */}
-            {idFrontImage && (
-              <div className="space-y-2 img-wrap">
-                <Label className="text-sm font-semibold">ID Front Image</Label>
-                <div 
-                  className="border rounded-md p-2 cursor-zoom-in"
-                  onClick={() => openImageViewer(idFrontImage, 'ID Front Image')}
-                >
-                  <img
-                    src={idFrontImage}
-                    alt="ID Front"
-                    className="w-full max-w-md mx-auto object-contain"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* ID Back Image */}
-            {idBackImage && (
-              <div className="space-y-2 img-wrap">
-                <Label className="text-sm font-semibold">ID Back Image</Label>
-                <div 
-                  className="border rounded-md p-2 cursor-zoom-in"
-                  onClick={() => openImageViewer(idBackImage, 'ID Back Image')}
-                >
-                  <img
-                    src={idBackImage}
-                    alt="ID Back"
-                    className="w-full max-w-md mx-auto object-contain"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Philippines ID Front Image */}
-            {philippinesIdFront && (
-              <div className="space-y-2 img-wrap">
-                <Label className="text-sm font-semibold">Philippines ID Front Image</Label>
-                <div 
-                  className="border rounded-md p-2 cursor-zoom-in"
-                  onClick={() => openImageViewer(philippinesIdFront, 'Philippines ID Front Image')}
-                >
-                  <img
-                    src={philippinesIdFront}
-                    alt="Philippines ID Front"
-                    className="w-full max-w-md mx-auto object-contain"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Philippines ID Back Image */}
-            {philippinesIdBack && (
-              <div className="space-y-2 img-wrap">
-                <Label className="text-sm font-semibold">Philippines ID Back Image</Label>
-                <div 
-                  className="border rounded-md p-2 cursor-zoom-in"
-                  onClick={() => openImageViewer(philippinesIdBack, 'Philippines ID Back Image')}
-                >
-                  <img
-                    src={philippinesIdBack}
-                    alt="Philippines ID Back"
-                    className="w-full max-w-md mx-auto object-contain"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Face Scan Image */}
-            {faceScanImage && (
-              <div className="space-y-2 img-wrap">
-                <Label className="text-sm font-semibold">Face Scan Image</Label>
-                <div 
-                  className="border rounded-md p-2 cursor-zoom-in"
-                  onClick={() => openImageViewer(faceScanImage, 'Face Scan Image')}
-                >
-                  <img
-                    src={faceScanImage}
-                    alt="Face Scan"
-                    className="w-full max-w-md mx-auto object-contain"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Client Face Images (chunked with page breaks) */}
-            {customerImages.length > 0 && (
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold">Client Face Images ({customerImages.length})</Label>
-                {(() => {
-                  const chunks: string[][] = [];
-                  const size = 4; // 4 images per page chunk
-                  for (let i = 0; i < customerImages.length; i += size) {
-                    chunks.push(customerImages.slice(i, i + size));
-                  }
-                  return chunks.map((chunk, cidx) => (
-                    <div key={cidx} className={`space-y-2 ${cidx < chunks.length - 1 ? 'page-break' : ''}`}>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {chunk.map((img, idx) => (
-                          <div 
-                            key={`${cidx}-${idx}`} 
-                            className="border rounded-md p-2 img-wrap cursor-zoom-in"
-                            onClick={() => openImageViewer(img, `Client Face ${cidx * size + idx + 1}`)}
-                          >
-                            <img
-                              src={img}
-                              alt={`Client Face ${cidx * size + idx + 1}`}
-                              className="w-full max-w-xs mx-auto object-contain"
-                            />
-                            <p className="text-xs text-center mt-2 text-muted-foreground">Image {cidx * size + idx + 1}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="text-center text-xs text-muted-foreground mt-6 no-print">
         <p>This document was generated on {new Date().toLocaleString()}</p>
         <p className="mt-2">Click the browser's print button or press Ctrl+P to print/download</p>
       </div>
-
-      {/* Image Viewer Modal */}
-      <Dialog open={!!viewingImage} onOpenChange={() => setViewingImage(null)}>
-        <DialogContent className="max-w-5xl max-h-[95vh] p-0">
-          <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle>{viewingImageTitle}</DialogTitle>
-          </DialogHeader>
-          <div className="px-6 pb-6">
-            {viewingImage && (
-              <div className="relative w-full h-[calc(95vh-120px)] flex items-center justify-center bg-black/5 rounded-md overflow-hidden">
-                <img
-                  src={viewingImage}
-                  alt={viewingImageTitle}
-                  className="max-w-full max-h-full object-contain"
-                />
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

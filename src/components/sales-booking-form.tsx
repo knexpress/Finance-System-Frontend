@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { PlusCircle, Download, Loader2, CheckCircle, Trash2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { secureLog } from '@/lib/secure-logger';
 import {
   Dialog,
   DialogContent,
@@ -42,9 +43,9 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const { toast } = useToast();
 
-  // Debug: Log dialog state changes
+  // Debug: Log dialog state changes (dev only)
   useEffect(() => {
-    console.log('[SalesBookingForm] Dialog state changed:', {
+    secureLog.debug('[SalesBookingForm] Dialog state changed', {
       showSuccessDialog,
       hasBooking: !!createdBooking,
       bookingAWB: createdBooking?.awb || createdBooking?.awb_number || createdBooking?.tracking_code
@@ -160,7 +161,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         // Log image file info before conversion
         const fileSizeKB = (file.size / 1024).toFixed(2);
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        console.log(`[Image Upload] Converting ${imageName}:`, {
+        secureLog.debug(`[Image Upload] Converting ${imageName}`, {
           fileName: file.name,
           fileType: file.type,
           fileSize: `${fileSizeKB} KB (${fileSizeMB} MB)`,
@@ -169,7 +170,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         // Warn if image is very large (base64 increases size by ~33%)
         const maxSizeMB = 5;
         if (file.size > maxSizeMB * 1024 * 1024) {
-          console.warn(`[Image Upload] Warning: ${imageName} is large (${fileSizeMB} MB). Base64 encoding will increase size by ~33%.`);
+          secureLog.warn(`[Image Upload] ${imageName} is large (${fileSizeMB} MB). Base64 encoding will increase size by ~33%`);
         }
 
         const reader = new FileReader();
@@ -181,7 +182,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
             const base64SizeKB = (base64String.length * 0.75 / 1024).toFixed(2); // Approximate original size
             const base64SizeMB = (base64String.length * 0.75 / (1024 * 1024)).toFixed(2);
             
-            console.log(`[Image Upload] Successfully converted ${imageName}:`, {
+            secureLog.debug(`[Image Upload] Successfully converted ${imageName}`, {
               base64Length: base64String.length,
               estimatedOriginalSize: `${base64SizeKB} KB (${base64SizeMB} MB)`,
               dataUrlPrefix: base64String.substring(0, 30) + '...', // Show prefix format
@@ -189,16 +190,16 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
 
             resolve(base64String);
           } catch (error) {
-            console.error(`[Image Upload] Error processing result for ${imageName}:`, error);
+            secureLog.error(`[Image Upload] Error processing result for ${imageName}`, error);
             reject(new Error(`Failed to process image ${imageName}: ${error instanceof Error ? error.message : 'Unknown error'}`));
           }
         };
         reader.onerror = (error) => {
-          console.error(`[Image Upload] FileReader error for ${imageName}:`, error);
+          secureLog.error(`[Image Upload] FileReader error for ${imageName}`, error);
           reject(new Error(`Failed to read image file ${imageName}: ${error instanceof Error ? error.message : 'FileReader error'}`));
         };
       } catch (error) {
-        console.error(`[Image Upload] Unexpected error converting ${imageName}:`, error);
+        secureLog.error(`[Image Upload] Unexpected error converting ${imageName}`, error);
         reject(new Error(`Unexpected error converting image ${imageName}: ${error instanceof Error ? error.message : 'Unknown error'}`));
       }
     });
@@ -399,7 +400,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
     }
 
     try {
-      console.log('[Booking Creation] Starting image conversion process...');
+      secureLog.debug('[Booking Creation] Starting image conversion process');
       
       // Convert images to base64 (only if provided)
       let uaeIdFrontBase64: string | null = null;
@@ -413,10 +414,10 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         if (uaeIdFront) {
           uaeIdFrontBase64 = await convertFileToBase64(uaeIdFront, 'UAE ID Front');
         } else {
-          console.log('[Image Upload] UAE ID Front: Not provided (optional for PH_TO_UAE)');
+          secureLog.debug('[Image Upload] UAE ID Front: Not provided (optional for PH_TO_UAE)');
         }
       } catch (error) {
-        console.error('[Image Upload] Failed to convert UAE ID Front:', error);
+        secureLog.error('[Image Upload] Failed to convert UAE ID Front', error);
         toast({
           variant: 'destructive',
           title: 'Image Conversion Error',
@@ -430,10 +431,10 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         if (uaeIdBack) {
           uaeIdBackBase64 = await convertFileToBase64(uaeIdBack, 'UAE ID Back');
         } else {
-          console.log('[Image Upload] UAE ID Back: Not provided (optional for PH_TO_UAE)');
+          secureLog.debug('[Image Upload] UAE ID Back: Not provided (optional for PH_TO_UAE)');
         }
       } catch (error) {
-        console.error('[Image Upload] Failed to convert UAE ID Back:', error);
+        secureLog.error('[Image Upload] Failed to convert UAE ID Back', error);
         toast({
           variant: 'destructive',
           title: 'Image Conversion Error',
@@ -446,7 +447,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
       try {
         pinasIdFrontBase64 = await convertFileToBase64(pinasIdFront, 'Philippines ID Front');
       } catch (error) {
-        console.error('[Image Upload] Failed to convert Philippines ID Front:', error);
+        secureLog.error('[Image Upload] Failed to convert Philippines ID Front', error);
         toast({
           variant: 'destructive',
           title: 'Image Conversion Error',
@@ -459,7 +460,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
       try {
         pinasIdBackBase64 = await convertFileToBase64(pinasIdBack, 'Philippines ID Back');
       } catch (error) {
-        console.error('[Image Upload] Failed to convert Philippines ID Back:', error);
+        secureLog.error('[Image Upload] Failed to convert Philippines ID Back', error);
         toast({
           variant: 'destructive',
           title: 'Image Conversion Error',
@@ -475,7 +476,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
           confirmationFormBase64 = await convertFileToBase64(confirmationForm, 'Confirmation Form');
         }
       } catch (error) {
-        console.error('[Image Upload] Failed to convert Confirmation Form:', error);
+        secureLog.error('[Image Upload] Failed to convert Confirmation Form', error);
         toast({
           variant: 'destructive',
           title: 'Image Conversion Error',
@@ -490,7 +491,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
           tradeLicenseBase64 = await convertFileToBase64(tradeLicense, 'Trade License');
         }
       } catch (error) {
-        console.error('[Image Upload] Failed to convert Trade License:', error);
+        secureLog.error('[Image Upload] Failed to convert Trade License', error);
         toast({
           variant: 'destructive',
           title: 'Image Conversion Error',
@@ -500,7 +501,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         return;
       }
 
-      console.log('[Booking Creation] All images converted successfully');
+      secureLog.debug('[Booking Creation] All images converted successfully');
 
       // Determine countries and service based on booking type
       const isUaeToPinas = bookingType === 'uae_to_pinas';
@@ -619,7 +620,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
       const payloadSizeKB = (payloadString.length / 1024).toFixed(2);
       const payloadSizeMB = (payloadString.length / (1024 * 1024)).toFixed(2);
       
-      console.log('[Booking Creation] Booking data prepared:', {
+      secureLog.debug('[Booking Creation] Booking data prepared', {
         service: bookingData.service,
         service_code: bookingData.service_code,
         awb: bookingData.awb,
@@ -637,7 +638,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
       // Warn if payload is very large
       const maxPayloadMB = 10;
       if (payloadString.length > maxPayloadMB * 1024 * 1024) {
-        console.warn(`[Booking Creation] Warning: Payload is large (${payloadSizeMB} MB). This may cause issues with some servers.`);
+        secureLog.warn(`[Booking Creation] Payload is large (${payloadSizeMB} MB). This may cause issues with some servers`);
       }
 
       // Log a preview of the booking data (without full base64 strings)
@@ -650,27 +651,27 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
           philippinesIdBack: identityDocuments.philippinesIdBack ? `[Base64 string, length: ${identityDocuments.philippinesIdBack.length}]` : null,
         },
       };
-      console.log('[Booking Creation] Booking data preview (without full base64):', bookingDataPreview);
+      secureLog.debug('[Booking Creation] Booking data preview (without full base64)', bookingDataPreview);
 
-      console.log('[Booking Creation] Sending booking data to API...');
+      secureLog.debug('[Booking Creation] Sending booking data to API');
       const result = await apiClient.createBooking(bookingData);
-      console.log('[Booking Creation] API response received:', {
+      secureLog.debug('[Booking Creation] API response received', {
         success: result.success,
         error: result.error,
         hasData: !!result.data,
       });
 
       if (result.success) {
-        console.log('[Booking Creation] Booking created successfully:', result.data);
-        console.log('[Booking Creation] Full result:', JSON.stringify(result, null, 2));
+        secureLog.debug('[Booking Creation] Booking created successfully', result.data);
+        secureLog.debug('[Booking Creation] Full result', result);
         
         // Store created booking data FIRST
         const bookingData = result.data;
-        console.log('[Booking Creation] Storing booking data:', bookingData);
+        secureLog.debug('[Booking Creation] Storing booking data', bookingData);
         setCreatedBooking(bookingData);
         
         // Set dialog state immediately
-        console.log('[Booking Creation] Setting showSuccessDialog to true');
+        secureLog.debug('[Booking Creation] Setting showSuccessDialog to true');
         setShowSuccessDialog(true);
         
         // Reset form but keep it open until dialog is closed
@@ -683,7 +684,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
           description: 'Booking created successfully. Check the dialog for AWB number.',
         });
       } else {
-        console.error('[Booking Creation] API returned error:', {
+        secureLog.error('[Booking Creation] API returned error', {
           error: result.error,
           fullResponse: result,
         });
@@ -694,7 +695,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         });
       }
     } catch (error: any) {
-      console.error('[Booking Creation] Unexpected error creating booking:', {
+      secureLog.error('[Booking Creation] Unexpected error creating booking', {
         error,
         errorMessage: error?.message,
         errorStack: error?.stack,
@@ -707,7 +708,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
       });
     } finally {
       setIsSubmitting(false);
-      console.log('[Booking Creation] Form submission completed');
+      secureLog.debug('[Booking Creation] Form submission completed');
     }
   };
 
@@ -1000,7 +1001,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         description: 'PDF generated and downloaded successfully',
       });
     } catch (error) {
-      console.error('Error generating PDF:', error);
+      secureLog.error('Error generating PDF', error);
       toast({
         variant: 'destructive',
         title: 'Error',
