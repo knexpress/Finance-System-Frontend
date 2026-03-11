@@ -15,10 +15,12 @@ export default function AppHeader() {
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b border-border/50 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 px-4 sm:px-6 industrial-shadow-md">
       <SidebarTrigger className="transition-industrial hover:bg-accent/10 rounded-md p-2" />
-      <div className="flex items-center gap-3">
-        <div className="h-2 w-2 rounded-full bg-primary shadow-lg shadow-primary/50 animate-pulse" />
-        <div className="h-6 w-px bg-border/50" />
-        <h1 className="text-lg font-bold tracking-tight text-foreground">{pageTitle}</h1>
+      <div className="flex items-center justify-between w-full min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-2 w-2 rounded-full bg-primary shadow-lg shadow-primary/50 animate-pulse" />
+          <div className="h-6 w-px bg-border/50" />
+          <h1 className="text-lg font-bold tracking-tight text-foreground truncate">{pageTitle}</h1>
+        </div>
       </div>
     </header>
   );

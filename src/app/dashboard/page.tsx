@@ -3,6 +3,7 @@
 import { useAuth } from '@/hooks/use-auth';
 import { getNavigationLinks } from '@/lib/navigation';
 import PerformanceMetrics from '@/components/performance-metrics';
+import DashboardWeather from '@/components/dashboard-weather';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Link from 'next/link';
 
@@ -32,6 +33,9 @@ export default function Dashboard() {
                   : `Performance overview for the ${department.name} department.`
                 }
               </p>
+              <div className="mt-4 max-w-2xl">
+                <DashboardWeather variant="large" />
+              </div>
             </div>
           </div>
         </div>

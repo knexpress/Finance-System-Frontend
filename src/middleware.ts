@@ -15,7 +15,7 @@ export function middleware(request: NextRequest) {
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-XSS-Protection', '1; mode=block');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  response.headers.set('Permissions-Policy', 'geolocation=(self), microphone=(), camera=()');
 
   // Add Strict-Transport-Security header (HSTS) for HTTPS
   if (request.nextUrl.protocol === 'https:') {
