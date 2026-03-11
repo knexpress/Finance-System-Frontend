@@ -571,6 +571,18 @@ export default function VerificationForm({ request, onVerificationComplete, curr
 
   const isPhToUaeRoute = route === 'PH_TO_UAE';
 
+  const getVerificationCompleteFailureMessage = (errorMessage?: string) => {
+    const empostFailure =
+      typeof errorMessage === 'string' &&
+      (errorMessage.includes('EMPOST Booking Creation failed try again') || errorMessage.toUpperCase().includes('EMPOST'));
+
+    if (empostFailure) {
+      return 'EMPOST booking creation failed. Request is still in Operations and was not moved to VERIFIED. Please retry Complete Verification.';
+    }
+
+    return errorMessage || 'Failed to complete verification. Please retry. The request stays in Operations until completion succeeds.';
+  };
+
   // Auto-set classification to GENERAL for PH→UAE routes
   useEffect(() => {
     if (route === 'PH_TO_UAE' && verificationData.shipment_classification !== 'GENERAL') {
@@ -915,8 +927,8 @@ export default function VerificationForm({ request, onVerificationComplete, curr
         } else {
           toast({
             variant: 'destructive',
-            title: 'Error',
-            description: completeResult.error || 'Failed to complete verification',
+            title: 'Verification Not Completed',
+            description: getVerificationCompleteFailureMessage(completeResult.error),
           });
         }
       } else {
@@ -930,8 +942,8 @@ export default function VerificationForm({ request, onVerificationComplete, curr
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to complete verification',
+        title: 'Verification Not Completed',
+        description: 'Failed to complete verification. Please retry. The request stays in Operations until completion succeeds.',
       });
     } finally {
       setIsSubmitting(false);
