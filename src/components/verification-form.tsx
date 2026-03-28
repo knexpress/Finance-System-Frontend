@@ -911,7 +911,31 @@ export default function VerificationForm({ request, onVerificationComplete, curr
             }
 
             if (bookingId) {
-              await apiClient.updateBookingShipmentStatusHistory(bookingId, 'Shipment Processing');
+              const trackingNumber =
+                reqData?.tracking_code ||
+                reqData?.awb_number ||
+                reqData?.awb ||
+                reqData?.request_id?.tracking_code ||
+                reqData?.request_id?.awb_number ||
+                reqData?.request_id?.awb ||
+                verificationData.tracking_code ||
+                'Unknown tracking number';
+
+              const syncResult = await apiClient.updateBookingShipmentStatusHistory(bookingId, 'Shipment Processing');
+              const syncErrorText = `${syncResult.error || ''} ${JSON.stringify(syncResult.data || {})}`.toLowerCase();
+              const hasEmpostLinkConflict =
+                syncErrorText.includes('link_conflict') ||
+                syncErrorText.includes('already linked to different entity') ||
+                (syncErrorText.includes('empost') && syncErrorText.includes('status code 409')) ||
+                (syncErrorText.includes('empost') && syncErrorText.includes('conflict'));
+
+              if (hasEmpostLinkConflict) {
+                toast({
+                  variant: 'destructive',
+                  title: 'EMPOST Sync Failed',
+                  description: `EMPOST was not updated for tracking number ${trackingNumber}. Please contact Ali Abdullah AI Engineer: 0563014069.`,
+                });
+              }
             }
           } catch (error) {
             // Silently handle errors - don't block the verification completion

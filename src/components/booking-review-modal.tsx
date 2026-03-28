@@ -16,7 +16,7 @@ import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { secureLog } from '@/lib/secure-logger';
 import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Download } from 'lucide-react';
-import { generateBookingPDF, type BookingPDFData } from '../../pdfGenerator';
+import { generateBookingPDF, normalizeReceiverDeliveryOptionForPdf, type BookingPDFData } from '../../pdfGenerator';
 
 interface BookingReviewModalProps {
   booking: any;
@@ -327,14 +327,18 @@ export default function BookingReviewModal({
         : allCustomerImages.filter(Boolean);
 
       // Get delivery options
-      const senderDeliveryOption = senderData.deliveryOption || 
+      const senderDeliveryOption = senderData.deliveryOption ||
+                                  senderData.delivery_option ||
                                   fullBooking.sender_delivery_option ||
-                                  (fullBooking.sender?.deliveryOption) ||
+                                  fullBooking.sender?.deliveryOption ||
+                                  fullBooking.sender?.delivery_option ||
                                   'warehouse';
       
       const receiverDeliveryOption = receiverData.deliveryOption ||
+                                    receiverData.delivery_option ||
                                     fullBooking.receiver_delivery_option ||
-                                    (fullBooking.receiver?.deliveryOption) ||
+                                    fullBooking.receiver?.deliveryOption ||
+                                    fullBooking.receiver?.delivery_option ||
                                     'warehouse';
 
       // Get declaration text
@@ -420,9 +424,7 @@ export default function BookingReviewModal({
                        fullBooking.receiver_email ||
                        fullBooking.receiverEmail ||
                        '',
-          deliveryOption: (receiverDeliveryOption === 'address' || receiverDeliveryOption === 'warehouse')
-                         ? receiverDeliveryOption
-                         : 'warehouse',
+          deliveryOption: normalizeReceiverDeliveryOptionForPdf(receiverDeliveryOption),
           numberOfBoxes: fullBooking.number_of_boxes ||
                         fullBooking.numberOfBoxes ||
                         fullBooking.receiver?.numberOfBoxes ||

@@ -758,9 +758,39 @@ export default function InvoiceRequestsPage() {
       }
 
       if (bookingId) {
+        const trackingNumber =
+          request?.tracking_code ||
+          request?.awb_number ||
+          request?.awb ||
+          request?.request_id?.tracking_code ||
+          request?.request_id?.awb_number ||
+          request?.request_id?.awb ||
+          'Unknown tracking number';
+
         // Update shipment_status_history to "Shipment Processing"
-        await apiClient.updateBookingShipmentStatusHistory(bookingId, 'Shipment Processing');
-        secureLog.debug('Updated shipment_status_history for booking', { bookingId, status: 'Shipment Processing' });
+        const syncResult = await apiClient.updateBookingShipmentStatusHistory(bookingId, 'Shipment Processing');
+        const syncErrorText = `${syncResult.error || ''} ${JSON.stringify(syncResult.data || {})}`.toLowerCase();
+        const hasEmpostLinkConflict =
+          syncErrorText.includes('link_conflict') ||
+          syncErrorText.includes('already linked to different entity') ||
+          (syncErrorText.includes('empost') && syncErrorText.includes('status code 409')) ||
+          (syncErrorText.includes('empost') && syncErrorText.includes('conflict'));
+
+        if (hasEmpostLinkConflict) {
+          toast({
+            variant: 'destructive',
+            title: 'EMPOST Sync Failed',
+            description: `EMPOST was not updated for tracking number ${trackingNumber}. Please contact Ali Abdullah AI Engineer: 0563014069.`,
+          });
+        } else if (!syncResult.success) {
+          secureLog.warn('Non-blocking shipment_status_history update failed', {
+            bookingId,
+            status: 'Shipment Processing',
+            error: syncResult.error,
+          });
+        } else {
+          secureLog.debug('Updated shipment_status_history for booking', { bookingId, status: 'Shipment Processing' });
+        }
       }
     } catch (error) {
       // Silently handle errors - don't block the main status update

@@ -40,7 +40,19 @@ export interface BookingPDFData {
   declaredAmount?: number // Declared value for insurance
 }
 
+/** Bookings use receiver_delivery_option / receiver.deliveryOption values like `delivery` | `pickup`; PDF layout uses `address` | `warehouse`. */
+export function normalizeReceiverDeliveryOptionForPdf(
+  raw: string | undefined | null
+): 'warehouse' | 'address' {
+  const v = (raw ?? '').toString().toLowerCase().trim()
+  if (v === 'delivery' || v === 'address') return 'address'
+  return 'warehouse'
+}
+
 export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
+  const receiverDeliveryPdf = normalizeReceiverDeliveryOptionForPdf(
+    data.receiver.deliveryOption as string
+  )
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -415,7 +427,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     yPos += 1 // Small gap between sender and receiver
     
     // Receiver options - wrap text if needed
-    const receiverOption = data.receiver.deliveryOption === 'warehouse'
+    const receiverOption = receiverDeliveryPdf === 'warehouse'
       ? 'UAE Warehouse Pickup'
       : 'UAE Address Delivery'
     const receiverText = `Receiver: ${receiverOption}`
@@ -445,7 +457,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     yPos += 1 // Small gap between sender and receiver
     
     // Receiver options - wrap text if needed
-    const receiverOption = data.receiver.deliveryOption === 'warehouse'
+    const receiverOption = receiverDeliveryPdf === 'warehouse'
       ? 'Philippines Warehouse Pickup - Paranaque Address: 81 Dr Arcadio Santos Ave, Parañaque, 1700 Metro Manila, Philippines'
       : 'Philippines Address Delivery'
     const receiverText = `Receiver: ${receiverOption}`
