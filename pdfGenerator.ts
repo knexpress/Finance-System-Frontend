@@ -49,6 +49,34 @@ export function normalizeReceiverDeliveryOptionForPdf(
   return 'warehouse'
 }
 
+function coerceDeclaredAmount(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (typeof raw === 'object' && raw !== null && '$numberDecimal' in (raw as object)) {
+    const n = parseFloat(String((raw as { $numberDecimal: string }).$numberDecimal))
+    return Number.isFinite(n) ? n : undefined
+  }
+  const n = parseFloat(String(raw))
+  return Number.isFinite(n) ? n : undefined
+}
+
+/** Resolves declared value from a booking/API record for PDFs. */
+export function parseDeclaredAmountFromBooking(booking: Record<string, unknown> | null | undefined): number | undefined {
+  if (!booking || typeof booking !== 'object') return undefined
+  const b = booking as Record<string, unknown>
+  const candidates = [
+    b.declaredAmount,
+    b.declared_amount,
+    b.declaredValue,
+    b.declared_value,
+  ]
+  for (const c of candidates) {
+    const n = coerceDeclaredAmount(c)
+    if (n !== undefined) return n
+  }
+  return undefined
+}
+
 export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   const receiverDeliveryPdf = normalizeReceiverDeliveryOptionForPdf(
     data.receiver.deliveryOption as string
@@ -538,6 +566,22 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   doc.setFontSize(9)
   doc.text((data.receiver.numberOfBoxes || '').toString(), rightColumnX, yPos)
   yPos += 8
+
+  if (receiverDeliveryPdf === 'address') {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    doc.text('DECLARED VALUE', rightColumnX, yPos)
+    yPos += 5
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    const dv = data.declaredAmount
+    const dvText =
+      dv !== undefined && dv !== null && Number.isFinite(Number(dv))
+        ? `AED ${Number(dv).toFixed(2)}`
+        : 'N/A'
+    doc.text(dvText, rightColumnX, yPos)
+    yPos += 8
+  }
 
   // Find the maximum Y position from both columns
   // Use actual left column height instead of fixed estimate

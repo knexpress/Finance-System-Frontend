@@ -16,7 +16,12 @@ import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { secureLog } from '@/lib/secure-logger';
 import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Download } from 'lucide-react';
-import { generateBookingPDF, normalizeReceiverDeliveryOptionForPdf, type BookingPDFData } from '../../pdfGenerator';
+import {
+  generateBookingPDF,
+  normalizeReceiverDeliveryOptionForPdf,
+  parseDeclaredAmountFromBooking,
+  type BookingPDFData,
+} from '../../pdfGenerator';
 
 interface BookingReviewModalProps {
   booking: any;
@@ -442,7 +447,7 @@ export default function BookingReviewModal({
         submissionTimestamp: submissionTimestamp,
         declarationText: declarationText,
         insured: fullBooking.insured || fullBooking.isInsured || false,
-        declaredAmount: fullBooking.declaredAmount || fullBooking.declared_amount || undefined
+        declaredAmount: parseDeclaredAmountFromBooking(fullBooking),
       };
 
       // Generate and download PDF

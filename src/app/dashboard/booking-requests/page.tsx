@@ -35,7 +35,12 @@ import { useAuth } from '@/hooks/use-auth';
 import { Eye, CheckCircle, XCircle, Image as ImageIcon, Download, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { createPortal } from 'react-dom';
-import { generateBookingPDF, normalizeReceiverDeliveryOptionForPdf, type BookingPDFData } from '../../../../pdfGenerator';
+import {
+  generateBookingPDF,
+  normalizeReceiverDeliveryOptionForPdf,
+  parseDeclaredAmountFromBooking,
+  type BookingPDFData,
+} from '../../../../pdfGenerator';
 import { secureLog } from '@/lib/secure-logger';
 
 // Dynamically import heavy modal components to reduce initial bundle size
@@ -447,7 +452,9 @@ export default function BookingRequestsPage() {
         customerImage: customerImages.length > 0 ? customerImages[0] : undefined,
         customerImages: customerImages.length > 0 ? customerImages : undefined,
         submissionTimestamp: submissionTimestamp,
-        declarationText: declarationText
+        declarationText: declarationText,
+        insured: !!(fullBooking.insured || fullBooking.isInsured),
+        declaredAmount: parseDeclaredAmountFromBooking(fullBooking),
       };
 
       // Generate and download PDF

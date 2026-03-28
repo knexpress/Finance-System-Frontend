@@ -24,7 +24,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { generateBookingPDF, normalizeReceiverDeliveryOptionForPdf, type BookingPDFData } from '../../pdfGenerator';
+import {
+  generateBookingPDF,
+  normalizeReceiverDeliveryOptionForPdf,
+  parseDeclaredAmountFromBooking,
+  type BookingPDFData,
+} from '../../pdfGenerator';
 
 interface SalesBookingFormProps {
   onBookingCreated: () => void;
@@ -992,7 +997,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         submissionTimestamp: submissionTimestamp,
         declarationText: declarationText,
         insured: fullBooking.insured || fullBooking.isInsured || false,
-        declaredAmount: fullBooking.declaredAmount || fullBooking.declared_amount || undefined
+        declaredAmount: parseDeclaredAmountFromBooking(fullBooking),
       };
 
       // Generate and download PDF
