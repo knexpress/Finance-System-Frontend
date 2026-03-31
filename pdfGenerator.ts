@@ -60,21 +60,15 @@ function coerceDeclaredAmount(raw: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-/** Resolves declared value from a booking/API record for PDFs. */
+/** Resolves declared value specifically from bookings.sender.declaredAmount for PDFs. */
 export function parseDeclaredAmountFromBooking(booking: Record<string, unknown> | null | undefined): number | undefined {
   if (!booking || typeof booking !== 'object') return undefined
   const b = booking as Record<string, unknown>
-  const candidates = [
-    b.declaredAmount,
-    b.declared_amount,
-    b.declaredValue,
-    b.declared_value,
-  ]
-  for (const c of candidates) {
-    const n = coerceDeclaredAmount(c)
-    if (n !== undefined) return n
-  }
-  return undefined
+  const sender =
+    b.sender && typeof b.sender === 'object'
+      ? (b.sender as Record<string, unknown>)
+      : undefined
+  return coerceDeclaredAmount(sender?.declaredAmount)
 }
 
 export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
