@@ -288,7 +288,13 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     invoice.receiver_address || 'N/A',
                     invoice.receiver_phone || 'N/A',
                     invoice.service_code || 'N/A',
-                    verification?.total_kg || verification?.weight || invoice.request_id?.verification?.total_kg || invoice.request_id?.verification?.weight || 'N/A',
+                    verification?.chargeable_weight ||
+                    verification?.total_kg ||
+                    verification?.weight ||
+                    invoice.request_id?.verification?.chargeable_weight ||
+                    invoice.request_id?.verification?.total_kg ||
+                    invoice.request_id?.verification?.weight ||
+                    'N/A',
                     verification?.number_of_boxes || invoice.request_id?.verification?.number_of_boxes || 'N/A',
                     invoice.volume_cbm || invoice.request_id?.shipment?.volume || 'N/A',
                     shippingCharge.toFixed(2),
