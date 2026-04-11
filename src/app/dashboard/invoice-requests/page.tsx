@@ -1364,10 +1364,11 @@ export default function InvoiceRequestsPage() {
         setIsSpecialCustomer(false);
         setSpecialRate('');
       } else {
+        const apiError = 'error' in result ? result.error : undefined;
         // Fallback to cached request if API fails
         const request = invoiceRequests.find((req: any) => req._id === id);
         if (request) {
-          secureLog.warn('Failed to fetch full details, using cached request', result.error);
+          secureLog.warn('Failed to fetch full details, using cached request', apiError);
           toast({
             variant: 'destructive',
             title: 'Warning',
@@ -1415,7 +1416,7 @@ export default function InvoiceRequestsPage() {
           toast({
             variant: 'destructive',
             title: 'Error',
-            description: result.error || 'Failed to load invoice request details',
+            description: apiError || 'Failed to load invoice request details',
           });
         }
       }
