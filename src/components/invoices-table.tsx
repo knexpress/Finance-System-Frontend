@@ -132,6 +132,39 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 }
             }
 
+            const parseAmount = (value: any): number => {
+                if (value === undefined || value === null || value === '') return 0;
+                if (typeof value === 'object' && value && '$numberDecimal' in value) {
+                    return parseFloat(String((value as { $numberDecimal: string }).$numberDecimal)) || 0;
+                }
+                const n = typeof value === 'number' ? value : parseFloat(String(value));
+                return Number.isFinite(n) ? n : 0;
+            };
+
+            const safeFixed = (value: any, digits: number): string => {
+                const n = parseAmount(value);
+                return Number.isFinite(n) ? n.toFixed(digits) : (0).toFixed(digits);
+            };
+
+            // After SheetJS builds cells, force text format for "N/A" so Excel does not treat it like the #N/A error.
+            const markNaCellsAsText = (sheet: XLSX.WorkSheet) => {
+                const ref = sheet['!ref'];
+                if (!ref) return;
+                const range = XLSX.utils.decode_range(ref);
+                for (let R = range.s.r; R <= range.e.r; R += 1) {
+                    for (let C = range.s.c; C <= range.e.c; C += 1) {
+                        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+                        const cell = sheet[addr];
+                        if (!cell || cell.v === undefined || cell.v === null) continue;
+                        const v = cell.v;
+                        if (v === 'N/A' || v === 'NaN' || (typeof v === 'string' && v.trim() === 'NaN')) {
+                            cell.t = 's';
+                            cell.z = '@';
+                        }
+                    }
+                }
+            };
+
             // Prepare Excel data
             const excelData: any[] = [];
 
@@ -183,32 +216,26 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
 
                 if (isPhToUae) {
                     if (isTaxInvoice && totalAmountTaxInvoice) {
-                        displayAmount = totalAmountTaxInvoice;
+                        displayAmount = parseAmount(totalAmountTaxInvoice);
                     } else if (!isTaxInvoice && totalAmountCod) {
-                        displayAmount = totalAmountCod;
+                        displayAmount = parseAmount(totalAmountCod);
                     } else {
-                        displayAmount = invoice.total_amount || 0;
+                        displayAmount = parseAmount(invoice.total_amount);
                     }
                 } else {
-                    displayAmount = invoice.total_amount || 0;
+                    displayAmount = parseAmount(invoice.total_amount);
                 }
-
-                // Parse amounts
-                const parseAmount = (value: any): number => {
-                    if (!value) return 0;
-                    if (typeof value === 'object' && value.$numberDecimal) {
-                        return parseFloat(value.$numberDecimal);
-                    }
-                    return parseFloat(value) || 0;
-                };
 
                 const shippingCharge = parseAmount(invoice.amount);
                 const pickupCharge = parseAmount(invoice.pickup_charge);
                 const deliveryCharge = parseAmount(invoice.delivery_charge);
-                const insuranceCharge = parseAmount(invoice.insurance_charge) ||
-                    invoice.line_items?.find((item: any) =>
-                        item.description?.toLowerCase().includes('insurance')
-                    )?.total || 0;
+                const insuranceCharge =
+                    parseAmount(invoice.insurance_charge) ||
+                    parseAmount(
+                        invoice.line_items?.find((item: any) =>
+                            item.description?.toLowerCase().includes('insurance')
+                        )?.total
+                    );
                 const subtotal = parseAmount(invoice.subtotal);
                 const taxRate = parseAmount(invoice.tax_rate);
                 const taxAmount = parseAmount(invoice.tax_amount);
@@ -261,7 +288,17 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 const itemsFormatted = deriveListedCommoditiesFromItems(itemsArray) || 'N/A';
                 
                 // Extract Rate from verification.calculated_rate
-                const rate = verification?.calculated_rate || 'N/A';
+                // Match previous `calculated_rate || 'N/A'` (0 counts as missing) but never emit NaN.
+                const rawRate = verification?.calculated_rate;
+                const rateNum = parseAmount(rawRate);
+                const rate =
+                    rawRate !== undefined &&
+                    rawRate !== null &&
+                    rawRate !== '' &&
+                    Number.isFinite(rateNum) &&
+                    rateNum !== 0
+                        ? rateNum
+                        : 'N/A';
                 
                 // Debug: Log the extracted values
                 if (invoiceList.indexOf(invoice) === 0) {
@@ -297,22 +334,22 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     'N/A',
                     verification?.number_of_boxes || invoice.request_id?.verification?.number_of_boxes || 'N/A',
                     invoice.volume_cbm || invoice.request_id?.shipment?.volume || 'N/A',
-                    shippingCharge.toFixed(2),
-                    pickupCharge.toFixed(2),
-                    deliveryCharge.toFixed(2),
-                    parseAmount(insuranceCharge).toFixed(2),
-                    subtotal.toFixed(2),
-                    taxRate.toFixed(2),
-                    taxAmount.toFixed(2),
-                    displayAmount.toFixed(2),
-                    totalAmountCod ? parseAmount(totalAmountCod).toFixed(2) : '',
-                    totalAmountTaxInvoice ? parseAmount(totalAmountTaxInvoice).toFixed(2) : '',
+                    safeFixed(shippingCharge, 2),
+                    safeFixed(pickupCharge, 2),
+                    safeFixed(deliveryCharge, 2),
+                    safeFixed(insuranceCharge, 2),
+                    safeFixed(subtotal, 2),
+                    safeFixed(taxRate, 2),
+                    safeFixed(taxAmount, 2),
+                    safeFixed(displayAmount, 2),
+                    totalAmountCod ? safeFixed(totalAmountCod, 2) : '',
+                    totalAmountTaxInvoice ? safeFixed(totalAmountTaxInvoice, 2) : '',
                     senderDeliveryOption,
                     receiverDeliveryOption,
                     agentName,
                     senderAddress,
                     itemsFormatted,
-                    typeof rate === 'number' ? rate.toFixed(2) : rate,
+                    typeof rate === 'number' ? safeFixed(rate, 2) : rate,
                     issueDate,
                     invoice.status || 'N/A',
                     invoice.notes || ''
@@ -322,6 +359,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             // Create workbook and worksheet
             const wb = XLSX.utils.book_new();
             const ws = XLSX.utils.aoa_to_sheet(excelData);
+            markNaCellsAsText(ws);
 
             // Set column widths
             const colWidths = [
