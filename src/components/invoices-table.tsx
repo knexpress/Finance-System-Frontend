@@ -106,28 +106,38 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     description: `Fetching ${requestIds.length} invoice request(s) for export.`,
                 });
 
-                // Fetch in parallel (best-effort). If some fail, export still proceeds.
-                const results = await Promise.all(
-                    requestIds.map(async (id) => {
-                        try {
-                            // Backend does NOT expose GET /invoice-requests/:id.
-                            // Use details endpoint which returns full booking_data + verification.
-                            const res = await apiClient.getInvoiceRequestDetails(id, false);
-                            return (res as any)?.success ? (res as any).data : null;
-                        } catch {
-                            return null;
-                        }
-                    })
-                );
-                results.forEach((req) => {
-                    if (req?._id) invoiceRequestById.set(req._id.toString(), req);
+                // One same-origin POST; server proxies to backend (matches local behavior on HTTPS + HTTP API).
+                const bulk = await apiClient.bulkInvoiceRequestDetails(requestIds);
+                requestIds.forEach((id) => {
+                    const row = bulk[id];
+                    if (row?._id) invoiceRequestById.set(row._id.toString(), row);
+                    else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
                 });
+
+                const missing = requestIds.filter((id) => !invoiceRequestById.has(id));
+                if (missing.length > 0) {
+                    const results = await Promise.all(
+                        missing.map(async (id) => {
+                            try {
+                                const res = await apiClient.getInvoiceRequestDetails(id, false, {
+                                    preferDirect: true,
+                                });
+                                return (res as any)?.success ? (res as any).data : null;
+                            } catch {
+                                return null;
+                            }
+                        })
+                    );
+                    results.forEach((req) => {
+                        if (req?._id) invoiceRequestById.set(req._id.toString(), req);
+                    });
+                }
 
                 if (process.env.NODE_ENV === 'development') {
                     secureLog.debug('Excel Export - invoiceRequests fetched', {
                         requested: requestIds.length,
                         loaded: invoiceRequestById.size,
-                        note: 'If loaded is 0, check backend /invoice-requests/:id availability and auth.'
+                        note: 'Uses /api/invoice-requests/bulk-details proxy so deployed HTTPS can reach HTTP API.',
                     });
                 }
             }

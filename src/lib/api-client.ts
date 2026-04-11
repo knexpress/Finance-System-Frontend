@@ -845,15 +845,55 @@ class ApiClient {
   // This endpoint should return complete invoice request data with all nested information
   // CRITICAL: Must include verification object with total_kg, number_of_boxes, and all verification fields
   // useCache should be false to ensure fresh data from database
-  async getInvoiceRequestDetails(id: string, useCache: boolean = false) {
+  /**
+   * Bulk-fetch invoice request details via same-origin API proxy (server → backend).
+   * Avoids browser CSP blocking HTTPS sites from calling HTTP APIs (localhost is exempt).
+   */
+  async bulkInvoiceRequestDetails(ids: string[]): Promise<Record<string, any>> {
+    const uniq = [...new Set(ids.map(String).filter(Boolean))];
+    if (!uniq.length || typeof window === 'undefined') return {};
+    try {
+      const token = this.getToken();
+      const res = await fetch('/api/invoice-requests/bulk-details', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ ids: uniq }),
+      });
+      if (!res.ok) return {};
+      const j = await res.json();
+      if (!j?.success || !j?.data || typeof j.data !== 'object') return {};
+      return j.data as Record<string, any>;
+    } catch {
+      return {};
+    }
+  }
+
+  async getInvoiceRequestDetails(
+    id: string,
+    useCache: boolean = false,
+    options?: { preferDirect?: boolean }
+  ) {
+    if (typeof window !== 'undefined' && !options?.preferDirect) {
+      try {
+        const bulk = await this.bulkInvoiceRequestDetails([id]);
+        const row = bulk[id];
+        if (row && typeof row === 'object') {
+          return { success: true, data: row };
+        }
+      } catch {
+        // fall through to direct backend call (works on localhost / HTTPS API)
+      }
+    }
     // Always bypass cache for details to ensure we get latest verification data from database
-    // The endpoint should return: request, verification (with total_kg), shipment, booking, etc.
     return this.request(`/invoice-requests/${id}/details`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
-    }, false, 0); // Force no cache (false) to get fresh data from database
+    }, false, 0);
   }
 
   // Invoices
