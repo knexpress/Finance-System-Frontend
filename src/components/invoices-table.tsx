@@ -131,27 +131,51 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             if (requestIds.length > 0) {
                 const idsToFetch = requestIds.filter((id) => !invoiceRequestById.has(id));
                 if (idsToFetch.length > 0) {
-                    toast({
+                    const progressToast = toast({
                         title: 'Preparing Excel…',
-                        description: `Fetching ${idsToFetch.length} invoice request(s) for export.`,
+                        description: `Loading invoice request details 0 / ${idsToFetch.length}…`,
                     });
 
-                    const bulk = await apiClient.bulkInvoiceRequestDetails(idsToFetch);
-                    idsToFetch.forEach((id) => {
-                        const row = bulk[id];
-                        if (row?._id) invoiceRequestById.set(String(row._id), row);
-                        else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
-                    });
-
-                    // Second pass: any IDs still missing (same-origin bulk proxy only; no chunking).
-                    const missing = idsToFetch.filter((id) => !invoiceRequestById.has(id));
-                    if (missing.length > 0) {
-                        const miniBulk = await apiClient.bulkInvoiceRequestDetails(missing);
-                        missing.forEach((id) => {
-                            const row = miniBulk[id];
+                    const mergeBulk = (bulk: Record<string, any>, ids: string[]) => {
+                        ids.forEach((id) => {
+                            const row = bulk[id];
                             if (row?._id) invoiceRequestById.set(String(row._id), row);
                             else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
                         });
+                    };
+
+                    try {
+                        const bulk = await apiClient.bulkInvoiceRequestDetails(idsToFetch, {
+                            chunkSize: 40,
+                            onProgress: (loaded, total) => {
+                                progressToast.update({
+                                    id: progressToast.id,
+                                    open: true,
+                                    title: 'Preparing Excel…',
+                                    description: `Loading invoice request details ${loaded} / ${total}…`,
+                                });
+                            },
+                        });
+                        mergeBulk(bulk, idsToFetch);
+
+                        // Second pass: any IDs still missing (chunked same-origin bulk proxy).
+                        const missing = idsToFetch.filter((id) => !invoiceRequestById.has(id));
+                        if (missing.length > 0) {
+                            const miniBulk = await apiClient.bulkInvoiceRequestDetails(missing, {
+                                chunkSize: 40,
+                                onProgress: (loaded, total) => {
+                                    progressToast.update({
+                                        id: progressToast.id,
+                                        open: true,
+                                        title: 'Preparing Excel…',
+                                        description: `Retrying missing details ${loaded} / ${total}…`,
+                                    });
+                                },
+                            });
+                            mergeBulk(miniBulk, missing);
+                        }
+                    } finally {
+                        progressToast.dismiss();
                     }
                 }
 

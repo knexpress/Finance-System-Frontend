@@ -855,27 +855,46 @@ class ApiClient {
   // useCache should be false to ensure fresh data from database
   /**
    * Bulk-fetch invoice request details via same-origin API proxy (server → backend).
-   * Avoids browser CSP blocking HTTPS sites from calling HTTP APIs (localhost is exempt).
+   * Chunks large ID lists so each serverless run stays within platform timeouts (e.g. hundreds of invoices).
    */
-  async bulkInvoiceRequestDetails(ids: string[]): Promise<Record<string, any>> {
+  async bulkInvoiceRequestDetails(
+    ids: string[],
+    options?: {
+      /** IDs per POST; default 40 keeps each proxy call short on Vercel Hobby (~10s cap). */
+      chunkSize?: number;
+      onProgress?: (loaded: number, total: number) => void;
+    }
+  ): Promise<Record<string, any>> {
     const uniq = [...new Set(ids.map(String).filter(Boolean))];
     if (!uniq.length || typeof window === 'undefined') return {};
+
+    const chunkSize = Math.max(1, Math.min(options?.chunkSize ?? 40, 80));
+    const out: Record<string, any> = {};
+    const total = uniq.length;
+    const token = this.getToken();
+
     try {
-      const token = this.getToken();
-      const res = await fetch('/api/invoice-requests/bulk-details', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ ids: uniq }),
-      });
-      if (!res.ok) return {};
-      const j = await res.json();
-      if (!j?.success || !j?.data || typeof j.data !== 'object') return {};
-      return j.data as Record<string, any>;
+      for (let i = 0; i < uniq.length; i += chunkSize) {
+        const slice = uniq.slice(i, i + chunkSize);
+        const res = await fetch('/api/invoice-requests/bulk-details', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ ids: slice }),
+        });
+        if (res.ok) {
+          const j = await res.json();
+          if (j?.success && j?.data && typeof j.data === 'object') {
+            Object.assign(out, j.data as Record<string, any>);
+          }
+        }
+        options?.onProgress?.(Math.min(i + slice.length, total), total);
+      }
+      return out;
     } catch {
-      return {};
+      return out;
     }
   }
 
@@ -936,42 +955,47 @@ class ApiClient {
     return this.request(endpoint, {}, useCache, 30000); // Cache for 30 seconds
   }
 
-  // Fetch all invoices by paginating through all pages
+  // Fetch all invoices by paginating through all pages (handles 500+ rows and missing pagination metadata)
   async getAllInvoicesUnified(search?: string, useCache: boolean = true) {
     const allInvoices: any[] = [];
-    let currentPage = 1;
-    let totalPages = 1;
-    const limit = 200; // Use max limit for efficiency
-    
-    do {
+    const limit = 200;
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
       const result = await this.getInvoicesUnified({
-        page: currentPage,
+        page,
         limit,
         search,
-        useCache: useCache && currentPage === 1 // Only cache first page
+        useCache: useCache && page === 1,
       });
-      
-      if (result.success && result.data) {
-        const invoiceData = Array.isArray(result.data) ? result.data : [];
-        allInvoices.push(...invoiceData);
-        
-        const pagination = (result as any).pagination;
-        if (pagination) {
-          totalPages = pagination.pages || 1;
-          currentPage++;
-        } else {
-          // No pagination info, assume we got all
-          break;
-        }
-      } else {
-        break; // Stop on error
+
+      if (!result.success || !result.data) {
+        break;
       }
-    } while (currentPage <= totalPages);
-    
+
+      const invoiceData = Array.isArray(result.data) ? result.data : [];
+      allInvoices.push(...invoiceData);
+
+      const pagination = (result as any).pagination;
+      if (pagination && typeof pagination.pages === 'number' && pagination.pages >= 1) {
+        hasMore = page < pagination.pages;
+      } else {
+        // No reliable pagination: continue while we receive a full page (e.g. 755 → 4 pages @ 200)
+        hasMore = invoiceData.length >= limit;
+      }
+      page += 1;
+
+      // Safety valve (corrupt API should not infinite-loop)
+      if (page > 500) {
+        break;
+      }
+    }
+
     return {
       success: true,
       data: allInvoices,
-      total: allInvoices.length
+      total: allInvoices.length,
     };
   }
 
