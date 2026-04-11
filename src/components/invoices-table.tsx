@@ -143,28 +143,21 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
                     });
 
+                    // Never call the backend directly from the browser (CORS on Render, etc.).
+                    // Retry missing IDs via same-origin bulk proxy in small batches.
                     const missing = idsToFetch.filter((id) => !invoiceRequestById.has(id));
-                    const DIRECT_CHUNK = 5;
-                    const DIRECT_PAUSE_MS = 150;
-                    for (let i = 0; i < missing.length; i += DIRECT_CHUNK) {
-                        const slice = missing.slice(i, i + DIRECT_CHUNK);
-                        const results = await Promise.all(
-                            slice.map(async (id) => {
-                                try {
-                                    const res = await apiClient.getInvoiceRequestDetails(id, false, {
-                                        preferDirect: true,
-                                    });
-                                    return (res as any)?.success ? (res as any).data : null;
-                                } catch {
-                                    return null;
-                                }
-                            })
-                        );
-                        results.forEach((req) => {
-                            if (req?._id) invoiceRequestById.set(String(req._id), req);
+                    const PROXY_FALLBACK_CHUNK = 8;
+                    const PROXY_FALLBACK_PAUSE_MS = 200;
+                    for (let i = 0; i < missing.length; i += PROXY_FALLBACK_CHUNK) {
+                        const slice = missing.slice(i, i + PROXY_FALLBACK_CHUNK);
+                        const miniBulk = await apiClient.bulkInvoiceRequestDetails(slice);
+                        slice.forEach((id) => {
+                            const row = miniBulk[id];
+                            if (row?._id) invoiceRequestById.set(String(row._id), row);
+                            else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
                         });
-                        if (i + DIRECT_CHUNK < missing.length) {
-                            await new Promise((r) => setTimeout(r, DIRECT_PAUSE_MS));
+                        if (i + PROXY_FALLBACK_CHUNK < missing.length) {
+                            await new Promise((r) => setTimeout(r, PROXY_FALLBACK_PAUSE_MS));
                         }
                     }
                 }

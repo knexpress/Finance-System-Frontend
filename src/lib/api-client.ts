@@ -881,10 +881,11 @@ class ApiClient {
 
   async getInvoiceRequestDetails(
     id: string,
-    useCache: boolean = false,
-    options?: { preferDirect?: boolean }
+    _useCache: boolean = false,
+    _options?: { preferDirect?: boolean }
   ) {
-    if (typeof window !== 'undefined' && !options?.preferDirect) {
+    // In the browser, never call the backend origin directly (CORS on e.g. Vercel → Render).
+    if (typeof window !== 'undefined') {
       try {
         const bulk = await this.bulkInvoiceRequestDetails([id]);
         const row = bulk[id];
@@ -892,10 +893,13 @@ class ApiClient {
           return { success: true, data: row };
         }
       } catch {
-        // fall through to direct backend call (works on localhost / HTTPS API)
+        // ignore
       }
+      return {
+        success: false,
+        error: 'Could not load invoice request details. If this persists, try again in a moment.',
+      };
     }
-    // Always bypass cache for details to ensure we get latest verification data from database
     return this.request(`/invoice-requests/${id}/details`, {
       method: 'GET',
       headers: {
