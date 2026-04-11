@@ -61,17 +61,24 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 return m ? m[0] : null;
             };
 
-            const requestIds = Array.from(new Set(
-                invoiceList
-                    .map((inv: any) =>
-                        inv?.request_id?._id ||
-                        inv?.request_id ||
-                        inv?.invoice_request_id ||
-                        extractObjectIdFromNotes(inv?.notes)
-                    )
-                    .filter(Boolean)
-                    .map((v: any) => v.toString())
-            ));
+            const extractRequestId = (inv: any): string | null => {
+                const raw =
+                    inv?.request_id?._id ||
+                    (typeof inv?.request_id === 'string' ? inv.request_id : null) ||
+                    inv?.invoice_request_id ||
+                    inv?.invoiceRequestId ||
+                    inv?.requestId ||
+                    extractObjectIdFromNotes(inv?.notes);
+                return raw != null && raw !== '' ? String(raw) : null;
+            };
+
+            const requestIds = Array.from(
+                new Set(
+                    invoiceList
+                        .map((inv: any) => extractRequestId(inv))
+                        .filter((v): v is string => Boolean(v))
+                )
+            );
 
             // Debug: show extraction results for troubleshooting local "still N/A"
             if (process.env.NODE_ENV === 'development') {
@@ -100,44 +107,73 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
             }
 
             const invoiceRequestById = new Map<string, any>();
+
+            // Seed from populated request_id on each invoice (production list API often embeds this; no extra fetch).
+            invoiceList.forEach((inv: any) => {
+                const emb = inv?.request_id;
+                if (emb && typeof emb === 'object' && !Array.isArray(emb)) {
+                    const hasDetail =
+                        emb.verification ||
+                        emb.booking_snapshot ||
+                        emb.booking_data ||
+                        emb.sender_delivery_option != null ||
+                        emb.receiver_delivery_option != null;
+                    const k =
+                        emb._id != null
+                            ? String(emb._id)
+                            : extractRequestId(inv);
+                    if (hasDetail && k) {
+                        invoiceRequestById.set(k, emb);
+                    }
+                }
+            });
+
             if (requestIds.length > 0) {
-                toast({
-                    title: 'Preparing Excel…',
-                    description: `Fetching ${requestIds.length} invoice request(s) for export.`,
-                });
-
-                // One same-origin POST; server proxies to backend (matches local behavior on HTTPS + HTTP API).
-                const bulk = await apiClient.bulkInvoiceRequestDetails(requestIds);
-                requestIds.forEach((id) => {
-                    const row = bulk[id];
-                    if (row?._id) invoiceRequestById.set(row._id.toString(), row);
-                    else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
-                });
-
-                const missing = requestIds.filter((id) => !invoiceRequestById.has(id));
-                if (missing.length > 0) {
-                    const results = await Promise.all(
-                        missing.map(async (id) => {
-                            try {
-                                const res = await apiClient.getInvoiceRequestDetails(id, false, {
-                                    preferDirect: true,
-                                });
-                                return (res as any)?.success ? (res as any).data : null;
-                            } catch {
-                                return null;
-                            }
-                        })
-                    );
-                    results.forEach((req) => {
-                        if (req?._id) invoiceRequestById.set(req._id.toString(), req);
+                const idsToFetch = requestIds.filter((id) => !invoiceRequestById.has(id));
+                if (idsToFetch.length > 0) {
+                    toast({
+                        title: 'Preparing Excel…',
+                        description: `Fetching ${idsToFetch.length} invoice request(s) for export.`,
                     });
+
+                    const bulk = await apiClient.bulkInvoiceRequestDetails(idsToFetch);
+                    idsToFetch.forEach((id) => {
+                        const row = bulk[id];
+                        if (row?._id) invoiceRequestById.set(String(row._id), row);
+                        else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
+                    });
+
+                    const missing = idsToFetch.filter((id) => !invoiceRequestById.has(id));
+                    if (missing.length > 0) {
+                        const results = await Promise.all(
+                            missing.map(async (id) => {
+                                try {
+                                    const res = await apiClient.getInvoiceRequestDetails(id, false, {
+                                        preferDirect: true,
+                                    });
+                                    return (res as any)?.success ? (res as any).data : null;
+                                } catch {
+                                    return null;
+                                }
+                            })
+                        );
+                        results.forEach((req) => {
+                            if (req?._id) invoiceRequestById.set(String(req._id), req);
+                        });
+                    }
                 }
 
                 if (process.env.NODE_ENV === 'development') {
                     secureLog.debug('Excel Export - invoiceRequests fetched', {
                         requested: requestIds.length,
+                        seededFromInvoice: invoiceList.filter(
+                            (inv: any) =>
+                                inv?.request_id &&
+                                typeof inv.request_id === 'object' &&
+                                inv.request_id._id
+                        ).length,
                         loaded: invoiceRequestById.size,
-                        note: 'Uses /api/invoice-requests/bulk-details proxy so deployed HTTPS can reach HTTP API.',
+                        note: 'Seeded from embedded request_id; bulk proxy fills gaps.',
                     });
                 }
             }
@@ -255,31 +291,46 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     ? new Date(invoice.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                     : 'N/A';
 
-                // Enrich from invoicerequests collection
-                const invoiceRequestId =
-                    invoice?.request_id?._id ||
-                    invoice?.request_id ||
-                    invoice?.invoice_request_id ||
-                    extractObjectIdFromNotes(invoice?.notes);
-                const invoiceReq = invoiceRequestId ? invoiceRequestById.get(invoiceRequestId.toString()) : null;
+                // Enrich: fetched map + embedded populated request_id (deployed APIs often omit separate details call).
+                const invoiceRequestIdStr = extractRequestId(invoice);
+                const embeddedReq =
+                    invoice?.request_id && typeof invoice.request_id === 'object' && !Array.isArray(invoice.request_id)
+                        ? invoice.request_id
+                        : null;
+                const fromMap = invoiceRequestIdStr ? invoiceRequestById.get(invoiceRequestIdStr) : undefined;
+                const invoiceReq = fromMap || embeddedReq || null;
                 const booking = invoiceReq?.booking_snapshot || invoiceReq?.booking_data || {};
-                const verification = invoiceReq?.verification || {};
+                const verification =
+                    invoiceReq?.verification ||
+                    embeddedReq?.verification ||
+                    invoice?.request_id?.verification ||
+                    {};
                 const senderDeliveryOption =
                     booking?.sender?.deliveryOption ||
+                    booking?.sender?.delivery_option ||
                     invoiceReq?.sender_delivery_option ||
+                    invoice?.sender_delivery_option ||
+                    embeddedReq?.sender_delivery_option ||
                     'N/A';
                 const receiverDeliveryOption =
                     booking?.receiver?.deliveryOption ||
+                    booking?.receiver?.delivery_option ||
                     invoiceReq?.receiver_delivery_option ||
+                    invoice?.receiver_delivery_option ||
+                    embeddedReq?.receiver_delivery_option ||
                     'N/A';
                 const agentName =
                     verification?.agents_name ||
                     booking?.sender?.agentName ||
+                    booking?.sender?.agent_name ||
+                    invoice?.verification?.agents_name ||
                     'N/A';
-                
+
                 // Extract Sender Address
                 const senderAddress =
                     booking?.sender?.completeAddress ||
+                    booking?.sender?.complete_address ||
+                    embeddedReq?.booking_snapshot?.sender?.completeAddress ||
                     'N/A';
                 
                 // Extract and format ITEMS from booking_data.items array
@@ -294,7 +345,11 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     const unique = names.filter(n => (seen.has(n) ? false : (seen.add(n), true)));
                     return unique.join(', ');
                 };
-                const itemsArray = booking?.items || [];
+                const itemsArray =
+                    booking?.items ||
+                    embeddedReq?.booking_snapshot?.items ||
+                    embeddedReq?.booking_data?.items ||
+                    [];
                 const itemsFormatted = deriveListedCommoditiesFromItems(itemsArray) || 'N/A';
                 
                 // Extract Rate from verification.calculated_rate
@@ -314,15 +369,16 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 if (invoiceList.indexOf(invoice) === 0) {
                     secureLog.debug('Excel Export - First Invoice Sample', {
                         invoice_id: invoice.invoice_id,
-                        hasRequestId: !!invoiceRequestId,
+                        hasRequestId: !!invoiceRequestIdStr,
                         senderDeliveryOption,
                         receiverDeliveryOption,
                         agentName,
                         senderAddress,
                         itemsFormatted,
                         rate,
-                        invoiceRequestId,
-                        invoiceRequestLoaded: !!invoiceReq
+                        invoiceRequestId: invoiceRequestIdStr,
+                        invoiceRequestLoaded: !!invoiceReq,
+                        usedEmbeddedRequestId: !!embeddedReq && !fromMap,
                     });
                 }
 

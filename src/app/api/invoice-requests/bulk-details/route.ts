@@ -55,15 +55,21 @@ export async function POST(request: NextRequest) {
         });
         if (!res.ok) return;
         const json = await res.json();
-        const row =
-          json &&
-          typeof json === 'object' &&
-          'success' in json &&
-          (json as { success: boolean }).success &&
-          (json as { data?: unknown }).data != null
-            ? (json as { data: unknown }).data
-            : (json as { data?: unknown })?.data ?? json;
-        if (row && typeof row === 'object') {
+        if (!json || typeof json !== 'object' || Array.isArray(json)) return;
+
+        let row: unknown = null;
+        const j = json as Record<string, unknown>;
+        if (j.data != null && typeof j.data === 'object') {
+          row = j.data;
+        } else if (j.invoiceRequest != null && typeof j.invoiceRequest === 'object') {
+          row = j.invoiceRequest;
+        } else if (j.success === true && j.data != null) {
+          row = j.data;
+        } else if (j._id != null || j.verification != null || j.booking_snapshot != null) {
+          row = json;
+        }
+
+        if (row && typeof row === 'object' && !Array.isArray(row)) {
           data[id] = row;
         }
       } catch {
