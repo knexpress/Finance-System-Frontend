@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const MAX_IDS = 250;
-/** Avoid hammering the backend (many hosts return 429 if we open 100+ parallel connections). */
-const FETCH_CHUNK_SIZE = 8;
-const PAUSE_MS_BETWEEN_CHUNKS = 80;
-const MAX_RETRIES_429 = 4;
-
 export const runtime = 'nodejs';
-/** Vercel Pro+ can raise this; Hobby is capped at 10s by the platform. */
-export const maxDuration = 60;
+/** Long exports; actual cap depends on Vercel plan (Hobby ~10s). */
+export const maxDuration = 300;
 
 function backendBaseUrl(): string {
   const raw =
@@ -53,8 +47,7 @@ function toJsonSafe(obj: unknown, seen = new WeakSet<object>()): unknown {
 
 /**
  * Server-side proxy: fetches invoice-request details from the real API.
- * Used so the browser only calls same-origin `/api/...`, which avoids CSP
- * blocking `connect-src` to non-localhost HTTP backends on HTTPS deployments.
+ * No artificial caps or throttling on this route (backend / platform limits still apply).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -74,7 +67,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'ids array required' }, { status: 400 });
     }
 
-    const ids = [...new Set(body.ids.map((x) => String(x)).filter(Boolean))].slice(0, MAX_IDS);
+    const ids = [...new Set(body.ids.map((x) => String(x)).filter(Boolean))];
     if (ids.length === 0) {
       return NextResponse.json({ success: true, data: {} });
     }
@@ -83,10 +76,6 @@ export async function POST(request: NextRequest) {
     const data: Record<string, unknown> = {};
 
     const validIds = ids.filter((id) => /^[a-fA-F0-9]{24}$/.test(id));
-    // Large exports: fewer round-trips so Vercel Hobby (~10s) is less likely to time out.
-    const manyIds = validIds.length > 25;
-    const chunkSize = manyIds ? 14 : FETCH_CHUNK_SIZE;
-    const pauseMs = manyIds ? 0 : PAUSE_MS_BETWEEN_CHUNKS;
 
     const fetchOne = async (id: string): Promise<void> => {
       const url = `${base}/invoice-requests/${encodeURIComponent(id)}/details`;
@@ -95,60 +84,45 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
       };
 
-      for (let attempt = 0; attempt < MAX_RETRIES_429; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          headers,
+          cache: 'no-store',
+        });
+
+        if (!res.ok) return;
+
+        let json: unknown;
         try {
-          const res = await fetch(url, {
-            method: 'GET',
-            headers,
-            cache: 'no-store',
-          });
-
-          if (res.status === 429) {
-            const backoff = 400 * (attempt + 1) ** 2;
-            await new Promise((r) => setTimeout(r, backoff));
-            continue;
-          }
-
-          if (!res.ok) return;
-
-          let json: unknown;
-          try {
-            json = await res.json();
-          } catch {
-            return;
-          }
-
-          if (!json || typeof json !== 'object' || Array.isArray(json)) return;
-
-          let row: unknown = null;
-          const j = json as Record<string, unknown>;
-          if (j.data != null && typeof j.data === 'object') {
-            row = j.data;
-          } else if (j.invoiceRequest != null && typeof j.invoiceRequest === 'object') {
-            row = j.invoiceRequest;
-          } else if (j.success === true && j.data != null) {
-            row = j.data;
-          } else if (j._id != null || j.verification != null || j.booking_snapshot != null) {
-            row = json;
-          }
-
-          if (row && typeof row === 'object' && !Array.isArray(row)) {
-            data[id] = row;
-          }
-          return;
+          json = await res.json();
         } catch {
           return;
         }
+
+        if (!json || typeof json !== 'object' || Array.isArray(json)) return;
+
+        let row: unknown = null;
+        const j = json as Record<string, unknown>;
+        if (j.data != null && typeof j.data === 'object') {
+          row = j.data;
+        } else if (j.invoiceRequest != null && typeof j.invoiceRequest === 'object') {
+          row = j.invoiceRequest;
+        } else if (j.success === true && j.data != null) {
+          row = j.data;
+        } else if (j._id != null || j.verification != null || j.booking_snapshot != null) {
+          row = json;
+        }
+
+        if (row && typeof row === 'object' && !Array.isArray(row)) {
+          data[id] = row;
+        }
+      } catch {
+        // per-id failure
       }
     };
 
-    for (let i = 0; i < validIds.length; i += chunkSize) {
-      const chunk = validIds.slice(i, i + chunkSize);
-      await Promise.all(chunk.map((id) => fetchOne(id)));
-      if (i + chunkSize < validIds.length && pauseMs > 0) {
-        await new Promise((r) => setTimeout(r, pauseMs));
-      }
-    }
+    await Promise.all(validIds.map((id) => fetchOne(id)));
 
     const safeData = toJsonSafe(data) as Record<string, unknown>;
     const payload = JSON.stringify({ success: true, data: safeData });

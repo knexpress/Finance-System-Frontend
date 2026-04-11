@@ -143,22 +143,15 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
                     });
 
-                    // Never call the backend directly from the browser (CORS on Render, etc.).
-                    // Retry missing IDs via same-origin bulk proxy in small batches.
+                    // Second pass: any IDs still missing (same-origin bulk proxy only; no chunking).
                     const missing = idsToFetch.filter((id) => !invoiceRequestById.has(id));
-                    const PROXY_FALLBACK_CHUNK = 8;
-                    const PROXY_FALLBACK_PAUSE_MS = 200;
-                    for (let i = 0; i < missing.length; i += PROXY_FALLBACK_CHUNK) {
-                        const slice = missing.slice(i, i + PROXY_FALLBACK_CHUNK);
-                        const miniBulk = await apiClient.bulkInvoiceRequestDetails(slice);
-                        slice.forEach((id) => {
+                    if (missing.length > 0) {
+                        const miniBulk = await apiClient.bulkInvoiceRequestDetails(missing);
+                        missing.forEach((id) => {
                             const row = miniBulk[id];
                             if (row?._id) invoiceRequestById.set(String(row._id), row);
                             else if (row && typeof row === 'object') invoiceRequestById.set(id, row);
                         });
-                        if (i + PROXY_FALLBACK_CHUNK < missing.length) {
-                            await new Promise((r) => setTimeout(r, PROXY_FALLBACK_PAUSE_MS));
-                        }
                     }
                 }
 
