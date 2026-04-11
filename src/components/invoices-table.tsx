@@ -208,6 +208,79 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 return Number.isFinite(n) ? n.toFixed(digits) : (0).toFixed(digits);
             };
 
+            /** Parse a single weight-like scalar; null = missing (not zero). */
+            const parseWeightScalar = (value: any): number | null => {
+                if (value === undefined || value === null || value === '') return null;
+                if (typeof value === 'object' && value) {
+                    if ('$numberDecimal' in value) {
+                        const n = parseFloat(String((value as { $numberDecimal: string }).$numberDecimal));
+                        return Number.isFinite(n) ? n : null;
+                    }
+                    if ('$numberLong' in value) {
+                        const n = Number((value as { $numberLong: string }).$numberLong);
+                        return Number.isFinite(n) ? n : null;
+                    }
+                    if ('$numberInt' in value) {
+                        const n = Number((value as { $numberInt: number }).$numberInt);
+                        return Number.isFinite(n) ? n : null;
+                    }
+                    if ('$numberDouble' in value) {
+                        const raw = (value as { $numberDouble: string | number }).$numberDouble;
+                        const n = parseFloat(String(raw).replace(',', '.'));
+                        return Number.isFinite(n) ? n : null;
+                    }
+                }
+                const s = typeof value === 'number' ? String(value) : String(value).trim();
+                const n = parseFloat(s.replace(',', '.'));
+                return Number.isFinite(n) ? n : null;
+            };
+
+            const firstWeightKg = (...vals: any[]): number | null => {
+                for (const v of vals) {
+                    const n = parseWeightScalar(v);
+                    if (n !== null) return n;
+                }
+                return null;
+            };
+
+            const parseBoxCount = (value: any): number | null => {
+                if (value === undefined || value === null || value === '') return null;
+                let raw: any = value;
+                if (typeof raw === 'object' && raw && '$numberDecimal' in raw) {
+                    raw = (raw as { $numberDecimal: string }).$numberDecimal;
+                }
+                const x = parseInt(String(raw).trim(), 10);
+                return Number.isFinite(x) && x > 0 ? x : null;
+            };
+
+            const firstBoxCount = (...vals: any[]): number | null => {
+                for (const v of vals) {
+                    const x = parseBoxCount(v);
+                    if (x !== null) return x;
+                }
+                return null;
+            };
+
+            const boxesFromBoxesArray = (boxes: any): number | null => {
+                if (!Array.isArray(boxes) || boxes.length === 0) return null;
+                let sum = 0;
+                for (const box of boxes) {
+                    const qty = parseInt(String(box?.quantity ?? box?.qty ?? 1), 10);
+                    sum += Number.isFinite(qty) && qty > 0 ? qty : 1;
+                }
+                return sum > 0 ? sum : null;
+            };
+
+            const boxesFromLineItems = (items: any): number | null => {
+                if (!Array.isArray(items) || items.length === 0) return null;
+                let sum = 0;
+                for (const it of items) {
+                    const q = parseInt(String(it?.quantity ?? it?.qty ?? it?.number_of_boxes ?? 0), 10);
+                    if (Number.isFinite(q) && q > 0) sum += q;
+                }
+                return sum > 0 ? sum : null;
+            };
+
             // After SheetJS builds cells, force text format for "N/A" so Excel does not treat it like the #N/A error.
             const markNaCellsAsText = (sheet: XLSX.WorkSheet) => {
                 const ref = sheet['!ref'];
@@ -264,8 +337,44 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                 'Notes'
             ]);
 
+            // Bulk export refetch can omit fields that the paginated table response includes (e.g. weight_kg).
+            const uiByMongoId = new Map<string, any>();
+            const uiByBusinessKey = new Map<string, any>();
+            for (const u of safeInvoices) {
+                if (u?._id != null) uiByMongoId.set(String(u._id), u);
+                const bk = `${String(u?.invoice_id ?? '').trim()}|${String(u?.awb_number ?? '').trim()}`;
+                if (bk !== '|') uiByBusinessKey.set(bk, u);
+            }
+
+            const patchInvoiceFromTableIfNeeded = (inv: any) => {
+                const ui =
+                    (inv?._id != null && uiByMongoId.get(String(inv._id))) ||
+                    uiByBusinessKey.get(
+                        `${String(inv?.invoice_id ?? '').trim()}|${String(inv?.awb_number ?? '').trim()}`
+                    );
+                if (!ui) return inv;
+                const next = { ...inv };
+                const fill = (k: 'weight_kg' | 'number_of_boxes' | 'volume_cbm') => {
+                    const c = next[k];
+                    const u = ui[k];
+                    if (u === undefined || u === null || u === '') return;
+                    if (c === undefined || c === null || c === '') {
+                        next[k] = u;
+                        return;
+                    }
+                    if (k === 'weight_kg' && parseWeightScalar(c) === null && parseWeightScalar(u) !== null) {
+                        next[k] = u;
+                    }
+                };
+                fill('weight_kg');
+                fill('number_of_boxes');
+                fill('volume_cbm');
+                return next;
+            };
+
             // Data rows
-            invoiceList.forEach((invoice) => {
+            invoiceList.forEach((rawInvoice, rowIndex) => {
+                const invoice = patchInvoiceFromTableIfNeeded(rawInvoice);
                 // Determine service type
                 const serviceCode = (invoice.service_code || '').toString().toUpperCase().replace(/[\s-]+/g, '_');
                 const isPhToUae = serviceCode === 'PH_TO_UAE' || serviceCode.startsWith('PH_TO_UAE_');
@@ -315,11 +424,22 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         : null;
                 const fromMap = invoiceRequestIdStr ? invoiceRequestById.get(invoiceRequestIdStr) : undefined;
                 const invoiceReq = fromMap || embeddedReq || null;
-                const booking = invoiceReq?.booking_snapshot || invoiceReq?.booking_data || {};
+                const booking =
+                    invoiceReq?.booking_snapshot ||
+                    invoiceReq?.booking_data ||
+                    embeddedReq?.booking_snapshot ||
+                    embeddedReq?.booking_data ||
+                    {};
                 const verification =
                     invoiceReq?.verification ||
                     embeddedReq?.verification ||
-                    invoice?.request_id?.verification ||
+                    (typeof invoice.request_id === 'object' && invoice.request_id?.verification) ||
+                    {};
+                const invVerification = invoice.verification;
+                const reqShipment =
+                    (typeof invoice.request_id === 'object' && invoice.request_id?.shipment) ||
+                    invoiceReq?.shipment ||
+                    embeddedReq?.shipment ||
                     {};
                 const senderDeliveryOption =
                     booking?.sender?.deliveryOption ||
@@ -382,7 +502,7 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         : 'N/A';
                 
                 // Debug: Log the extracted values
-                if (invoiceList.indexOf(invoice) === 0) {
+                if (rowIndex === 0) {
                     secureLog.debug('Excel Export - First Invoice Sample', {
                         invoice_id: invoice.invoice_id,
                         hasRequestId: !!invoiceRequestIdStr,
@@ -398,6 +518,64 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     });
                 }
 
+                // Match on-screen table + invoice detail page: invoice.weight_kg / shipment / booking fallbacks.
+                const rid =
+                    typeof invoice.request_id === 'object' && invoice.request_id !== null
+                        ? invoice.request_id
+                        : null;
+                // Invoice collection fields first (invoices.weight_kg is source of truth on the row).
+                const inv = invoice as Record<string, unknown>;
+                const invShipment =
+                    typeof inv.shipment === 'object' && inv.shipment !== null
+                        ? (inv.shipment as Record<string, unknown>)
+                        : null;
+                const exportWeightKg = firstWeightKg(
+                    inv.weight_kg,
+                    inv.weightKg,
+                    inv.weight,
+                    invShipment?.weight,
+                    invShipment?.weight_kg,
+                    invShipment?.weightKg,
+                    verification?.total_kg,
+                    verification?.chargeable_weight,
+                    verification?.actual_weight,
+                    verification?.weight,
+                    invVerification?.total_kg,
+                    invVerification?.chargeable_weight,
+                    invVerification?.actual_weight,
+                    invVerification?.weight,
+                    rid?.verification?.total_kg,
+                    rid?.verification?.chargeable_weight,
+                    rid?.verification?.actual_weight,
+                    rid?.verification?.weight,
+                    reqShipment?.weight,
+                    rid?.shipment?.weight,
+                    booking?.shipment?.weight,
+                    booking?.weight,
+                    booking?.total_weight
+                );
+                const weightCell = exportWeightKg !== null ? exportWeightKg.toFixed(2) : 'N/A';
+
+                let exportBoxes = firstBoxCount(
+                    invoice.number_of_boxes,
+                    reqShipment?.number_of_boxes,
+                    rid?.shipment?.number_of_boxes,
+                    verification?.number_of_boxes,
+                    invVerification?.number_of_boxes,
+                    rid?.verification?.number_of_boxes,
+                    rid?.number_of_boxes,
+                    invoiceReq?.number_of_boxes,
+                    invoiceReq?.shipment?.number_of_boxes,
+                    booking?.number_of_boxes
+                );
+                if (exportBoxes === null) exportBoxes = boxesFromBoxesArray(verification?.boxes);
+                if (exportBoxes === null) exportBoxes = boxesFromBoxesArray(invVerification?.boxes);
+                if (exportBoxes === null) exportBoxes = boxesFromBoxesArray(rid?.verification?.boxes);
+                if (exportBoxes === null) exportBoxes = boxesFromLineItems(booking?.items);
+                if (exportBoxes === null) exportBoxes = boxesFromLineItems(embeddedReq?.booking_snapshot?.items);
+                if (exportBoxes === null) exportBoxes = boxesFromLineItems(embeddedReq?.booking_data?.items);
+                const boxesCell = exportBoxes !== null ? exportBoxes : 'N/A';
+
                 excelData.push([
                     invoice.invoice_id || 'N/A',
                     invoice.awb_number || 'N/A',
@@ -407,15 +585,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     invoice.receiver_address || 'N/A',
                     invoice.receiver_phone || 'N/A',
                     invoice.service_code || 'N/A',
-                    verification?.chargeable_weight ||
-                    verification?.total_kg ||
-                    verification?.weight ||
-                    invoice.request_id?.verification?.chargeable_weight ||
-                    invoice.request_id?.verification?.total_kg ||
-                    invoice.request_id?.verification?.weight ||
-                    'N/A',
-                    verification?.number_of_boxes || invoice.request_id?.verification?.number_of_boxes || 'N/A',
-                    invoice.volume_cbm || invoice.request_id?.shipment?.volume || 'N/A',
+                    weightCell,
+                    boxesCell,
+                    invoice.volume_cbm || rid?.shipment?.volume || reqShipment?.volume || 'N/A',
                     safeFixed(shippingCharge, 2),
                     safeFixed(pickupCharge, 2),
                     safeFixed(deliveryCharge, 2),

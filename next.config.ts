@@ -1,4 +1,5 @@
 import type {NextConfig} from 'next';
+import path from 'path';
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -88,6 +89,8 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Avoid wrong inferred workspace root when a parent folder has its own package-lock.json (Windows dev stability).
+  outputFileTracingRoot: path.resolve(process.cwd()),
   // Bundle optimization
   experimental: {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
