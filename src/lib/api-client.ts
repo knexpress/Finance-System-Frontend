@@ -90,18 +90,26 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<{ success: boolean; data?: T; error?: string }> {
     try {
-      // Rate limiting check
-      const rateLimitCheck = checkRateLimit(apiRateLimiter, endpoint);
-      if (!rateLimitCheck.allowed) {
-        createAuditLog(AuditEventType.RATE_LIMIT_EXCEEDED, `Rate limit exceeded for ${endpoint}`, {
-          resource: endpoint,
-          success: false,
-          metadata: { remaining: rateLimitCheck.remaining, resetTime: rateLimitCheck.resetTime },
-        });
-        return { 
-          success: false, 
-          error: 'Too many requests. Please try again later.' 
-        };
+      // Do not client-rate-limit invoice-request details (Excel export opens many distinct URLs;
+      // a per-path bucket still allows each once, but backend 429 is the real constraint — avoid double-throttling).
+      const isInvoiceRequestDetailsGet =
+        (!options.method || options.method === 'GET') &&
+        endpoint.includes('/invoice-requests/') &&
+        endpoint.includes('/details');
+
+      if (!isInvoiceRequestDetailsGet) {
+        const rateLimitCheck = checkRateLimit(apiRateLimiter, endpoint);
+        if (!rateLimitCheck.allowed) {
+          createAuditLog(AuditEventType.RATE_LIMIT_EXCEEDED, `Rate limit exceeded for ${endpoint}`, {
+            resource: endpoint,
+            success: false,
+            metadata: { remaining: rateLimitCheck.remaining, resetTime: rateLimitCheck.resetTime },
+          });
+          return {
+            success: false,
+            error: 'Too many requests. Please try again later.',
+          };
+        }
       }
 
       // Sanitize request body if present

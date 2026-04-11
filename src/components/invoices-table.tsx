@@ -144,9 +144,12 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                     });
 
                     const missing = idsToFetch.filter((id) => !invoiceRequestById.has(id));
-                    if (missing.length > 0) {
+                    const DIRECT_CHUNK = 5;
+                    const DIRECT_PAUSE_MS = 150;
+                    for (let i = 0; i < missing.length; i += DIRECT_CHUNK) {
+                        const slice = missing.slice(i, i + DIRECT_CHUNK);
                         const results = await Promise.all(
-                            missing.map(async (id) => {
+                            slice.map(async (id) => {
                                 try {
                                     const res = await apiClient.getInvoiceRequestDetails(id, false, {
                                         preferDirect: true,
@@ -160,6 +163,9 @@ export default function InvoicesTable({ invoices, department, onRemit, onCancel 
                         results.forEach((req) => {
                             if (req?._id) invoiceRequestById.set(String(req._id), req);
                         });
+                        if (i + DIRECT_CHUNK < missing.length) {
+                            await new Promise((r) => setTimeout(r, DIRECT_PAUSE_MS));
+                        }
                     }
                 }
 
