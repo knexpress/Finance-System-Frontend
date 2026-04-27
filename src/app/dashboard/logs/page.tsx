@@ -98,7 +98,7 @@ export default function LogsPage() {
         ]);
 
         if (!bookingsResult.success || !bookingsResult.data) {
-          throw new Error(bookingsResult.error || 'Failed to fetch booking logs');
+          throw new Error((bookingsResult as { error?: string }).error || 'Failed to fetch booking logs');
         }
 
         const data = Array.isArray(bookingsResult.data) ? (bookingsResult.data as BookingLogItem[]) : [];
