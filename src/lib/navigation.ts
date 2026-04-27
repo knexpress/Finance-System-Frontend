@@ -18,6 +18,7 @@ import {
   ClipboardCheck,
   XCircle,
   DollarSign,
+  History,
 } from 'lucide-react';
 import type { Department, DepartmentData } from './types';
 
@@ -105,6 +106,12 @@ const allLinks: NavLink[] = [
     href: '/dashboard/booking-requests',
     label: 'Booking Requests',
     icon: ClipboardCheck,
+    departments: ['Management', 'IT'],
+  },
+  {
+    href: '/dashboard/logs',
+    label: 'Logs',
+    icon: History,
     departments: ['Management', 'IT'],
   },
   {
