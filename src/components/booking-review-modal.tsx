@@ -932,34 +932,6 @@ export default function BookingReviewModal({
                   </div>
                 )}
 
-                {/* Client Face Images (Multiple) */}
-                <div className="space-y-2 md:col-span-3">
-                  <Label className="text-sm font-semibold flex items-center gap-2">
-                    <ImageIcon className="h-4 w-4" />
-                    Client Face Images
-                  </Label>
-                  {customerImages.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      {customerImages.map((img, idx) => (
-                        <div 
-                          key={idx}
-                          className="relative w-full aspect-video border rounded-md overflow-hidden cursor-zoom-in"
-                          onClick={() => openImageViewer(img, `Client Face ${idx + 1}`)}
-                        >
-                          <img
-                            src={img}
-                            alt={`Client Face ${idx + 1}`}
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="w-full border rounded-md flex items-center justify-center text-muted-foreground py-6">
-                      <p className="text-sm">No client face images</p>
-                    </div>
-                  )}
-                </div>
               </div>
             </CardContent>
           </Card>
