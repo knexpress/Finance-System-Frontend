@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
@@ -48,6 +49,15 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent>
           <AuthForm />
+          <div className="mt-4 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+            <Link className="underline transition hover:text-foreground" href="/privacy-policy">
+              Privacy Policy
+            </Link>
+            <span aria-hidden="true">|</span>
+            <Link className="underline transition hover:text-foreground" href="/terms-and-conditions">
+              Terms and Conditions
+            </Link>
+          </div>
         </CardContent>
       </Card>
     </div>
