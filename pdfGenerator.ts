@@ -1,5 +1,16 @@
 import jsPDF from 'jspdf'
 
+export interface UaePassUserInfo {
+  uuid?: string
+  email?: string
+  mobile?: string
+  fullnameEN?: string
+  nationalityEN?: string
+  userType?: string
+  spuuid?: string | null
+  eid_number?: string
+}
+
 export interface BookingPDFData {
   referenceNumber: string
   bookingId?: string
@@ -38,6 +49,46 @@ export interface BookingPDFData {
   declarationText?: string // Declaration text that customer confirmed
   insured?: boolean // Whether insurance is selected
   declaredAmount?: number // Declared value for insurance
+  uaePassUserInfo?: UaePassUserInfo
+}
+
+/** Extract UAE Pass profile from booking document (several storage paths). */
+export function pickUaePassUserInfoFromBooking(
+  booking: Record<string, unknown> | null | undefined
+): UaePassUserInfo | undefined {
+  if (!booking || typeof booking !== 'object') return undefined
+  const b = booking as Record<string, unknown>
+  const sender =
+    b.sender && typeof b.sender === 'object'
+      ? (b.sender as Record<string, unknown>)
+      : undefined
+  const collections =
+    b.collections && typeof b.collections === 'object'
+      ? (b.collections as Record<string, unknown>)
+      : undefined
+  const raw =
+    b.uaePassUserInfo ??
+    sender?.uaePassUserInfo ??
+    collections?.uaePassUserInfo
+  if (!raw || typeof raw !== 'object') return undefined
+  const info = raw as Record<string, unknown>
+  const normalized: UaePassUserInfo = {
+    uuid: info.uuid != null ? String(info.uuid) : undefined,
+    email: info.email != null ? String(info.email) : undefined,
+    mobile: info.mobile != null ? String(info.mobile) : undefined,
+    fullnameEN: info.fullnameEN != null ? String(info.fullnameEN) : undefined,
+    nationalityEN: info.nationalityEN != null ? String(info.nationalityEN) : undefined,
+    userType: info.userType != null ? String(info.userType) : undefined,
+    spuuid:
+      info.spuuid === null || info.spuuid === undefined
+        ? null
+        : String(info.spuuid),
+    eid_number: info.eid_number != null ? String(info.eid_number) : undefined,
+  }
+  const hasAny = Object.values(normalized).some(
+    (v) => v !== undefined && v !== null && String(v).trim() !== ''
+  )
+  return hasAny ? normalized : undefined
 }
 
 /** Bookings use receiver_delivery_option / receiver.deliveryOption values like `delivery` | `pickup`; PDF layout uses `address` | `warehouse`. */
@@ -69,6 +120,78 @@ export function parseDeclaredAmountFromBooking(booking: Record<string, unknown> 
       ? (b.sender as Record<string, unknown>)
       : undefined
   return coerceDeclaredAmount(sender?.declaredAmount)
+}
+
+function formatUaePassDisplayValue(value: string | null | undefined): string {
+  if (value === null || value === undefined) return 'N/A'
+  const s = String(value).trim()
+  return s === '' ? 'N/A' : s
+}
+
+/** Renders UAE Pass verification block; returns updated yPos. */
+function renderUaePassUserInfoSection(
+  doc: jsPDF,
+  info: UaePassUserInfo,
+  margin: number,
+  pageWidth: number,
+  pageHeight: number,
+  yPos: number,
+  addNewPage: () => void,
+  options?: { skipLeadingGap?: boolean }
+): number {
+  const contentWidth = pageWidth - margin * 2
+  const lineGap = 5
+  const fields: Array<{ label: string; value: string }> = [
+    { label: 'FULL NAME (EN)', value: formatUaePassDisplayValue(info.fullnameEN) },
+    { label: 'EMAIL', value: formatUaePassDisplayValue(info.email) },
+    { label: 'MOBILE', value: formatUaePassDisplayValue(info.mobile) },
+    { label: 'NATIONALITY', value: formatUaePassDisplayValue(info.nationalityEN) },
+    { label: 'EID NUMBER', value: formatUaePassDisplayValue(info.eid_number) },
+    { label: 'USER TYPE', value: formatUaePassDisplayValue(info.userType) },
+    { label: 'UUID', value: formatUaePassDisplayValue(info.uuid) },
+    { label: 'SP UUID', value: formatUaePassDisplayValue(info.spuuid) },
+  ]
+
+  let estimatedHeight = 12
+  fields.forEach((f) => {
+    const lines = doc.splitTextToSize(f.value, contentWidth - 4)
+    estimatedHeight += 5 + Math.max(1, lines.length) * 4 + lineGap
+  })
+
+  if (yPos + estimatedHeight > pageHeight - margin - 15) {
+    addNewPage()
+    yPos = margin + 10
+  } else if (!options?.skipLeadingGap) {
+    yPos += 5
+  }
+
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(0, 128, 0)
+  doc.text('UAE PASS — VERIFIED USER INFORMATION', margin, yPos)
+  yPos += 8
+
+  doc.setTextColor(0, 0, 0)
+  fields.forEach(({ label, value }) => {
+    if (yPos > pageHeight - margin - 20) {
+      addNewPage()
+      yPos = margin + 10
+    }
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    doc.text(label, margin, yPos)
+    yPos += 5
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    const valueLines = doc.splitTextToSize(value, contentWidth)
+    valueLines.forEach((line: string) => {
+      doc.text(line, margin, yPos)
+      yPos += 4
+    })
+    yPos += lineGap
+  })
+
+  return yPos + 4
 }
 
 export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
@@ -1093,6 +1216,25 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
     doc.text(line, margin + 2, disclaimerYPos)
     disclaimerYPos += lineHeight
   })
+
+  // UAE Pass verified user details — directly below disclaimer
+  if (data.uaePassUserInfo) {
+    disclaimerYPos += 14
+    doc.setPage(disclaimerPageNumber)
+    renderUaePassUserInfoSection(
+      doc,
+      data.uaePassUserInfo,
+      margin,
+      pageWidth,
+      pageHeight,
+      disclaimerYPos,
+      () => {
+        addNewPage()
+        doc.setPage(doc.getNumberOfPages())
+      },
+      { skipLeadingGap: true }
+    )
+  }
 
   // Add footer to all pages
   const totalPages = doc.getNumberOfPages()

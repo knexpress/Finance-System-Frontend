@@ -1557,6 +1557,17 @@ class ApiClient {
     });
   }
 
+  async autoReviewBookingsBatch(payload: {
+    reviewed_by_employee_id: string;
+    limit?: number;
+    booking_ids?: string[];
+  }) {
+    return this.request('/bookings/auto-review/batch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async updateBookingStatus(id: string, statusData: { review_status: string; reviewed_by_employee_id?: string; reason?: string }) {
     return this.request(`/bookings/${id}/status`, {
       method: 'PUT',

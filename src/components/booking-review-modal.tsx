@@ -19,6 +19,7 @@ import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Download } from '
 import {
   generateBookingPDF,
   normalizeReceiverDeliveryOptionForPdf,
+  pickUaePassUserInfoFromBooking,
   parseDeclaredAmountFromBooking,
   type BookingPDFData,
 } from '../../pdfGenerator';
@@ -448,6 +449,7 @@ export default function BookingReviewModal({
         declarationText: declarationText,
         insured: fullBooking.insured || fullBooking.isInsured || false,
         declaredAmount: parseDeclaredAmountFromBooking(fullBooking),
+        uaePassUserInfo: pickUaePassUserInfoFromBooking(fullBooking),
       };
 
       // Generate and download PDF
