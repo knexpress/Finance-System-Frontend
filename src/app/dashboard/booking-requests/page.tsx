@@ -54,6 +54,11 @@ import {
   type BookingPDFData,
 } from '../../../../pdfGenerator';
 import { secureLog } from '@/lib/secure-logger';
+import {
+  getBookingAutoReviewUserId,
+  readBookingAutoReviewEnabled,
+  writeBookingAutoReviewEnabled,
+} from '@/lib/booking-auto-review-preference';
 
 // Dynamically import heavy modal components to reduce initial bundle size
 const BookingReviewModal = dynamic(() => import('@/components/booking-review-modal'), {
@@ -75,15 +80,15 @@ export default function BookingRequestsPage() {
   const [loadingBookingDetails, setLoadingBookingDetails] = useState(false);
   const [generatingPDFBookingId, setGeneratingPDFBookingId] = useState<string | null>(null);
   const [autoReviewEnabled, setAutoReviewEnabled] = useState(false);
+  const [autoReviewPrefLoaded, setAutoReviewPrefLoaded] = useState(false);
   const [autoReviewRunning, setAutoReviewRunning] = useState(false);
   const [autoReviewProgress, setAutoReviewProgress] = useState<{ current: number; total: number } | null>(null);
   const [showAutoReviewConfirm, setShowAutoReviewConfirm] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50; // Show 50 items per page for better performance
   const { toast } = useToast();
-  const { userProfile } = useAuth();
+  const { userProfile, loading: authLoading } = useAuth();
 
-  const AUTO_REVIEW_STORAGE_KEY = 'knex-booking-auto-review-enabled';
   const AUTO_REVIEW_POLL_MS = 30_000;
   const AUTO_REVIEW_DEBOUNCE_MS = 800;
   const AUTO_REVIEW_FAIL_COOLDOWN_MS = 2 * 60_000;
@@ -111,23 +116,37 @@ export default function BookingRequestsPage() {
     return normalized;
   };
 
+  const autoReviewUserId = getBookingAutoReviewUserId(userProfile);
+
+  // Restore persisted toggle after auth loads (survives logout and browser restarts)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const stored = localStorage.getItem(AUTO_REVIEW_STORAGE_KEY);
-    setAutoReviewEnabled(stored === 'true');
-  }, []);
+    if (authLoading) return;
+    if (!autoReviewUserId) {
+      setAutoReviewPrefLoaded(true);
+      return;
+    }
+    setAutoReviewEnabled(readBookingAutoReviewEnabled(autoReviewUserId));
+    setAutoReviewPrefLoaded(true);
+  }, [authLoading, autoReviewUserId]);
 
   const handleAutoReviewToggle = (enabled: boolean) => {
     setAutoReviewEnabled(enabled);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(AUTO_REVIEW_STORAGE_KEY, enabled ? 'true' : 'false');
-    }
+    writeBookingAutoReviewEnabled(enabled, autoReviewUserId);
   };
+
+  const isExcludedFromAutoReview = useCallback(
+    (booking: (typeof bookings)[number]) => booking?.skip_auto_review === true,
+    []
+  );
 
   const pendingBookingsCount = useMemo(
     () =>
-      bookings.filter((b) => normalizeReviewStatus(b.review_status) === 'not reviewed').length,
-    [bookings]
+      bookings.filter(
+        (b) =>
+          normalizeReviewStatus(b.review_status) === 'not reviewed' &&
+          !isExcludedFromAutoReview(b)
+      ).length,
+    [bookings, isExcludedFromAutoReview]
   );
 
   const getPendingBookingIds = useCallback(
@@ -135,6 +154,7 @@ export default function BookingRequestsPage() {
       const now = Date.now();
       return source
         .filter((b) => normalizeReviewStatus(b.review_status) === 'not reviewed')
+        .filter((b) => !isExcludedFromAutoReview(b))
         .map((b) => b._id)
         .filter((id): id is string => {
           if (!id) return false;
@@ -144,7 +164,7 @@ export default function BookingRequestsPage() {
           return true;
         });
     },
-    []
+    [isExcludedFromAutoReview]
   );
 
   const runAutoReview = useCallback(
@@ -260,7 +280,7 @@ export default function BookingRequestsPage() {
   );
 
   const scheduleAutomaticAutoReview = useCallback(() => {
-    if (!autoReviewEnabled || !userProfile || filterStatus === 'reviewed') return;
+    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile || filterStatus === 'reviewed') return;
 
     if (autoReviewDebounceRef.current) {
       clearTimeout(autoReviewDebounceRef.current);
@@ -274,6 +294,7 @@ export default function BookingRequestsPage() {
     }, AUTO_REVIEW_DEBOUNCE_MS);
   }, [
     autoReviewEnabled,
+    autoReviewPrefLoaded,
     bookings,
     filterStatus,
     getPendingBookingIds,
@@ -283,18 +304,18 @@ export default function BookingRequestsPage() {
 
   // When auto-review is on: approve pending bookings whenever the list updates
   useEffect(() => {
-    if (!autoReviewEnabled || loading) return;
+    if (!autoReviewPrefLoaded || !autoReviewEnabled || loading) return;
     scheduleAutomaticAutoReview();
     return () => {
       if (autoReviewDebounceRef.current) {
         clearTimeout(autoReviewDebounceRef.current);
       }
     };
-  }, [autoReviewEnabled, bookings, loading, scheduleAutomaticAutoReview]);
+  }, [autoReviewEnabled, autoReviewPrefLoaded, bookings, loading, scheduleAutomaticAutoReview]);
 
   // Poll for new booking requests while auto-review mode is active
   useEffect(() => {
-    if (!autoReviewEnabled) return;
+    if (!autoReviewPrefLoaded || !autoReviewEnabled) return;
 
     const poll = () => {
       if (!autoReviewInFlightRef.current) {
@@ -305,7 +326,7 @@ export default function BookingRequestsPage() {
     poll();
     const intervalId = setInterval(poll, AUTO_REVIEW_POLL_MS);
     return () => clearInterval(intervalId);
-  }, [autoReviewEnabled, filterStatus, awbSearch]);
+  }, [autoReviewEnabled, autoReviewPrefLoaded, filterStatus, awbSearch]);
 
   useEffect(() => {
     fetchBookings();
@@ -888,7 +909,7 @@ export default function BookingRequestsPage() {
                 Auto-review mode
                 {autoReviewEnabled && (
                   <span className="block text-xs font-normal text-muted-foreground">
-                    New requests are approved automatically
+                    New requests are approved automatically (Invoice Requests sales bookings excluded)
                   </span>
                 )}
               </Label>

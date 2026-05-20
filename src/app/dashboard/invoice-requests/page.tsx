@@ -3151,9 +3151,10 @@ export default function InvoiceRequestsPage() {
           </p>
         </div>
         {userProfile.department.name === 'Sales' && (
-          <SalesBookingForm 
+          <SalesBookingForm
             onBookingCreated={fetchInvoiceRequests}
             currentUser={userProfile}
+            skipAutoReview
           />
         )}
       </div>

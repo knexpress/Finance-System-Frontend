@@ -35,12 +35,18 @@ import {
 interface SalesBookingFormProps {
   onBookingCreated: () => void;
   currentUser: any;
+  /** Bookings from Invoice Requests page must be manually reviewed (never auto-approved). */
+  skipAutoReview?: boolean;
 }
 
 
 type BookingType = 'uae_to_pinas' | 'pinas_to_uae';
 
-export default function SalesBookingForm({ onBookingCreated, currentUser }: SalesBookingFormProps) {
+export default function SalesBookingForm({
+  onBookingCreated,
+  currentUser,
+  skipAutoReview = false,
+}: SalesBookingFormProps) {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [bookingType, setBookingType] = useState<BookingType>('uae_to_pinas');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -584,6 +590,7 @@ export default function SalesBookingForm({ onBookingCreated, currentUser }: Sale
         service: service,
         service_code: serviceCode,
         source: 'sales',
+        ...(skipAutoReview ? { skip_auto_review: true } : {}),
         status: 'pending',
         review_status: 'pending',
         awb: awbNumber,
