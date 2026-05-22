@@ -19,12 +19,6 @@ export function readBookingAutoReviewEnabled(userId?: string | null): boolean {
     if (perUser !== null) {
       return parseStoredEnabled(perUser);
     }
-    // Migrate legacy global preference into this user's key once
-    const legacy = localStorage.getItem(GLOBAL_STORAGE_KEY);
-    if (legacy !== null) {
-      localStorage.setItem(userStorageKey(userId), legacy);
-      return parseStoredEnabled(legacy);
-    }
     return false;
   }
 
@@ -42,15 +36,16 @@ export function writeBookingAutoReviewEnabled(enabled: boolean, userId?: string 
   if (userId) {
     localStorage.setItem(userStorageKey(userId), value);
   }
-  // Keep global key in sync for backwards compatibility during migration
-  localStorage.setItem(GLOBAL_STORAGE_KEY, value);
 }
 
+/** Stable per-login storage id (prefer User _id so toggle does not flip between keys). */
 export function getBookingAutoReviewUserId(userProfile: {
   _id?: string;
   employee_id?: string;
   uid?: string;
 } | null | undefined): string | null {
   if (!userProfile) return null;
-  return userProfile._id || userProfile.employee_id || userProfile.uid || null;
+  const id = userProfile._id ?? userProfile.uid ?? userProfile.employee_id;
+  if (id == null) return null;
+  return String(id);
 }

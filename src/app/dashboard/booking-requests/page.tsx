@@ -96,6 +96,7 @@ export default function BookingRequestsPage() {
   const AUTO_REVIEW_FAIL_COOLDOWN_MS = 2 * 60_000;
 
   const autoReviewInFlightRef = useRef(false);
+  const autoReviewEnabledRef = useRef(false);
   const autoReviewCooldownRef = useRef<Map<string, number>>(new Map());
   const autoReviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchBookingsRef = useRef<(useCache?: boolean) => Promise<void>>(async () => {});
@@ -123,13 +124,26 @@ export default function BookingRequestsPage() {
   // Restore persisted toggle after auth loads — never auto-turn off; only user toggle changes it
   useEffect(() => {
     if (authLoading) return;
-    setAutoReviewEnabled(readBookingAutoReviewEnabled(autoReviewUserId));
+    const stored = readBookingAutoReviewEnabled(autoReviewUserId);
+    autoReviewEnabledRef.current = stored;
+    setAutoReviewEnabled(stored);
     setAutoReviewPrefLoaded(true);
   }, [authLoading, autoReviewUserId]);
 
+  const stopAutoReviewTimers = useCallback(() => {
+    if (autoReviewDebounceRef.current) {
+      clearTimeout(autoReviewDebounceRef.current);
+      autoReviewDebounceRef.current = null;
+    }
+  }, []);
+
   const handleAutoReviewToggle = (enabled: boolean) => {
+    autoReviewEnabledRef.current = enabled;
     setAutoReviewEnabled(enabled);
     writeBookingAutoReviewEnabled(enabled, autoReviewUserId);
+    if (!enabled) {
+      stopAutoReviewTimers();
+    }
   };
 
   const isExcludedFromAutoReview = useCallback(
@@ -173,6 +187,7 @@ export default function BookingRequestsPage() {
       /** Approve all eligible pending on server (ignores UI list / filters / empty list) */
       useServerPending?: boolean;
     }) => {
+      if (!autoReviewEnabledRef.current) return;
       if (autoReviewInFlightRef.current) return;
 
       const reviewedBy = userProfile?.employee_id || userProfile?._id;
@@ -270,8 +285,10 @@ export default function BookingRequestsPage() {
             });
           }
 
-          apiCache.invalidate('/bookings');
-          await fetchBookingsRef.current(false);
+          if (autoReviewEnabledRef.current) {
+            apiCache.invalidate('/bookings');
+            await fetchBookingsRef.current(false);
+          }
         } else if (!options?.silent) {
           toast({
             variant: 'destructive',
@@ -297,44 +314,36 @@ export default function BookingRequestsPage() {
     [bookings, getPendingBookingIds, toast, userProfile]
   );
 
-  const scheduleAutomaticAutoReview = useCallback(() => {
-    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile) return;
-
-    if (autoReviewDebounceRef.current) {
-      clearTimeout(autoReviewDebounceRef.current);
+  // Single 30s poll while auto-review is on (avoids fetch → approve → fetch loop)
+  useEffect(() => {
+    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile) {
+      stopAutoReviewTimers();
+      return;
     }
 
-    // Always check server for new pending — even when UI list is empty or filtered
-    autoReviewDebounceRef.current = setTimeout(() => {
-      runAutoReview({ silent: true, useServerPending: true });
-    }, AUTO_REVIEW_DEBOUNCE_MS);
-  }, [autoReviewEnabled, autoReviewPrefLoaded, runAutoReview, userProfile]);
-
-  // When auto-review is on: approve pending bookings whenever the list updates
-  useEffect(() => {
-    if (!autoReviewPrefLoaded || !autoReviewEnabled || loading) return;
-    scheduleAutomaticAutoReview();
-    return () => {
-      if (autoReviewDebounceRef.current) {
-        clearTimeout(autoReviewDebounceRef.current);
-      }
-    };
-  }, [autoReviewEnabled, autoReviewPrefLoaded, bookings, loading, scheduleAutomaticAutoReview]);
-
-  // Poll server for pending bookings while auto-review is on (stays on with zero bookings)
-  useEffect(() => {
-    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile) return;
-
     const poll = async () => {
-      if (autoReviewInFlightRef.current) return;
+      if (!autoReviewEnabledRef.current || autoReviewInFlightRef.current) return;
       await runAutoReview({ silent: true, useServerPending: true });
-      fetchBookingsRef.current(false);
     };
 
     poll();
     const intervalId = setInterval(poll, AUTO_REVIEW_POLL_MS);
-    return () => clearInterval(intervalId);
-  }, [autoReviewEnabled, autoReviewPrefLoaded, runAutoReview, userProfile]);
+    return () => {
+      clearInterval(intervalId);
+      stopAutoReviewTimers();
+    };
+  }, [
+    autoReviewEnabled,
+    autoReviewPrefLoaded,
+    runAutoReview,
+    stopAutoReviewTimers,
+    userProfile,
+  ]);
+
+  // Keep ref in sync if state changes elsewhere
+  useEffect(() => {
+    autoReviewEnabledRef.current = autoReviewEnabled;
+  }, [autoReviewEnabled]);
 
   useEffect(() => {
     fetchBookings();
@@ -911,7 +920,6 @@ export default function BookingRequestsPage() {
                 id="auto-review-toggle"
                 checked={autoReviewEnabled}
                 onCheckedChange={handleAutoReviewToggle}
-                disabled={autoReviewRunning}
               />
               <Label htmlFor="auto-review-toggle" className="cursor-pointer text-sm font-medium leading-tight">
                 Auto-review mode
