@@ -33,7 +33,6 @@ import { apiCache } from '@/lib/api-cache';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 import { Eye, CheckCircle, XCircle, Image as ImageIcon, Download, Loader2, Zap } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -54,11 +53,6 @@ import {
   type BookingPDFData,
 } from '../../../../pdfGenerator';
 import { secureLog } from '@/lib/secure-logger';
-import {
-  getBookingAutoReviewUserId,
-  readBookingAutoReviewEnabled,
-  writeBookingAutoReviewEnabled,
-} from '@/lib/booking-auto-review-preference';
 
 // Dynamically import heavy modal components to reduce initial bundle size
 const BookingReviewModal = dynamic(() => import('@/components/booking-review-modal'), {
@@ -79,10 +73,9 @@ export default function BookingRequestsPage() {
   const [showViewModal, setShowViewModal] = useState(false);
   const [loadingBookingDetails, setLoadingBookingDetails] = useState(false);
   const [generatingPDFBookingId, setGeneratingPDFBookingId] = useState<string | null>(null);
-  const [autoReviewEnabled, setAutoReviewEnabled] = useState(() =>
-    readBookingAutoReviewEnabled()
-  );
-  const [autoReviewPrefLoaded, setAutoReviewPrefLoaded] = useState(false);
+  const [autoReviewEnabled, setAutoReviewEnabled] = useState(false);
+  const [autoReviewSettingsLoading, setAutoReviewSettingsLoading] = useState(false);
+  const [autoReviewSaving, setAutoReviewSaving] = useState(false);
   const [autoReviewRunning, setAutoReviewRunning] = useState(false);
   const [autoReviewProgress, setAutoReviewProgress] = useState<{ current: number; total: number } | null>(null);
   const [showAutoReviewConfirm, setShowAutoReviewConfirm] = useState(false);
@@ -91,14 +84,18 @@ export default function BookingRequestsPage() {
   const { toast } = useToast();
   const { userProfile, loading: authLoading } = useAuth();
 
-  const AUTO_REVIEW_POLL_MS = 30_000;
-  const AUTO_REVIEW_DEBOUNCE_MS = 800;
   const AUTO_REVIEW_FAIL_COOLDOWN_MS = 2 * 60_000;
 
+  /** Hidden system control — not shown to Sales / Operations / etc. */
+  const canManageSystemAutoReview =
+    userProfile?.role === 'ADMIN' ||
+    userProfile?.role === 'SUPERADMIN' ||
+    userProfile?.department?.name === 'Management';
+
+  const canBatchApprovePending = canManageSystemAutoReview;
+
   const autoReviewInFlightRef = useRef(false);
-  const autoReviewEnabledRef = useRef(false);
   const autoReviewCooldownRef = useRef<Map<string, number>>(new Map());
-  const autoReviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchBookingsRef = useRef<(useCache?: boolean) => Promise<void>>(async () => {});
 
   // Helper function to normalize review status
@@ -117,33 +114,6 @@ export default function BookingRequestsPage() {
       return 'rejected';
     }
     return normalized;
-  };
-
-  const autoReviewUserId = getBookingAutoReviewUserId(userProfile);
-
-  // Restore persisted toggle after auth loads — never auto-turn off; only user toggle changes it
-  useEffect(() => {
-    if (authLoading) return;
-    const stored = readBookingAutoReviewEnabled(autoReviewUserId);
-    autoReviewEnabledRef.current = stored;
-    setAutoReviewEnabled(stored);
-    setAutoReviewPrefLoaded(true);
-  }, [authLoading, autoReviewUserId]);
-
-  const stopAutoReviewTimers = useCallback(() => {
-    if (autoReviewDebounceRef.current) {
-      clearTimeout(autoReviewDebounceRef.current);
-      autoReviewDebounceRef.current = null;
-    }
-  }, []);
-
-  const handleAutoReviewToggle = (enabled: boolean) => {
-    autoReviewEnabledRef.current = enabled;
-    setAutoReviewEnabled(enabled);
-    writeBookingAutoReviewEnabled(enabled, autoReviewUserId);
-    if (!enabled) {
-      stopAutoReviewTimers();
-    }
   };
 
   const isExcludedFromAutoReview = useCallback(
@@ -180,14 +150,7 @@ export default function BookingRequestsPage() {
   );
 
   const runAutoReview = useCallback(
-    async (options?: {
-      bookingIds?: string[];
-      silent?: boolean;
-      manual?: boolean;
-      /** Approve all eligible pending on server (ignores UI list / filters / empty list) */
-      useServerPending?: boolean;
-    }) => {
-      if (!autoReviewEnabledRef.current) return;
+    async (options?: { bookingIds?: string[]; silent?: boolean; manual?: boolean }) => {
       if (autoReviewInFlightRef.current) return;
 
       const reviewedBy = userProfile?.employee_id || userProfile?._id;
@@ -202,12 +165,10 @@ export default function BookingRequestsPage() {
         return;
       }
 
-      const useServerPending = options?.useServerPending === true;
-      const pendingIds = useServerPending
-        ? []
-        : (options?.bookingIds ?? getPendingBookingIds(bookings, !options?.manual));
+      const pendingIds =
+        options?.bookingIds ?? getPendingBookingIds(bookings, !options?.manual);
 
-      if (!useServerPending && pendingIds.length === 0) {
+      if (pendingIds.length === 0) {
         if (!options?.silent) {
           toast({
             title: 'Nothing to approve',
@@ -223,24 +184,14 @@ export default function BookingRequestsPage() {
 
       autoReviewInFlightRef.current = true;
       setAutoReviewRunning(true);
-      setAutoReviewProgress(
-        useServerPending ? null : { current: 0, total: pendingIds.length }
-      );
+      setAutoReviewProgress({ current: 0, total: pendingIds.length });
 
       try {
-        const batchPayload: {
-          reviewed_by_employee_id: string;
-          limit: number;
-          booking_ids?: string[];
-        } = {
+        const result = await apiClient.autoReviewBookingsBatch({
           reviewed_by_employee_id: reviewedBy,
           limit: 100,
-        };
-        if (!useServerPending) {
-          batchPayload.booking_ids = pendingIds;
-        }
-
-        const result = await apiClient.autoReviewBookingsBatch(batchPayload);
+          booking_ids: pendingIds,
+        });
 
         if (result.success) {
           const summary = (result as {
@@ -257,13 +208,11 @@ export default function BookingRequestsPage() {
             }
           });
 
-          if (!useServerPending) {
-            pendingIds.forEach((id) => {
-              if (!failedRows.some((f) => f.booking_id === id)) {
-                autoReviewCooldownRef.current.delete(id);
-              }
-            });
-          }
+          pendingIds.forEach((id) => {
+            if (!failedRows.some((f) => f.booking_id === id)) {
+              autoReviewCooldownRef.current.delete(id);
+            }
+          });
 
           if (options?.silent) {
             if (succeeded > 0) {
@@ -285,10 +234,8 @@ export default function BookingRequestsPage() {
             });
           }
 
-          if (autoReviewEnabledRef.current) {
-            apiCache.invalidate('/bookings');
-            await fetchBookingsRef.current(false);
-          }
+          apiCache.invalidate('/bookings');
+          await fetchBookingsRef.current(false);
         } else if (!options?.silent) {
           toast({
             variant: 'destructive',
@@ -314,36 +261,54 @@ export default function BookingRequestsPage() {
     [bookings, getPendingBookingIds, toast, userProfile]
   );
 
-  // Single 30s poll while auto-review is on (avoids fetch → approve → fetch loop)
   useEffect(() => {
-    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile) {
-      stopAutoReviewTimers();
-      return;
-    }
-
-    const poll = async () => {
-      if (!autoReviewEnabledRef.current || autoReviewInFlightRef.current) return;
-      await runAutoReview({ silent: true, useServerPending: true });
-    };
-
-    poll();
-    const intervalId = setInterval(poll, AUTO_REVIEW_POLL_MS);
+    if (authLoading || !canManageSystemAutoReview) return;
+    let cancelled = false;
+    (async () => {
+      setAutoReviewSettingsLoading(true);
+      const result = await apiClient.getSystemSettings();
+      if (!cancelled && result.success && result.data) {
+        setAutoReviewEnabled(
+          !!(result.data as { booking_auto_review_enabled?: boolean }).booking_auto_review_enabled
+        );
+      }
+      if (!cancelled) setAutoReviewSettingsLoading(false);
+    })();
     return () => {
-      clearInterval(intervalId);
-      stopAutoReviewTimers();
+      cancelled = true;
     };
-  }, [
-    autoReviewEnabled,
-    autoReviewPrefLoaded,
-    runAutoReview,
-    stopAutoReviewTimers,
-    userProfile,
-  ]);
+  }, [authLoading, canManageSystemAutoReview]);
 
-  // Keep ref in sync if state changes elsewhere
-  useEffect(() => {
-    autoReviewEnabledRef.current = autoReviewEnabled;
-  }, [autoReviewEnabled]);
+  const handleSystemAutoReviewToggle = async (enabled: boolean) => {
+    setAutoReviewSaving(true);
+    try {
+      const result = await apiClient.setBookingAutoReview(enabled);
+      if (result.success) {
+        setAutoReviewEnabled(enabled);
+        toast({
+          title: enabled ? 'System auto-approve ON' : 'System auto-approve OFF',
+          description: enabled
+            ? 'New bookings are approved on the server when saved. No page needs to stay open.'
+            : 'New bookings will remain pending until reviewed.',
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Could not update',
+          description: (result as { error?: string }).error || 'Try again.',
+        });
+      }
+    } catch (error) {
+      secureLog.error('setBookingAutoReview failed', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Failed to update system auto-approve.',
+      });
+    } finally {
+      setAutoReviewSaving(false);
+    }
+  };
 
   useEffect(() => {
     fetchBookings();
@@ -915,50 +880,55 @@ export default function BookingRequestsPage() {
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Booking Requests</CardTitle>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+          {canManageSystemAutoReview && (
+            <div className="flex items-center gap-3 rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-2">
               <Switch
-                id="auto-review-toggle"
+                id="system-auto-approve"
                 checked={autoReviewEnabled}
-                onCheckedChange={handleAutoReviewToggle}
+                onCheckedChange={handleSystemAutoReviewToggle}
+                disabled={autoReviewSettingsLoading || autoReviewSaving}
               />
-              <Label htmlFor="auto-review-toggle" className="cursor-pointer text-sm font-medium leading-tight">
-                Auto-review mode
-                {autoReviewEnabled && (
-                  <span className="block text-xs font-normal text-muted-foreground">
-                    Stays on until you turn it off. Checks every {AUTO_REVIEW_POLL_MS / 1000}s for new
-                    pending bookings (Invoice Requests sales bookings excluded).
-                  </span>
-                )}
+              <Label htmlFor="system-auto-approve" className="cursor-pointer text-sm font-medium leading-tight">
+                System auto-approve
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {autoReviewSettingsLoading
+                    ? 'Loading…'
+                    : autoReviewEnabled
+                      ? 'ON — runs on server when bookings are created'
+                      : 'OFF'}
+                </span>
               </Label>
             </div>
+          )}
+          {canBatchApprovePending && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               disabled={
-                !autoReviewEnabled ||
                 autoReviewRunning ||
                 pendingBookingsCount === 0 ||
                 filterStatus === 'reviewed'
               }
               onClick={() => setShowAutoReviewConfirm(true)}
               className="shrink-0"
-              title="Run approval immediately for all pending in the list"
+              title="Approve all pending bookings in the current list"
             >
               {autoReviewRunning ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   {autoReviewProgress
                     ? `Approving ${autoReviewProgress.current}/${autoReviewProgress.total}…`
-                    : 'Auto-approving…'}
+                    : 'Approving…'}
                 </>
               ) : (
                 <>
                   <Zap className="h-4 w-4 mr-2" />
-                  Approve all now ({pendingBookingsCount})
+                  Approve all pending ({pendingBookingsCount})
                 </>
               )}
             </Button>
+          )}
           </div>
         </CardHeader>
         <CardContent>
@@ -1302,9 +1272,8 @@ export default function BookingRequestsPage() {
             <AlertDialogTitle>Auto-approve pending bookings?</AlertDialogTitle>
             <AlertDialogDescription>
               This will immediately review and approve {pendingBookingsCount} pending booking(s) in
-              the current list. With auto-review mode on, the server is checked every{' '}
-              {AUTO_REVIEW_POLL_MS / 1000} seconds for new pending bookings (even when the list is
-              empty). The switch stays on until you turn it off.
+              the current list. New bookings are auto-approved on the server only when system
+              auto-approve is enabled (Admin / Management).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

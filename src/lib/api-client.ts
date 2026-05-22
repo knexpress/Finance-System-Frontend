@@ -1568,6 +1568,17 @@ class ApiClient {
     });
   }
 
+  async getSystemSettings() {
+    return this.request('/system-settings', {}, true, 30000);
+  }
+
+  async setBookingAutoReview(enabled: boolean) {
+    return this.request('/system-settings/booking-auto-review', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   async updateBookingStatus(id: string, statusData: { review_status: string; reviewed_by_employee_id?: string; reason?: string }) {
     return this.request(`/bookings/${id}/status`, {
       method: 'PUT',
