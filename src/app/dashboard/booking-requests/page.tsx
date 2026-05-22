@@ -79,7 +79,9 @@ export default function BookingRequestsPage() {
   const [showViewModal, setShowViewModal] = useState(false);
   const [loadingBookingDetails, setLoadingBookingDetails] = useState(false);
   const [generatingPDFBookingId, setGeneratingPDFBookingId] = useState<string | null>(null);
-  const [autoReviewEnabled, setAutoReviewEnabled] = useState(false);
+  const [autoReviewEnabled, setAutoReviewEnabled] = useState(() =>
+    readBookingAutoReviewEnabled()
+  );
   const [autoReviewPrefLoaded, setAutoReviewPrefLoaded] = useState(false);
   const [autoReviewRunning, setAutoReviewRunning] = useState(false);
   const [autoReviewProgress, setAutoReviewProgress] = useState<{ current: number; total: number } | null>(null);
@@ -118,13 +120,9 @@ export default function BookingRequestsPage() {
 
   const autoReviewUserId = getBookingAutoReviewUserId(userProfile);
 
-  // Restore persisted toggle after auth loads (survives logout and browser restarts)
+  // Restore persisted toggle after auth loads — never auto-turn off; only user toggle changes it
   useEffect(() => {
     if (authLoading) return;
-    if (!autoReviewUserId) {
-      setAutoReviewPrefLoaded(true);
-      return;
-    }
     setAutoReviewEnabled(readBookingAutoReviewEnabled(autoReviewUserId));
     setAutoReviewPrefLoaded(true);
   }, [authLoading, autoReviewUserId]);
@@ -168,7 +166,13 @@ export default function BookingRequestsPage() {
   );
 
   const runAutoReview = useCallback(
-    async (options?: { bookingIds?: string[]; silent?: boolean; manual?: boolean }) => {
+    async (options?: {
+      bookingIds?: string[];
+      silent?: boolean;
+      manual?: boolean;
+      /** Approve all eligible pending on server (ignores UI list / filters / empty list) */
+      useServerPending?: boolean;
+    }) => {
       if (autoReviewInFlightRef.current) return;
 
       const reviewedBy = userProfile?.employee_id || userProfile?._id;
@@ -183,10 +187,12 @@ export default function BookingRequestsPage() {
         return;
       }
 
-      const pendingIds =
-        options?.bookingIds ?? getPendingBookingIds(bookings, !options?.manual);
+      const useServerPending = options?.useServerPending === true;
+      const pendingIds = useServerPending
+        ? []
+        : (options?.bookingIds ?? getPendingBookingIds(bookings, !options?.manual));
 
-      if (pendingIds.length === 0) {
+      if (!useServerPending && pendingIds.length === 0) {
         if (!options?.silent) {
           toast({
             title: 'Nothing to approve',
@@ -202,14 +208,24 @@ export default function BookingRequestsPage() {
 
       autoReviewInFlightRef.current = true;
       setAutoReviewRunning(true);
-      setAutoReviewProgress({ current: 0, total: pendingIds.length });
+      setAutoReviewProgress(
+        useServerPending ? null : { current: 0, total: pendingIds.length }
+      );
 
       try {
-        const result = await apiClient.autoReviewBookingsBatch({
+        const batchPayload: {
+          reviewed_by_employee_id: string;
+          limit: number;
+          booking_ids?: string[];
+        } = {
           reviewed_by_employee_id: reviewedBy,
           limit: 100,
-          booking_ids: pendingIds,
-        });
+        };
+        if (!useServerPending) {
+          batchPayload.booking_ids = pendingIds;
+        }
+
+        const result = await apiClient.autoReviewBookingsBatch(batchPayload);
 
         if (result.success) {
           const summary = (result as {
@@ -226,11 +242,13 @@ export default function BookingRequestsPage() {
             }
           });
 
-          pendingIds.forEach((id) => {
-            if (!failedRows.some((f) => f.booking_id === id)) {
-              autoReviewCooldownRef.current.delete(id);
-            }
-          });
+          if (!useServerPending) {
+            pendingIds.forEach((id) => {
+              if (!failedRows.some((f) => f.booking_id === id)) {
+                autoReviewCooldownRef.current.delete(id);
+              }
+            });
+          }
 
           if (options?.silent) {
             if (succeeded > 0) {
@@ -280,27 +298,17 @@ export default function BookingRequestsPage() {
   );
 
   const scheduleAutomaticAutoReview = useCallback(() => {
-    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile || filterStatus === 'reviewed') return;
+    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile) return;
 
     if (autoReviewDebounceRef.current) {
       clearTimeout(autoReviewDebounceRef.current);
     }
 
+    // Always check server for new pending — even when UI list is empty or filtered
     autoReviewDebounceRef.current = setTimeout(() => {
-      const pendingIds = getPendingBookingIds(bookings, true);
-      if (pendingIds.length > 0) {
-        runAutoReview({ bookingIds: pendingIds, silent: true });
-      }
+      runAutoReview({ silent: true, useServerPending: true });
     }, AUTO_REVIEW_DEBOUNCE_MS);
-  }, [
-    autoReviewEnabled,
-    autoReviewPrefLoaded,
-    bookings,
-    filterStatus,
-    getPendingBookingIds,
-    runAutoReview,
-    userProfile,
-  ]);
+  }, [autoReviewEnabled, autoReviewPrefLoaded, runAutoReview, userProfile]);
 
   // When auto-review is on: approve pending bookings whenever the list updates
   useEffect(() => {
@@ -313,20 +321,20 @@ export default function BookingRequestsPage() {
     };
   }, [autoReviewEnabled, autoReviewPrefLoaded, bookings, loading, scheduleAutomaticAutoReview]);
 
-  // Poll for new booking requests while auto-review mode is active
+  // Poll server for pending bookings while auto-review is on (stays on with zero bookings)
   useEffect(() => {
-    if (!autoReviewPrefLoaded || !autoReviewEnabled) return;
+    if (!autoReviewPrefLoaded || !autoReviewEnabled || !userProfile) return;
 
-    const poll = () => {
-      if (!autoReviewInFlightRef.current) {
-        fetchBookingsRef.current(false);
-      }
+    const poll = async () => {
+      if (autoReviewInFlightRef.current) return;
+      await runAutoReview({ silent: true, useServerPending: true });
+      fetchBookingsRef.current(false);
     };
 
     poll();
     const intervalId = setInterval(poll, AUTO_REVIEW_POLL_MS);
     return () => clearInterval(intervalId);
-  }, [autoReviewEnabled, autoReviewPrefLoaded, filterStatus, awbSearch]);
+  }, [autoReviewEnabled, autoReviewPrefLoaded, runAutoReview, userProfile]);
 
   useEffect(() => {
     fetchBookings();
@@ -909,7 +917,8 @@ export default function BookingRequestsPage() {
                 Auto-review mode
                 {autoReviewEnabled && (
                   <span className="block text-xs font-normal text-muted-foreground">
-                    New requests are approved automatically (Invoice Requests sales bookings excluded)
+                    Stays on until you turn it off. Checks every {AUTO_REVIEW_POLL_MS / 1000}s for new
+                    pending bookings (Invoice Requests sales bookings excluded).
                   </span>
                 )}
               </Label>
@@ -1285,8 +1294,9 @@ export default function BookingRequestsPage() {
             <AlertDialogTitle>Auto-approve pending bookings?</AlertDialogTitle>
             <AlertDialogDescription>
               This will immediately review and approve {pendingBookingsCount} pending booking(s) in
-              the current list. With auto-review mode on, new requests are also approved automatically
-              every {AUTO_REVIEW_POLL_MS / 1000} seconds while you stay on this page.
+              the current list. With auto-review mode on, the server is checked every{' '}
+              {AUTO_REVIEW_POLL_MS / 1000} seconds for new pending bookings (even when the list is
+              empty). The switch stays on until you turn it off.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
