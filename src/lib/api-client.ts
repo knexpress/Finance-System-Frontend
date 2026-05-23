@@ -1579,6 +1579,13 @@ class ApiClient {
     });
   }
 
+  async searchApprovedBookingForms(payload: { awb?: string; name?: string }) {
+    return this.request('/bookings/search-approved-forms', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async updateBookingStatus(id: string, statusData: { review_status: string; reviewed_by_employee_id?: string; reason?: string }) {
     return this.request(`/bookings/${id}/status`, {
       method: 'PUT',

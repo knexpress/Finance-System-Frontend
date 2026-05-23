@@ -50,6 +50,8 @@ export interface BookingPDFData {
   insured?: boolean // Whether insurance is selected
   declaredAmount?: number // Declared value for insurance
   uaePassUserInfo?: UaePassUserInfo
+  /** When true, PDF includes booking form pages only (no ID photos or additional document images). */
+  excludeIdentityDocuments?: boolean
 }
 
 /** Extract UAE Pass profile from booking document (several storage paths). */
@@ -952,8 +954,9 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
   addBannedItemsSection()
 
   // ============================================
-  // PAGE 3: ID IMAGES (All 4 Cards - 2x2 Grid)
+  // PAGE 3+: ID / selfie / additional documents (optional)
   // ============================================
+  if (!data.excludeIdentityDocuments) {
   addNewPage()
   const page3Number = doc.getNumberOfPages()
 
@@ -1178,6 +1181,7 @@ export async function generateBookingPDF(data: BookingPDFData): Promise<void> {
       doc.setLineWidth(0.5)
       doc.rect(tradeLicenseX, page5YPos, docImageWidth, docImageHeight)
     }
+  }
   }
 
   // ============================================

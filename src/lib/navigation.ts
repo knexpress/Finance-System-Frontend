@@ -19,6 +19,7 @@ import {
   XCircle,
   DollarSign,
   History,
+  FileDown,
 } from 'lucide-react';
 import type { Department, DepartmentData } from './types';
 
@@ -47,6 +48,12 @@ const allLinks: NavLink[] = [
     label: 'Invoice Requests',
     icon: Package,
     departments: ['Sales', 'Operations', 'Finance', 'IT'],
+  },
+  {
+    href: '/dashboard/booking-forms',
+    label: 'Booking Forms',
+    icon: FileDown,
+    departments: ['Sales', 'Operations', 'IT'],
   },
   {
     href: '/dashboard/review-requests',
