@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
+import { Badge } from '@/components/ui/badge';
 import { Download, Loader2, Search } from 'lucide-react';
 import { downloadBookingFormPdf } from '@/lib/booking-pdf-mapper';
 import { secureLog } from '@/lib/secure-logger';
@@ -63,7 +64,7 @@ export default function BookingFormsPage() {
         if (rows.length === 0) {
           toast({
             title: 'No results',
-            description: 'No reviewed bookings matched your search.',
+            description: 'No bookings matched your search.',
           });
         }
       } else {
@@ -114,6 +115,13 @@ export default function BookingFormsPage() {
     }
   };
 
+  const formatReviewStatus = (status?: string) => {
+    const s = (status || 'not reviewed').toLowerCase().trim();
+    if (s === 'reviewed' || s === 'approved') return { label: 'Reviewed', variant: 'default' as const };
+    if (s === 'rejected') return { label: 'Rejected', variant: 'destructive' as const };
+    return { label: 'Not reviewed', variant: 'secondary' as const };
+  };
+
   const formatDate = (value?: string) => {
     if (!value) return '—';
     try {
@@ -128,8 +136,8 @@ export default function BookingFormsPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Booking Forms</h1>
         <p className="text-muted-foreground">
-          Search reviewed and approved bookings, then download the booking form PDF without
-          identity documents.
+          Search bookings by AWB or name, then download the booking form PDF without identity
+          documents.
         </p>
       </div>
 
@@ -161,8 +169,8 @@ export default function BookingFormsPage() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Use AWB or name (not both required). Only reviewed/approved bookings are shown;
-            rejected bookings are excluded.
+            Use AWB or name (not both required). All bookings are included (pending, reviewed,
+            or rejected).
           </p>
           <Button type="button" onClick={handleSearch} disabled={searching}>
             {searching ? (
@@ -202,7 +210,8 @@ export default function BookingFormsPage() {
                     <TableHead>Sender</TableHead>
                     <TableHead>Receiver</TableHead>
                     <TableHead>Service</TableHead>
-                    <TableHead>Reviewed</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -213,6 +222,11 @@ export default function BookingFormsPage() {
                       <TableCell>{row.sender_name || '—'}</TableCell>
                       <TableCell>{row.receiver_name || '—'}</TableCell>
                       <TableCell>{row.service || '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant={formatReviewStatus(row.review_status).variant}>
+                          {formatReviewStatus(row.review_status).label}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {formatDate(row.createdAt)}
                       </TableCell>
