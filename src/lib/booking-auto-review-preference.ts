@@ -38,6 +38,29 @@ export function writeBookingAutoReviewEnabled(enabled: boolean, userId?: string 
   }
 }
 
+const MONGO_OBJECT_ID = /^[a-fA-F0-9]{24}$/;
+
+export function isMongoObjectId(value: unknown): boolean {
+  if (value == null) return false;
+  return MONGO_OBJECT_ID.test(String(value));
+}
+
+/** Employee (or User _id) used as reviewed_by_employee_id — never Firebase uid. */
+export function resolveReviewerEmployeeId(userProfile: {
+  employee_id?: string;
+  _id?: string;
+  uid?: string;
+} | null | undefined): string | undefined {
+  if (!userProfile) return undefined;
+  if (userProfile.employee_id && isMongoObjectId(userProfile.employee_id)) {
+    return userProfile.employee_id;
+  }
+  if (userProfile._id && isMongoObjectId(userProfile._id)) {
+    return String(userProfile._id);
+  }
+  return undefined;
+}
+
 /** Stable per-login storage id (prefer User _id so toggle does not flip between keys). */
 export function getBookingAutoReviewUserId(userProfile: {
   _id?: string;

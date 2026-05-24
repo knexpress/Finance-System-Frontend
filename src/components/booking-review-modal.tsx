@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { secureLog } from '@/lib/secure-logger';
+import { resolveReviewerEmployeeId } from '@/lib/booking-auto-review-preference';
 import { CheckCircle, X, Loader2, Image as ImageIcon, XCircle, Download } from 'lucide-react';
 import {
   generateBookingPDF,
@@ -121,7 +122,8 @@ export default function BookingReviewModal({
     try {
       setIsSubmitting(true);
 
-      if (!currentUser?.employee_id && !currentUser?.uid) {
+      const reviewedBy = resolveReviewerEmployeeId(currentUser);
+      if (!reviewedBy) {
         toast({
           variant: 'destructive',
           title: 'Error',
@@ -132,7 +134,7 @@ export default function BookingReviewModal({
 
       // Review and approve booking (converts to invoice request)
       const result = await apiClient.reviewBooking(booking._id, {
-        reviewed_by_employee_id: currentUser.employee_id || currentUser.uid,
+        reviewed_by_employee_id: reviewedBy,
       });
 
       if (result.success) {
@@ -173,7 +175,8 @@ export default function BookingReviewModal({
     try {
       setIsSubmitting(true);
 
-      if (!currentUser?.employee_id && !currentUser?.uid) {
+      const reviewedBy = resolveReviewerEmployeeId(currentUser);
+      if (!reviewedBy) {
         toast({
           variant: 'destructive',
           title: 'Error',
@@ -185,7 +188,7 @@ export default function BookingReviewModal({
       // Update booking status to rejected with reason
       const result = await apiClient.updateBookingStatus(booking._id, {
         review_status: 'rejected',
-        reviewed_by_employee_id: currentUser.employee_id || currentUser.uid,
+        reviewed_by_employee_id: reviewedBy,
         reason: rejectionReason.trim(),
       });
 

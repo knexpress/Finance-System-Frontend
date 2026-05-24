@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { PlusCircle, Download, Loader2, CheckCircle, Trash2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { resolveReviewerEmployeeId } from '@/lib/booking-auto-review-preference';
 import { secureLog } from '@/lib/secure-logger';
 import {
   Dialog,
@@ -585,6 +586,8 @@ export default function SalesBookingForm({
         identityDocuments.tradeLicense = tradeLicenseBase64;
       }
 
+      const createdByEmployeeId = resolveReviewerEmployeeId(currentUser);
+
       // Prepare booking data
       const bookingData = {
         service: service,
@@ -625,7 +628,7 @@ export default function SalesBookingForm({
         insured: shipmentType === 'non_document', // Insurance only for non-document
         declaredAmount: shipmentType === 'document' ? 0 : (declaredValue ? parseFloat(declaredValue) : null),
         shipmentType: shipmentType, // Include shipment type in booking data
-        created_by_employee_id: currentUser.employee_id || currentUser.uid,
+        ...(createdByEmployeeId ? { created_by_employee_id: createdByEmployeeId } : {}),
       };
 
       // Calculate total payload size (approximate)

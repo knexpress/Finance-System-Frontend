@@ -54,6 +54,7 @@ import {
   type BookingPDFData,
 } from '../../../../pdfGenerator';
 import { secureLog } from '@/lib/secure-logger';
+import { resolveReviewerEmployeeId } from '@/lib/booking-auto-review-preference';
 
 // Dynamically import heavy modal components to reduce initial bundle size
 const BookingReviewModal = dynamic(() => import('@/components/booking-review-modal'), {
@@ -154,7 +155,7 @@ export default function BookingRequestsPage() {
     async (options?: { bookingIds?: string[]; silent?: boolean; manual?: boolean }) => {
       if (autoReviewInFlightRef.current) return;
 
-      const reviewedBy = userProfile?.employee_id || userProfile?._id;
+      const reviewedBy = resolveReviewerEmployeeId(userProfile);
       if (!reviewedBy) {
         if (!options?.silent) {
           toast({
