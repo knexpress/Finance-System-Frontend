@@ -340,10 +340,46 @@ body {
     top: 0;
     width: 100%;
   }
+
+  /* Tax invoice: always print both pages */
+  .tax-invoice-page--screen-hidden {
+    display: block !important;
+  }
+
+  .tax-invoice-page {
+    page-break-after: always;
+    break-after: page;
+    min-height: auto !important;
+    box-shadow: none !important;
+  }
+
+  .tax-invoice-page-2 {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .tax-invoice-nav {
+    display: none !important;
+  }
   
   /* Hide navigation and buttons when printing */
   .no-print,
   button {
+    display: none !important;
+  }
+}
+
+/* Tax invoice on-screen: one page at a time */
+@media screen {
+  .tax-invoice-page--screen-hidden {
+    display: none !important;
+  }
+
+  .tax-invoice-document.tax-invoice-exporting .tax-invoice-page--screen-hidden {
+    display: block !important;
+  }
+
+  .tax-invoice-document.tax-invoice-exporting .tax-invoice-nav {
     display: none !important;
   }
 }

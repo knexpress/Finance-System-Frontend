@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import InvoiceTemplate from "@/components/invoice-template";
-import TaxInvoiceTemplate from "@/components/tax-invoice-template";
+import TaxInvoiceTemplate, { usesUaeToPhTaxInvoiceLayout } from "@/components/tax-invoice-template";
 import { apiClient } from "@/lib/api-client";
 import { secureLog } from '@/lib/secure-logger';
 import { isPhToUaeService, isUaeToPhService } from '@/lib/invoice-request-utils';
@@ -1316,6 +1316,7 @@ export default function InvoicePage() {
         awbNumber: awbNumber,
         trackingNumber: awbNumber,
         date: invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        dueDate: invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : undefined,
         receiverInfo: {
             name: receiverName.toUpperCase(),
             address: receiverAddress,
@@ -1625,6 +1626,13 @@ export default function InvoicePage() {
                 return;
             }
 
+            const taxDoc = invoiceElement.querySelector('.tax-invoice-document');
+            const useUaeToPhTaxLayout =
+                invoiceType === 'tax' && usesUaeToPhTaxInvoiceLayout(taxInvoiceData);
+            if (taxDoc && useUaeToPhTaxLayout) {
+                taxDoc.classList.add('tax-invoice-exporting');
+            }
+
             // Dynamically import html2pdf.js
             const html2pdfModule = await import('html2pdf.js');
             const html2pdf = html2pdfModule.default || html2pdfModule;
@@ -1634,10 +1642,17 @@ export default function InvoicePage() {
                 filename: `Invoice-${invoiceData.invoiceNumber}.pdf`,
                 image: { type: 'jpeg' as const, quality: 0.98 },
                 html2canvas: { scale: 2, useCORS: true },
-                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' as const }
+                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' as const },
+                pagebreak: { mode: ['css', 'legacy'] as const },
             };
             
-            await html2pdf().set(opt).from(invoiceElement).save();
+            try {
+                await html2pdf().set(opt).from(invoiceElement).save();
+            } finally {
+                if (taxDoc && useUaeToPhTaxLayout) {
+                    taxDoc.classList.remove('tax-invoice-exporting');
+                }
+            }
         } catch (error) {
             secureLog.error('Error generating PDF:', error);
             // Fallback to print dialog
