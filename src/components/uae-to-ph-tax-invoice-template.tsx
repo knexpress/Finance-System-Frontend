@@ -85,8 +85,10 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
   // UAE->PH rule: shipment detail lines are always zero-tax.
   // Tax is applied only on pickup/collection charges at 5%.
   const taxAmount = pickup > 0 ? pickup * 0.05 : 0;
-  const zeroRatedSalesTax = 0;
   const taxRate = data.charges.taxRate;
+  const taxSummaryLabel =
+    taxAmount > 0 ? `TOTAL TAX ON SALES ${taxRate > 0 ? taxRate : 5}%` : 'TOTAL SALES TAX 0%';
+  const taxSummaryAmount = taxAmount > 0 ? taxAmount : 0;
   // Keep TOTAL AED aligned with visible rows in this template.
   const total = subtotal + taxAmount;
 
@@ -204,22 +206,12 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
                 </td>
                 <td className={`${cellBorder()} text-right`}>{fmt(subtotal)}</td>
               </tr>
-              {taxAmount > 0 && (
-                <tr>
-                  <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
-                    TOTAL TAX ON SALES 5%
-                  </td>
-                  <td className={`${cellBorder()} text-right`}>{fmt(taxAmount)}</td>
-                </tr>
-              )}
-              {zeroRatedSalesTax > 0 && (
-                <tr>
-                  <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
-                    TOTAL SALES TAX 0%
-                  </td>
-                  <td className={`${cellBorder()} text-right`}>{fmt(zeroRatedSalesTax)}</td>
-                </tr>
-              )}
+              <tr>
+                <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
+                  {taxSummaryLabel}
+                </td>
+                <td className={`${cellBorder()} text-right`}>{fmt(taxSummaryAmount)}</td>
+              </tr>
               <tr>
                 <td className={`${cellBorder()} text-right font-bold`} colSpan={4}>
                   TOTAL AED
