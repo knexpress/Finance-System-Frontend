@@ -85,6 +85,7 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
   // UAE->PH rule: shipment detail lines are always zero-tax.
   // Tax is applied only on pickup/collection charges at 5%.
   const taxAmount = pickup > 0 ? pickup * 0.05 : 0;
+  const zeroRatedSalesTax = 0;
   const taxRate = data.charges.taxRate;
   // Keep TOTAL AED aligned with visible rows in this template.
   const total = subtotal + taxAmount;
@@ -132,9 +133,11 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
               <p>{data.receiverInfo.emirate}</p>
             )}
             <p>UAE</p>
-            <p className="mt-2">
-              <span className="font-medium">TRN :</span> {data.receiverInfo.trn || ''}
-            </p>
+            {data.receiverInfo.trn ? (
+              <p className="mt-2">
+                <span className="font-medium">TRN :</span> {data.receiverInfo.trn}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-1">
             <p>
@@ -201,18 +204,22 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
                 </td>
                 <td className={`${cellBorder()} text-right`}>{fmt(subtotal)}</td>
               </tr>
-              <tr>
-                <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
-                  TOTAL TAX ON SALES 5%
-                </td>
-                <td className={`${cellBorder()} text-right`}>{fmt(Math.max(0, taxAmount))}</td>
-              </tr>
-              <tr>
-                <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
-                  TOTAL SALES TAX 0%
-                </td>
-                <td className={`${cellBorder()} text-right`}>{fmt(0)}</td>
-              </tr>
+              {taxAmount > 0 && (
+                <tr>
+                  <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
+                    TOTAL TAX ON SALES 5%
+                  </td>
+                  <td className={`${cellBorder()} text-right`}>{fmt(taxAmount)}</td>
+                </tr>
+              )}
+              {zeroRatedSalesTax > 0 && (
+                <tr>
+                  <td className={`${cellBorder()} text-right font-semibold`} colSpan={4}>
+                    TOTAL SALES TAX 0%
+                  </td>
+                  <td className={`${cellBorder()} text-right`}>{fmt(zeroRatedSalesTax)}</td>
+                </tr>
+              )}
               <tr>
                 <td className={`${cellBorder()} text-right font-bold`} colSpan={4}>
                   TOTAL AED
@@ -302,10 +309,12 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
                     <td className={`${cellBorder()} text-right`}>{fmt(delivery)}</td>
                   </tr>
                 )}
-                <tr>
-                  <td className={cellBorder()}>SHIPMENT PROTECTION FEE</td>
-                  <td className={`${cellBorder()} text-right`}>{fmt(insurance)}</td>
-                </tr>
+                {insurance > 0 && (
+                  <tr>
+                    <td className={cellBorder()}>SHIPMENT PROTECTION FEE</td>
+                    <td className={`${cellBorder()} text-right`}>{fmt(insurance)}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </>
