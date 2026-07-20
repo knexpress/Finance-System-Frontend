@@ -1579,11 +1579,22 @@ class ApiClient {
     });
   }
 
-  async searchApprovedBookingForms(payload: { awb?: string; name?: string }) {
+  async searchApprovedBookingForms(payload: {
+    awb?: string;
+    name?: string;
+    beforeCreatedAt?: string | Date;
+    beforeId?: string;
+    limit?: number;
+  }) {
     return this.request('/bookings/search-approved-forms', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  /** Step 2 after name click — light booking summary only */
+  async getBookingFormSummary(id: string) {
+    return this.request(`/bookings/${id}/form-summary`, {}, false, 0);
   }
 
   async updateBookingStatus(id: string, statusData: { review_status: string; reviewed_by_employee_id?: string; reason?: string }) {
