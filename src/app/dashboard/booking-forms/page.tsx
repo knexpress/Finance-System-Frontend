@@ -13,6 +13,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
@@ -281,66 +289,23 @@ export default function BookingFormsPage() {
     return { label: 'Not reviewed', variant: 'secondary' as const };
   };
 
-  const formatDate = (value?: string) => {
-    if (!value) return '—';
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
+  const formatDate = (value?: string | null) => {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
-  const renderSummaryCard = (summary: BookingSummary) => (
-    <div className="rounded-md border p-4 space-y-3 bg-muted/20">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-        <div>
-          <p className="text-muted-foreground">AWB</p>
-          <p className="font-mono font-medium">{summary.awb || '—'}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Service</p>
-          <p className="font-medium">{summary.service || '—'}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Sender</p>
-          <p className="font-medium">{summary.sender_name || '—'}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Receiver</p>
-          <p className="font-medium">{summary.receiver_name || '—'}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Status</p>
-          <Badge variant={formatReviewStatus(summary.review_status).variant}>
-            {formatReviewStatus(summary.review_status).label}
-          </Badge>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Created</p>
-          <p className="font-medium">{formatDate(summary.createdAt)}</p>
-        </div>
-      </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={downloadingId === summary._id}
-        onClick={() => handleDownloadPdf(summary)}
-      >
-        {downloadingId === summary._id ? (
-          <>
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            PDF…
-          </>
-        ) : (
-          <>
-            <Download className="h-4 w-4 mr-2" />
-            Download PDF
-          </>
-        )}
-      </Button>
-    </div>
-  );
+  const closeSelectedBooking = (open: boolean) => {
+    if (!open) setSelectedSummary(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -381,8 +346,8 @@ export default function BookingFormsPage() {
           </div>
           <p className="text-xs text-muted-foreground">
             Searches sender/receiver first and last name in bookings (e.g. &quot;SARAH
-            TAPIT&quot; also matches &quot;Sarah Camille Tapit&quot;). Click a name to load AWB
-            details, then download the PDF.
+            TAPIT&quot; also matches &quot;Sarah Camille Tapit&quot;). Click a name to open booking
+            details in a popup, then download the PDF.
           </p>
           <Button type="button" onClick={handleSearch} disabled={searching}>
             {searching ? (
@@ -512,7 +477,7 @@ export default function BookingFormsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {formatDate(row.createdAt)}
+                        {formatDate(row.createdAt) || '—'}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
@@ -561,15 +526,93 @@ export default function BookingFormsPage() {
               ) : null}
             </div>
           )}
-
-          {selectedSummary && (
-            <div className="space-y-2 pt-2">
-              <h3 className="text-sm font-semibold">Selected booking</h3>
-              {renderSummaryCard(selectedSummary)}
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!selectedSummary} onOpenChange={closeSelectedBooking}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Selected booking</DialogTitle>
+            <DialogDescription>
+              Review the booking details, then download the PDF if needed.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedSummary ? (
+            <div className="space-y-4 py-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">AWB</p>
+                  <p className="font-mono text-base font-semibold break-all">
+                    {selectedSummary.awb || 'Not available'}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                    Service
+                  </p>
+                  <p className="text-base font-semibold">{selectedSummary.service || 'Not available'}</p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                    Sender
+                  </p>
+                  <p className="text-base font-semibold">{selectedSummary.sender_name || 'Not available'}</p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                    Receiver
+                  </p>
+                  <p className="text-base font-semibold">
+                    {selectedSummary.receiver_name || 'Not available'}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                    Status
+                  </p>
+                  <Badge variant={formatReviewStatus(selectedSummary.review_status).variant}>
+                    {formatReviewStatus(selectedSummary.review_status).label}
+                  </Badge>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3 sm:col-span-2">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                    Created on
+                  </p>
+                  <p className="text-base font-semibold">
+                    {formatDate(selectedSummary.createdAt) || 'Date not available'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setSelectedSummary(null)}>
+              Close
+            </Button>
+            {selectedSummary ? (
+              <Button
+                type="button"
+                disabled={downloadingId === selectedSummary._id}
+                onClick={() => handleDownloadPdf(selectedSummary)}
+              >
+                {downloadingId === selectedSummary._id ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    PDF…
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download PDF
+                  </>
+                )}
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
