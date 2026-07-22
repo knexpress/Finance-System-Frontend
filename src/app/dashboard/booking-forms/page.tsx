@@ -126,6 +126,7 @@ export default function BookingFormsPage() {
     setLastQuery(awb ? { awb } : { name });
 
     try {
+      // Prefer AWB when provided (ignore leftover name text for this request)
       if (awb) {
         const result = await apiClient.searchApprovedBookingForms({ awb });
         if (seq !== searchSeq.current) return;
@@ -139,8 +140,8 @@ export default function BookingFormsPage() {
             toast({
               title: meta?.timedOut ? 'Search timed out' : 'No results',
               description: meta?.timedOut
-                ? 'Try a full AWB number.'
-                : 'No bookings matched that AWB.',
+                ? 'AWB search took too long. Try the full AWB again.'
+                : 'No bookings matched that AWB. Check for typos and try the full number.',
             });
           }
         } else {
