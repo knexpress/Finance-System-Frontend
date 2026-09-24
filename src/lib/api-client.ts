@@ -1687,6 +1687,26 @@ class ApiClient {
     return this.request('/health');
   }
 
+  async getQuotations(params?: { page?: number; limit?: number; search?: string }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.search) query.set('search', params.search);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return this.request(`/quotations${suffix}`, {}, false, 0);
+  }
+
+  async createQuotation(quotationData: any) {
+    return this.request('/quotations', {
+      method: 'POST',
+      body: JSON.stringify(quotationData),
+    }, false);
+  }
+
+  async deleteQuotation(id: string) {
+    return this.request(`/quotations/${id}`, { method: 'DELETE' }, false);
+  }
+
   // Price Brackets Management
   async getPriceBrackets(route: 'PH_TO_UAE' | 'UAE_TO_PH', useCache: boolean = false) {
     // Don't use cache for price brackets to ensure real-time updates

@@ -20,6 +20,7 @@ import {
   DollarSign,
   History,
   FileDown,
+  Receipt,
 } from 'lucide-react';
 import type { Department, DepartmentData } from './types';
 
@@ -66,6 +67,12 @@ const allLinks: NavLink[] = [
     label: 'All Requests',
     icon: Package,
     departments: ['Management', 'Auditor', 'IT'],
+  },
+  {
+    href: '/dashboard/quotations',
+    label: 'Quotations',
+    icon: Receipt,
+    departments: ['Sales', 'Operations', 'Finance', 'Management', 'IT'],
   },
   {
     href: '/dashboard/invoices',
