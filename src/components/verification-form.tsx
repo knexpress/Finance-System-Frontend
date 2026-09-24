@@ -413,8 +413,15 @@ export default function VerificationForm({ request, onVerificationComplete, curr
 
   const getDeclaredValue = () => {
     const req = requestData || request; // Use full data if available
-    const declaredValue = req.declared_value || 
+    const declaredValue = req.verification?.declared_value ||
+                         req.declared_value || 
                          req.declaredAmount ||
+                         req.booking_snapshot?.declaredAmount ||
+                         req.booking_snapshot?.declared_value ||
+                         req.booking_data?.declaredAmount ||
+                         req.booking_data?.declared_value ||
+                         req.booking_snapshot?.sender?.declaredAmount ||
+                         req.booking_data?.sender?.declaredAmount ||
                          req.booking?.declared_value || 
                          req.booking?.declaredAmount ||
                          req.request_id?.declared_value ||
@@ -424,8 +431,13 @@ export default function VerificationForm({ request, onVerificationComplete, curr
                          0;
     
     // Handle MongoDB Decimal128 format
-    if (typeof declaredValue === 'object' && declaredValue.$numberDecimal) {
-      return parseFloat(declaredValue.$numberDecimal).toString();
+    if (typeof declaredValue === 'object' && declaredValue !== null) {
+      if (declaredValue.$numberDecimal) {
+        return parseFloat(declaredValue.$numberDecimal).toString();
+      }
+      const asText = declaredValue.toString?.();
+      const parsed = parseFloat(asText);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed.toString() : '';
     }
     return declaredValue ? declaredValue.toString() : '';
   };
@@ -1446,8 +1458,9 @@ export default function VerificationForm({ request, onVerificationComplete, curr
               shouldShowField: isUaeToPinas && isInsuredInDb
             });
             
-            // Show declared value field when: UAE_TO_PH/PINAS + insured = true in database (any classification)
-            if (isUaeToPinas && isInsuredInDb) {
+            const hasDeclaredFromBooking = parseFloat(getDeclaredValue() || '0') > 0;
+            // Show when the booking is insured, or when a declared value was entered (including manual Parañaque bookings).
+            if ((isUaeToPinas && isInsuredInDb) || hasDeclaredFromBooking) {
               return (
                 <div className="border-l-4 border-indigo-500 pl-4 space-y-4 bg-indigo-50 p-4 rounded-lg">
                   <h3 className="font-semibold text-lg mb-4 text-indigo-900">Insurance Information</h3>
