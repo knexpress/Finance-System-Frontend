@@ -36,6 +36,9 @@ type QuoteItem = {
 type SavedQuotation = {
   _id: string;
   quotation_number: string;
+  sender_name?: string;
+  sender_phone?: string;
+  sender_address?: string;
   customer_name: string;
   customer_phone: string;
   customer_address: string;
@@ -75,6 +78,9 @@ export default function QuotationsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [printTarget, setPrintTarget] = useState<SavedQuotation | null>(null);
+  const [senderName, setSenderName] = useState('');
+  const [senderPhone, setSenderPhone] = useState('');
+  const [senderAddress, setSenderAddress] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
@@ -116,6 +122,9 @@ export default function QuotationsPage() {
   const finalAmount = Math.round((shippingAmount + pickupCharge + pickupVat + delivery + insurance) * 100) / 100;
 
   const resetForm = () => {
+    setSenderName('');
+    setSenderPhone('');
+    setSenderAddress('');
     setCustomerName('');
     setCustomerPhone('');
     setCustomerAddress('');
@@ -156,6 +165,9 @@ export default function QuotationsPage() {
 
     setSubmitting(true);
     const result = await apiClient.createQuotation({
+      sender_name: senderName.trim(),
+      sender_phone: senderPhone.trim(),
+      sender_address: senderAddress.trim(),
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
       customer_address: customerAddress.trim(),
@@ -213,9 +225,24 @@ export default function QuotationsPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Customer</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">Sender</h3>
+                  <div>
+                    <Label htmlFor="sender_name">Name *</Label>
+                    <Input id="sender_name" value={senderName} onChange={(e) => setSenderName(e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label htmlFor="sender_phone">Phone *</Label>
+                    <Input id="sender_phone" type="tel" value={senderPhone} onChange={(e) => setSenderPhone(e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label htmlFor="sender_address">Address *</Label>
+                    <Textarea id="sender_address" value={senderAddress} onChange={(e) => setSenderAddress(e.target.value)} required rows={2} />
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">Receiver</h3>
                   <div>
                     <Label htmlFor="customer_name">Name *</Label>
                     <Input id="customer_name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} required />
@@ -224,10 +251,10 @@ export default function QuotationsPage() {
                     <Label htmlFor="customer_phone">Phone *</Label>
                     <Input id="customer_phone" type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} required />
                   </div>
-                </div>
-                <div>
-                  <Label htmlFor="customer_address">Address *</Label>
-                  <Textarea id="customer_address" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} required rows={2} />
+                  <div>
+                    <Label htmlFor="customer_address">Address *</Label>
+                    <Textarea id="customer_address" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} required rows={2} />
+                  </div>
                 </div>
               </div>
 
@@ -456,6 +483,16 @@ export default function QuotationsPage() {
               </div>
               <div className="text-right">
                 <h2 className="text-3xl font-bold text-black mb-4">QUOTATION</h2>
+                <div className="space-y-1 text-sm mb-4">
+                  <p className="font-semibold text-base text-gray-900">Knex Delivery Services L.L.C.</p>
+                  <p className="text-xs uppercase tracking-wide text-gray-500">
+                    {printTarget.createdAt
+                      ? new Date(printTarget.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                      : ''}
+                  </p>
+                  <p>Dubai, United Arab Emirates</p>
+                  <p>www.knexpress.ae</p>
+                </div>
                 <div className="space-y-1 text-sm">
                   <p><span className="font-semibold">QUOTATION #</span> {printTarget.quotation_number}</p>
                   <p><span className="font-semibold">ROUTE</span> {ROUTE_LABELS[printTarget.route] || printTarget.route}</p>
@@ -467,14 +504,9 @@ export default function QuotationsPage() {
               <div>
                 <h3 className="text-lg font-bold text-black mb-4 uppercase">SENDER INFORMATION</h3>
                 <div className="space-y-1 text-sm">
-                  <p className="font-semibold text-base text-gray-900">Knex Delivery Services L.L.C.</p>
-                  <p className="text-xs uppercase tracking-wide text-gray-500">
-                    {printTarget.createdAt
-                      ? new Date(printTarget.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-                      : ''}
-                  </p>
-                  <p className="leading-relaxed">Dubai, United Arab Emirates</p>
-                  <p>www.knexpress.ae</p>
+                  <p className="font-semibold text-base text-gray-900">{printTarget.sender_name}</p>
+                  <p className="leading-relaxed whitespace-pre-wrap">{printTarget.sender_address}</p>
+                  <p>{printTarget.sender_phone}</p>
                 </div>
               </div>
               <div>
