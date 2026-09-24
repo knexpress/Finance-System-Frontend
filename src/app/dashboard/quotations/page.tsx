@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '@/lib/api-client';
-import { Pencil, PlusCircle, Printer, Trash2 } from 'lucide-react';
+import { Download, Pencil, PlusCircle, Printer, Trash2 } from 'lucide-react';
 
 type RouteCode = 'PH_TO_UAE' | 'UAE_TO_PH';
 
@@ -80,6 +80,8 @@ export default function QuotationsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [printTarget, setPrintTarget] = useState<SavedQuotation | null>(null);
+  const [downloadQueued, setDownloadQueued] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [senderName, setSenderName] = useState('');
   const [senderPhone, setSenderPhone] = useState('');
   const [senderAddress, setSenderAddress] = useState('');
@@ -235,6 +237,37 @@ export default function QuotationsPage() {
       toast({ variant: 'destructive', title: 'Could not save', description: result.error || 'Failed to create quotation' });
     }
   };
+
+  const downloadQuotationPdf = async () => {
+    const element = document.getElementById('quotation-sheet');
+    if (!element || !printTarget) return;
+    setDownloadingPdf(true);
+    try {
+      const html2pdfModule = await import('html2pdf.js');
+      const html2pdf = html2pdfModule.default || html2pdfModule;
+      await html2pdf().set({
+        margin: [6, 6, 6, 6],
+        filename: `${printTarget.quotation_number || 'quotation'}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false, letterRendering: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: 'css' },
+      }).from(element).save();
+    } catch {
+      toast({ variant: 'destructive', title: 'Download failed', description: 'Could not save the quotation PDF.' });
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!downloadQueued || !printTarget) return;
+    const timer = window.setTimeout(() => {
+      setDownloadQueued(false);
+      downloadQuotationPdf().then(() => setPrintTarget(null));
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [downloadQueued, printTarget]);
 
   const handleDelete = async (id: string) => {
     const result = await apiClient.deleteQuotation(id);
@@ -497,6 +530,10 @@ export default function QuotationsPage() {
                         <Pencil className="mr-2 h-4 w-4" />
                         Edit
                       </Button>
+                      <Button size="sm" variant="outline" onClick={() => { setPrintTarget(quote); setDownloadQueued(true); }} disabled={downloadingPdf}>
+                        <Download className="mr-2 h-4 w-4" />
+                        PDF
+                      </Button>
                       <Button size="sm" variant="outline" onClick={() => setPrintTarget(quote)}>
                         <Printer className="mr-2 h-4 w-4" />
                         Print
@@ -514,194 +551,181 @@ export default function QuotationsPage() {
       </Card>
 
       {printTarget && (
-        <div id="quotation-print" className="fixed inset-0 z-50 overflow-y-auto bg-white text-black">
+        <div id="quotation-print" className="fixed inset-0 z-50 overflow-y-auto bg-neutral-200 text-black">
           <style>{`
+            @page { size: A4 portrait; margin: 8mm; }
+            .quote-sheet { width: 190mm; font-family: Arial, Helvetica, sans-serif; line-height: 1.45; }
+            .quote-sheet, .quote-sheet * { font-family: Arial, Helvetica, sans-serif; letter-spacing: 0; }
+            .quote-sheet p, .quote-sheet h1, .quote-sheet h2, .quote-sheet h3, .quote-sheet h4 { margin: 0; line-height: 1.45; }
+            .quote-sheet table { font-size: 11px; border-collapse: collapse; width: 100%; }
+            .quote-sheet th, .quote-sheet td { padding: 5px 8px; vertical-align: top; line-height: 1.45; }
             @media print {
+              html, body { background: white !important; }
               body * { visibility: hidden; }
               #quotation-print, #quotation-print * { visibility: visible; }
-              #quotation-print { position: absolute; inset: 0; overflow: visible; }
+              #quotation-print { position: absolute; left: 0; top: 0; width: 100%; background: white !important; overflow: visible; }
+              .no-print { display: none !important; }
+              .quote-sheet { width: 100%; box-shadow: none !important; margin: 0 !important; page-break-after: avoid; }
             }
           `}</style>
-          <div className="print:hidden flex items-center justify-end gap-2 border-b bg-white px-6 py-3">
+          <div className="no-print sticky top-0 z-10 flex items-center justify-end gap-2 border-b bg-white px-6 py-3">
             <Button variant="outline" onClick={() => setPrintTarget(null)}>Close</Button>
+            <Button variant="outline" onClick={() => downloadQuotationPdf()} disabled={downloadingPdf}>
+              <Download className="mr-2 h-4 w-4" />
+              {downloadingPdf ? 'Downloading...' : 'Download PDF'}
+            </Button>
             <Button onClick={() => window.print()}>
               <Printer className="mr-2 h-4 w-4" />
               Print
             </Button>
           </div>
-          <div className="max-w-4xl mx-auto bg-white p-8 shadow-lg">
-            <div className="flex justify-between items-start mb-8">
-              <div className="flex items-start space-x-4">
-                <div className="bg-green-600 text-white px-5 py-4 rounded-lg">
-                  <div className="text-3xl font-bold tracking-wide">KNEX</div>
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-green-600 mb-1">Knex Delivery Services L.L.C.</h1>
-                  <p className="text-sm text-green-600 mb-2">www.knexpress.ae</p>
-                  <p className="text-sm text-gray-700">Dubai, United Arab Emirates</p>
-                  <p className="text-xs text-gray-600 mt-1">TRN: 104131637100003</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <h2 className="text-3xl font-bold text-black mb-4">QUOTATION</h2>
-                <div className="space-y-1 text-sm mb-4">
-                  <p className="font-semibold text-base text-gray-900">Knex Delivery Services L.L.C.</p>
-                  <p className="text-xs uppercase tracking-wide text-gray-500">
-                    {printTarget.createdAt
-                      ? new Date(printTarget.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-                      : ''}
-                  </p>
-                  <p>Dubai, United Arab Emirates</p>
-                  <p>www.knexpress.ae</p>
-                </div>
-                <div className="space-y-1 text-sm">
-                  <p><span className="font-semibold">QUOTATION #</span> {printTarget.quotation_number}</p>
-                  <p><span className="font-semibold">ROUTE</span> {ROUTE_LABELS[printTarget.route] || printTarget.route}</p>
-                </div>
-              </div>
-            </div>
+          <div id="quotation-sheet" className="quote-sheet mx-auto my-6 bg-white px-6 py-5 shadow-lg text-[12px] text-black">
+            <table className="mb-4" style={{ border: 'none' }}>
+              <tbody>
+                <tr>
+                  <td style={{ width: '58%', border: 'none', padding: '0 12px 0 0' }}>
+                    <h1 className="text-lg font-bold text-green-600">Knex Delivery Services L.L.C.</h1>
+                    <p className="text-green-600">www.knexpress.ae</p>
+                    <p>Dubai, United Arab Emirates</p>
+                    <p className="text-[11px] text-gray-600">TRN: 104131637100003</p>
+                  </td>
+                  <td style={{ width: '42%', border: 'none', padding: 0, textAlign: 'right' }}>
+                    <h2 className="text-2xl font-bold">QUOTATION</h2>
+                    <p style={{ marginTop: 6 }}><span className="font-semibold">QUOTATION #</span> {printTarget.quotation_number}</p>
+                    <p><span className="font-semibold">ROUTE</span> {ROUTE_LABELS[printTarget.route] || printTarget.route}</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-              <div>
-                <h3 className="text-lg font-bold text-black mb-4 uppercase">SENDER INFORMATION</h3>
-                <div className="space-y-1 text-sm">
-                  <p className="font-semibold text-base text-gray-900">{printTarget.sender_name}</p>
-                  <p className="leading-relaxed whitespace-pre-wrap">{printTarget.sender_address}</p>
-                  <p>{printTarget.sender_phone}</p>
-                </div>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-black mb-4 uppercase">RECEIVER INFORMATION</h3>
-                <div className="space-y-2">
-                  <p className="font-semibold text-lg">{printTarget.customer_name}</p>
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{printTarget.customer_address}</p>
-                  <p className="text-sm">{printTarget.customer_phone}</p>
-                </div>
-              </div>
-            </div>
+            <table className="mb-4" style={{ border: 'none' }}>
+              <tbody>
+                <tr>
+                  <td style={{ width: '50%', border: 'none', padding: '0 16px 0 0' }}>
+                    <h3 className="font-bold uppercase" style={{ marginBottom: 6 }}>Sender information</h3>
+                    <p className="font-semibold">{printTarget.sender_name || '—'}</p>
+                    <p className="text-[11px] uppercase text-gray-500">
+                      {printTarget.createdAt
+                        ? new Date(printTarget.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : ''}
+                    </p>
+                    <p className="whitespace-pre-wrap">{printTarget.sender_address}</p>
+                    <p>{printTarget.sender_phone}</p>
+                  </td>
+                  <td style={{ width: '50%', border: 'none', padding: 0, textAlign: 'right' }}>
+                    <h3 className="font-bold uppercase" style={{ marginBottom: 6 }}>Receiver information</h3>
+                    <p className="font-semibold">{printTarget.customer_name || '—'}</p>
+                    <p className="whitespace-pre-wrap">{printTarget.customer_address}</p>
+                    <p>{printTarget.customer_phone}</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-            <div className="mb-6">
-              <table className="w-full border-collapse border border-gray-300">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="border border-gray-300 px-4 py-2 text-left font-semibold">No of Boxes</th>
-                    <th className="border border-gray-300 px-4 py-2 text-left font-semibold">Weight</th>
-                    <th className="border border-gray-300 px-4 py-2 text-left font-semibold">Rate</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="border border-gray-300 px-4 py-2">
-                      {printTarget.items.map((item, index) => item.box_number || String(index + 1)).join(', ')}
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">
-                      <div>
-                        <span className="font-semibold">{Number(printTarget.chargeable_weight_kg).toFixed(2)} kg</span>
-                        <div className="text-xs text-gray-600">
-                          Weight Base: {printTarget.weight_type === 'ACTUAL' ? 'Actual Weight' : 'Volumetric Weight'}
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          Actual {Number(printTarget.actual_weight_kg).toFixed(2)} kg · Volumetric {Number(printTarget.volumetric_weight_kg).toFixed(2)} kg
-                        </div>
-                      </div>
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">{Number(printTarget.rate_per_kg).toFixed(2)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <table className="border border-gray-300 mb-4">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="border border-gray-300 text-left font-semibold" style={{ width: '22%' }}>No of Boxes</th>
+                  <th className="border border-gray-300 text-left font-semibold">Weight</th>
+                  <th className="border border-gray-300 text-left font-semibold" style={{ width: '18%' }}>Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="border border-gray-300">{printTarget.items.length}</td>
+                  <td className="border border-gray-300">
+                    <div className="font-semibold">{Number(printTarget.chargeable_weight_kg).toFixed(2)} kg</div>
+                    <div className="text-[11px] text-gray-600">
+                      Weight Base: {printTarget.weight_type === 'ACTUAL' ? 'Actual Weight' : 'Volumetric Weight'}
+                    </div>
+                    <div className="text-[11px] text-gray-600">
+                      Actual {Number(printTarget.actual_weight_kg).toFixed(2)} kg · Volumetric {Number(printTarget.volumetric_weight_kg).toFixed(2)} kg
+                    </div>
+                  </td>
+                  <td className="border border-gray-300">{Number(printTarget.rate_per_kg).toFixed(2)}</td>
+                </tr>
+              </tbody>
+            </table>
 
-            <div className="flex justify-end mb-8">
-              <div className="w-80">
-                <table className="w-full border-collapse border border-gray-300">
-                  <tbody>
-                    <tr>
-                      <td className="border border-gray-300 px-4 py-2 text-left">Shipping Charge</td>
-                      <td className="border border-gray-300 px-4 py-2 text-right">{Number(printTarget.shipping_amount).toFixed(2)}</td>
-                    </tr>
-                    <tr>
-                      <td className="border border-gray-300 px-4 py-2 text-left">
-                        Pickup Charge {printTarget.pickup_location === 'OUTSIDE_DUBAI' ? '(Outside Dubai)' : printTarget.pickup_location === 'INSIDE_DUBAI' ? '(Inside Dubai)' : printTarget.pickup_location === 'DROP_OFF' ? '(Drop off)' : ''}
-                      </td>
-                      <td className="border border-gray-300 px-4 py-2 text-right">{Number(printTarget.pickup_charge || 0).toFixed(2)}</td>
-                    </tr>
-                    <tr>
-                      <td className="border border-gray-300 px-4 py-2 text-left">VAT 5% on Pickup</td>
-                      <td className="border border-gray-300 px-4 py-2 text-right">{Number(printTarget.pickup_vat || 0).toFixed(2)}</td>
-                    </tr>
-                    <tr>
-                      <td className="border border-gray-300 px-4 py-2 text-left">Delivery Charge</td>
-                      <td className="border border-gray-300 px-4 py-2 text-right">{Number(printTarget.delivery_charge || 0).toFixed(2)}</td>
-                    </tr>
-                    <tr>
-                      <td className="border border-gray-300 px-4 py-2 text-left">Insurance Charge</td>
-                      <td className="border border-gray-300 px-4 py-2 text-right">{Number(printTarget.insurance_charge || 0).toFixed(2)}</td>
-                    </tr>
-                    <tr className="bg-gray-100">
-                      <td className="border border-gray-300 px-4 py-2 text-left font-bold">Final Price</td>
-                      <td className="border border-gray-300 px-4 py-2 text-right font-bold">
-                        {Number(printTarget.total_amount ?? printTarget.shipping_amount).toFixed(2)} AED
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div>
-                <h4 className="font-semibold mb-2">REMARKS:</h4>
-                <div className="space-y-1 text-sm">
-                  <p>BOX#: {printTarget.items.map((item, index) => item.box_number || String(index + 1)).join(', ')}</p>
-                  <table className="w-full border-collapse border border-gray-300 mt-2">
-                    <thead>
-                      <tr className="bg-gray-50">
-                        <th className="border border-gray-300 px-2 py-1 text-left">S.No</th>
-                        <th className="border border-gray-300 px-2 py-1 text-left">Box number</th>
-                        <th className="border border-gray-300 px-2 py-1 text-left">Item</th>
-                        <th className="border border-gray-300 px-2 py-1 text-right">Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {printTarget.items.map((item, index) => (
-                        <tr key={`${item.name}-${index}`}>
-                          <td className="border border-gray-300 px-2 py-1">{index + 1}</td>
-                          <td className="border border-gray-300 px-2 py-1">{item.box_number || index + 1}</td>
-                          <td className="border border-gray-300 px-2 py-1">{item.name}</td>
-                          <td className="border border-gray-300 px-2 py-1 text-right">{item.quantity}</td>
+            <table style={{ border: 'none', marginBottom: 16 }}>
+              <tbody>
+                <tr>
+                  <td style={{ border: 'none', width: '42%' }} />
+                  <td style={{ border: 'none', width: '58%', padding: 0 }}>
+                    <table className="border border-gray-300">
+                      <tbody>
+                        <tr>
+                          <td className="border border-gray-300">Shipping Charge</td>
+                          <td className="border border-gray-300 text-right" style={{ width: '32%' }}>{Number(printTarget.shipping_amount).toFixed(2)}</td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {printTarget.notes ? <p>{printTarget.notes}</p> : null}
-                </div>
-              </div>
-              <div className="text-right">
-                <h4 className="font-semibold mb-2">TERMS AND CONDITIONS:</h4>
-                <p className="text-sm">Client quotation only. VAT 5% applies to the pickup charge only.</p>
-              </div>
-            </div>
+                        <tr>
+                          <td className="border border-gray-300">
+                            Pickup Charge {printTarget.pickup_location === 'OUTSIDE_DUBAI' ? '(Outside Dubai)' : printTarget.pickup_location === 'INSIDE_DUBAI' ? '(Inside Dubai)' : '(Drop off)'}
+                          </td>
+                          <td className="border border-gray-300 text-right">{Number(printTarget.pickup_charge || 0).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300">VAT 5% on Pickup</td>
+                          <td className="border border-gray-300 text-right">{Number(printTarget.pickup_vat || 0).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300">Delivery Charge</td>
+                          <td className="border border-gray-300 text-right">{Number(printTarget.delivery_charge || 0).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300">Insurance Charge</td>
+                          <td className="border border-gray-300 text-right">{Number(printTarget.insurance_charge || 0).toFixed(2)}</td>
+                        </tr>
+                        <tr className="bg-gray-100">
+                          <td className="border border-gray-300 font-bold">Total Amount</td>
+                          <td className="border border-gray-300 text-right font-bold">{Number(printTarget.total_amount ?? printTarget.shipping_amount).toFixed(2)} AED</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-            <div className="mt-8 border border-gray-300 break-inside-avoid">
-              <div className="bg-gray-50 border-b border-gray-300 px-4 py-2 font-semibold">BANK DETAILS</div>
-              <div className="grid grid-cols-2 text-sm">
-                <div className="p-4 border-r border-gray-300">
-                  <h4 className="font-semibold mb-2">PH BANK DETAILS</h4>
-                  <p>BANCO DE ORO (BDO UNIBANK)</p>
-                  <p>KNEXPRESS DELIVERY SERVICES</p>
-                  <p>004718016361</p>
-                </div>
-                <div className="p-4">
-                  <h4 className="font-semibold mb-2">UAE BANK DETAILS</h4>
-                  <p>Bank: RAK BANK (National Bank of Ras Al Khaimah)</p>
-                  <p>Account Name: KNEX DELIVERY SERVICES LLC</p>
-                  <p>Card Number: 5467 5077 4522 5002</p>
-                  <p>IBAN Number: AE26 0400 0003 7322 0098 001</p>
-                  <p>Account Number: 0373220098001</p>
-                  <p>Swift Code: NRAKAEAK</p>
-                </div>
-              </div>
-            </div>
+            <table className="mb-3" style={{ border: 'none' }}>
+              <tbody>
+                <tr>
+                  <td style={{ width: '50%', border: 'none', padding: '0 12px 0 0' }}>
+                    <h4 className="font-semibold" style={{ marginBottom: 4 }}>REMARKS:</h4>
+                    <p>BOX# {printTarget.items.map((item, index) => item.box_number || String(index + 1)).join(', ')}</p>
+                    <p>ITEMS: {printTarget.items.map((item) => `${item.name} x${item.quantity}`).join(', ')}</p>
+                    {printTarget.notes ? <p>{printTarget.notes}</p> : null}
+                  </td>
+                  <td style={{ width: '50%', border: 'none', padding: 0, textAlign: 'right' }}>
+                    <h4 className="font-semibold" style={{ marginBottom: 4 }}>TERMS AND CONDITIONS:</h4>
+                    <p>Client quotation only.</p>
+                    <p>VAT 5% applies to the pickup charge only.</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <table className="text-[11px]" style={{ border: 'none', borderTop: '1px solid #d1d5db' }}>
+              <tbody>
+                <tr>
+                  <td style={{ width: '46%', border: 'none', padding: '8px 12px 0 0' }}>
+                    <p className="font-semibold">PH BANK DETAILS</p>
+                    <p>BANCO DE ORO (BDO UNIBANK)</p>
+                    <p>KNEXPRESS DELIVERY SERVICES</p>
+                    <p>004718016361</p>
+                  </td>
+                  <td style={{ width: '54%', border: 'none', padding: '8px 0 0 0', textAlign: 'right' }}>
+                    <p className="font-semibold">UAE BANK DETAILS</p>
+                    <p>RAK BANK (National Bank of Ras Al Khaimah)</p>
+                    <p>KNEX DELIVERY SERVICES LLC</p>
+                    <p>Card 5467 5077 4522 5002</p>
+                    <p>IBAN AE26 0400 0003 7322 0098 001</p>
+                    <p>Account 0373220098001</p>
+                    <p>Swift NRAKAEAK</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -222,9 +222,23 @@ export default function UaeToPhTaxInvoiceTemplate({ data }: UaeToPhTaxInvoiceTem
           </table>
         </div>
 
-        <div className="mt-auto space-y-2 text-sm">
+        <div className="mt-auto space-y-3 text-sm">
           {dueDateText ? <p>{dueDateText}</p> : null}
           <p>{paymentTerms}</p>
+          <div className="border border-gray-300 text-xs leading-snug">
+            <p className="bg-gray-50 border-b border-gray-300 px-2 py-1 font-semibold">UAE BANK DETAILS</p>
+            <div className="grid grid-cols-2 gap-x-4 px-2 py-1">
+              <p>Bank: RAK BANK (National Bank of Ras Al Khaimah)</p>
+              <p>Account Name: KNEX DELIVERY SERVICES LLC</p>
+              <p>Card Number: 5467 5077 4522 5002</p>
+              <p>IBAN Number: AE26 0400 0003 7322 0098 001</p>
+              <p>Account Number: 0373220098001</p>
+              <p>Swift Code: NRAKAEAK</p>
+            </div>
+          </div>
+          <p className="pt-2 text-center text-base font-bold">
+            This is a computer generated document and does not require a signature
+          </p>
         </div>
       </div>
 
