@@ -97,6 +97,10 @@ export default function QuotationsPage() {
   const [deliveryCharge, setDeliveryCharge] = useState('');
   const [insuranceCharge, setInsuranceCharge] = useState('');
   const [items, setItems] = useState<QuoteItem[]>([{ id: '1', boxNumber: '1', name: '', quantity: 1 }]);
+  const [numberQuery, setNumberQuery] = useState('');
+  const [senderQuery, setSenderQuery] = useState('');
+  const [receiverQuery, setReceiverQuery] = useState('');
+  const [routeQuery, setRouteQuery] = useState<'ALL' | RouteCode>('ALL');
 
   const loadQuotations = useCallback(async () => {
     setLoading(true);
@@ -112,6 +116,17 @@ export default function QuotationsPage() {
   useEffect(() => {
     loadQuotations();
   }, [loadQuotations]);
+
+  const filteredQuotations = quotations.filter((quote) => {
+    const number = (quote.quotation_number || '').toLowerCase();
+    const sender = `${quote.sender_name || ''} ${quote.sender_phone || ''}`.toLowerCase();
+    const receiver = `${quote.customer_name || ''} ${quote.customer_phone || ''}`.toLowerCase();
+    if (numberQuery.trim() && !number.includes(numberQuery.trim().toLowerCase())) return false;
+    if (senderQuery.trim() && !sender.includes(senderQuery.trim().toLowerCase())) return false;
+    if (receiverQuery.trim() && !receiver.includes(receiverQuery.trim().toLowerCase())) return false;
+    if (routeQuery !== 'ALL' && quote.route !== routeQuery) return false;
+    return true;
+  });
 
   const actual = parseFloat(actualWeight) || 0;
   const volumetric = parseFloat(volumetricWeight) || 0;
@@ -498,17 +513,47 @@ export default function QuotationsPage() {
         <CardHeader>
           <CardTitle>Saved quotations</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div>
+              <Label htmlFor="search_number">Number</Label>
+              <Input id="search_number" value={numberQuery} onChange={(e) => setNumberQuery(e.target.value)} placeholder="Quotation number" />
+            </div>
+            <div>
+              <Label htmlFor="search_sender">Sender</Label>
+              <Input id="search_sender" value={senderQuery} onChange={(e) => setSenderQuery(e.target.value)} placeholder="Name or phone" />
+            </div>
+            <div>
+              <Label htmlFor="search_receiver">Receiver</Label>
+              <Input id="search_receiver" value={receiverQuery} onChange={(e) => setReceiverQuery(e.target.value)} placeholder="Name or phone" />
+            </div>
+            <div>
+              <Label>Route</Label>
+              <Select value={routeQuery} onValueChange={(value) => setRouteQuery(value as 'ALL' | RouteCode)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All routes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All routes</SelectItem>
+                  <SelectItem value="PH_TO_UAE">Philippines to UAE</SelectItem>
+                  <SelectItem value="UAE_TO_PH">UAE to Philippines</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading quotations...</p>
           ) : quotations.length === 0 ? (
             <p className="text-sm text-muted-foreground">No quotations yet.</p>
+          ) : filteredQuotations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No quotations match this search.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Number</TableHead>
-                  <TableHead>Customer</TableHead>
+                  <TableHead>Sender</TableHead>
+                  <TableHead>Receiver</TableHead>
                   <TableHead>Route</TableHead>
                   <TableHead>Chargeable</TableHead>
                   <TableHead>Amount</TableHead>
@@ -516,9 +561,13 @@ export default function QuotationsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {quotations.map((quote) => (
+                {filteredQuotations.map((quote) => (
                   <TableRow key={quote._id}>
                     <TableCell className="font-medium">{quote.quotation_number}</TableCell>
+                    <TableCell>
+                      <div>{quote.sender_name || '—'}</div>
+                      <div className="text-xs text-muted-foreground">{quote.sender_phone}</div>
+                    </TableCell>
                     <TableCell>
                       <div>{quote.customer_name}</div>
                       <div className="text-xs text-muted-foreground">{quote.customer_phone}</div>
