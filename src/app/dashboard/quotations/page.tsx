@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -59,54 +59,10 @@ type SavedQuotation = {
   createdAt?: string;
 };
 
-type WeightBracket = {
-  min: number;
-  max: number | null;
-  rate: number;
-  label: string;
-};
-
 const ROUTE_LABELS: Record<RouteCode, string> = {
   PH_TO_UAE: 'Philippines to UAE',
   UAE_TO_PH: 'UAE to Philippines',
 };
-
-const QUOTE_BRACKETS: Record<RouteCode, WeightBracket[]> = {
-  PH_TO_UAE: [
-    { min: 1, max: 15, rate: 39, label: '1-15 KG' },
-    { min: 16, max: 29, rate: 38, label: '16-29 KG' },
-    { min: 30, max: 69, rate: 36, label: '30-69 KG' },
-    { min: 70, max: 199, rate: 34, label: '70-199 KG' },
-    { min: 200, max: 299, rate: 31, label: '200-299 KG' },
-    { min: 300, max: null, rate: 30, label: '300+ KG' },
-  ],
-  UAE_TO_PH: [
-    { min: 1, max: 15, rate: 39, label: '1-15 KG' },
-    { min: 16, max: 29, rate: 38, label: '16-29 KG' },
-    { min: 30, max: 69, rate: 36, label: '30-69 KG' },
-    { min: 70, max: 99, rate: 34, label: '70-99 KG' },
-    { min: 100, max: 199, rate: 31, label: '100-199 KG' },
-    { min: 200, max: null, rate: 30, label: '200+ KG' },
-    { min: 1000, max: null, rate: 28, label: '1 TON UP' },
-  ],
-};
-
-function matchBracket(weight: number, brackets: WeightBracket[]) {
-  const available = brackets.filter((bracket) => bracket.label !== 'SPECIAL RATE');
-  const closed = available.filter((bracket) => bracket.max !== null).sort((a, b) => a.min - b.min);
-  const openEnded = available.filter((bracket) => bracket.max === null).sort((a, b) => b.min - a.min);
-
-  for (const bracket of closed) {
-    if (bracket.max !== null && weight >= bracket.min && weight <= bracket.max) return bracket;
-  }
-  for (const bracket of openEnded) {
-    if (weight >= bracket.min) return bracket;
-  }
-  if (!available.length) return null;
-  const lowest = available.reduce((best, current) => (current.min < best.min ? current : best), available[0]);
-  if (weight < lowest.min) return lowest;
-  return openEnded[0] || closed[closed.length - 1] || available[0];
-}
 
 function money(value: number) {
   return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -125,6 +81,7 @@ export default function QuotationsPage() {
   const [route, setRoute] = useState<RouteCode | ''>('');
   const [actualWeight, setActualWeight] = useState('');
   const [volumetricWeight, setVolumetricWeight] = useState('');
+  const [ratePerKg, setRatePerKg] = useState('');
   const [notes, setNotes] = useState('');
   const [pickupLocation, setPickupLocation] = useState<'INSIDE_DUBAI' | 'OUTSIDE_DUBAI' | ''>('');
   const [deliveryCharge, setDeliveryCharge] = useState('');
@@ -150,11 +107,8 @@ export default function QuotationsPage() {
   const volumetric = parseFloat(volumetricWeight) || 0;
   const chargeable = actual > 0 || volumetric > 0 ? Math.max(actual, volumetric) : 0;
   const weightType = actual >= volumetric ? 'ACTUAL' : 'VOLUMETRIC';
-  const bracket = useMemo(
-    () => (chargeable > 0 && route ? matchBracket(chargeable, QUOTE_BRACKETS[route]) : null),
-    [chargeable, route]
-  );
-  const shippingAmount = bracket ? Math.round(chargeable * bracket.rate * 100) / 100 : 0;
+  const rate = Math.max(parseFloat(ratePerKg) || 0, 0);
+  const shippingAmount = chargeable > 0 && rate > 0 ? Math.round(chargeable * rate * 100) / 100 : 0;
   const pickupCharge = pickupLocation === 'INSIDE_DUBAI' ? 20 : pickupLocation === 'OUTSIDE_DUBAI' ? 25.71 : 0;
   const pickupVat = Math.round(pickupCharge * 0.05 * 100) / 100;
   const delivery = Math.max(parseFloat(deliveryCharge) || 0, 0);
@@ -168,6 +122,7 @@ export default function QuotationsPage() {
     setRoute('');
     setActualWeight('');
     setVolumetricWeight('');
+    setRatePerKg('');
     setNotes('');
     setPickupLocation('');
     setDeliveryCharge('');
@@ -184,6 +139,10 @@ export default function QuotationsPage() {
     }
     if (actual <= 0 || volumetric <= 0) {
       toast({ variant: 'destructive', title: 'Weights required', description: 'Enter both actual and volumetric weight in kg.' });
+      return;
+    }
+    if (rate <= 0) {
+      toast({ variant: 'destructive', title: 'Rate required', description: 'Enter the rate per kg.' });
       return;
     }
     if (!validItems.length) {
@@ -203,6 +162,7 @@ export default function QuotationsPage() {
       route,
       actual_weight_kg: actual,
       volumetric_weight_kg: volumetric,
+      rate_per_kg: rate,
       items: validItems.map((item) => ({ name: item.name.trim(), quantity: item.quantity })),
       pickup_location: pickupLocation,
       delivery_charge: delivery,
@@ -289,7 +249,7 @@ export default function QuotationsPage() {
 
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Weight (kg)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <Label htmlFor="actual_weight">Actual weight (kg) *</Label>
                     <Input id="actual_weight" type="number" min="0.01" step="0.01" value={actualWeight} onChange={(e) => setActualWeight(e.target.value)} required />
@@ -298,21 +258,21 @@ export default function QuotationsPage() {
                     <Label htmlFor="volumetric_weight">Volumetric weight (kg) *</Label>
                     <Input id="volumetric_weight" type="number" min="0.01" step="0.01" value={volumetricWeight} onChange={(e) => setVolumetricWeight(e.target.value)} required />
                   </div>
+                  <div>
+                    <Label htmlFor="rate_per_kg">Rate per kg (AED) *</Label>
+                    <Input id="rate_per_kg" type="number" min="0.01" step="0.01" placeholder="Enter rate" value={ratePerKg} onChange={(e) => setRatePerKg(e.target.value)} required />
+                  </div>
                 </div>
-                <div className="rounded-lg border bg-muted/40 p-4 text-sm grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-lg border bg-muted/40 p-4 text-sm grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <p className="text-muted-foreground">Chargeable weight</p>
                     <p className="font-semibold">{chargeable > 0 ? `${chargeable.toFixed(2)} kg` : '—'}</p>
                     <p className="text-xs text-muted-foreground">{chargeable > 0 ? weightType : 'Higher of actual and volumetric'}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Rate</p>
-                    <p className="font-semibold">{bracket ? `AED ${money(bracket.rate)} / kg` : '—'}</p>
-                    <p className="text-xs text-muted-foreground">{bracket?.label || 'Select a route and enter both weights'}</p>
-                  </div>
-                  <div>
                     <p className="text-muted-foreground">Quoted shipping</p>
-                    <p className="font-semibold">{bracket ? `AED ${money(shippingAmount)}` : '—'}</p>
+                    <p className="font-semibold">{shippingAmount > 0 ? `AED ${money(shippingAmount)}` : '—'}</p>
+                    <p className="text-xs text-muted-foreground">Chargeable weight × the rate you enter</p>
                   </div>
                 </div>
               </div>
