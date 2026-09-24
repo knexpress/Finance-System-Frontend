@@ -245,14 +245,15 @@ export default function QuotationsPage() {
     try {
       const html2pdfModule = await import('html2pdf.js');
       const html2pdf = html2pdfModule.default || html2pdfModule;
-      await html2pdf().set({
-        margin: [6, 6, 6, 6],
+      const opt = {
+        margin: [6, 6, 6, 6] as [number, number, number, number],
         filename: `${printTarget.quotation_number || 'quotation'}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
+        image: { type: 'jpeg' as const, quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, logging: false, letterRendering: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: 'css' },
-      }).from(element).save();
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+        pagebreak: { mode: 'css' as const },
+      };
+      await html2pdf().set(opt).from(element).save();
     } catch {
       toast({ variant: 'destructive', title: 'Download failed', description: 'Could not save the quotation PDF.' });
     } finally {
