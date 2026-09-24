@@ -1703,6 +1703,13 @@ class ApiClient {
     }, false);
   }
 
+  async updateQuotation(id: string, quotationData: any) {
+    return this.request(`/quotations/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(quotationData),
+    }, false);
+  }
+
   async deleteQuotation(id: string) {
     return this.request(`/quotations/${id}`, { method: 'DELETE' }, false);
   }

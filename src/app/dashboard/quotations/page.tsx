@@ -23,12 +23,13 @@ import {
 } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '@/lib/api-client';
-import { PlusCircle, Printer, Trash2 } from 'lucide-react';
+import { Pencil, PlusCircle, Printer, Trash2 } from 'lucide-react';
 
 type RouteCode = 'PH_TO_UAE' | 'UAE_TO_PH';
 
 type QuoteItem = {
   id: string;
+  boxNumber: string;
   name: string;
   quantity: number;
 };
@@ -47,11 +48,11 @@ type SavedQuotation = {
   volumetric_weight_kg: number;
   chargeable_weight_kg: number;
   weight_type: 'ACTUAL' | 'VOLUMETRIC';
-  items: { name: string; quantity: number }[];
+  items: { box_number?: string; name: string; quantity: number }[];
   rate_per_kg: number;
   rate_bracket?: string;
   shipping_amount: number;
-  pickup_location?: 'INSIDE_DUBAI' | 'OUTSIDE_DUBAI';
+  pickup_location?: 'INSIDE_DUBAI' | 'OUTSIDE_DUBAI' | 'DROP_OFF';
   pickup_charge?: number;
   pickup_vat?: number;
   delivery_charge?: number;
@@ -77,6 +78,7 @@ export default function QuotationsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [printTarget, setPrintTarget] = useState<SavedQuotation | null>(null);
   const [senderName, setSenderName] = useState('');
   const [senderPhone, setSenderPhone] = useState('');
@@ -89,10 +91,10 @@ export default function QuotationsPage() {
   const [volumetricWeight, setVolumetricWeight] = useState('');
   const [ratePerKg, setRatePerKg] = useState('');
   const [notes, setNotes] = useState('');
-  const [pickupLocation, setPickupLocation] = useState<'INSIDE_DUBAI' | 'OUTSIDE_DUBAI' | ''>('');
+  const [pickupLocation, setPickupLocation] = useState<'INSIDE_DUBAI' | 'OUTSIDE_DUBAI' | 'DROP_OFF' | ''>('');
   const [deliveryCharge, setDeliveryCharge] = useState('');
   const [insuranceCharge, setInsuranceCharge] = useState('');
-  const [items, setItems] = useState<QuoteItem[]>([{ id: '1', name: '', quantity: 1 }]);
+  const [items, setItems] = useState<QuoteItem[]>([{ id: '1', boxNumber: '1', name: '', quantity: 1 }]);
 
   const loadQuotations = useCallback(async () => {
     setLoading(true);
@@ -136,7 +138,37 @@ export default function QuotationsPage() {
     setPickupLocation('');
     setDeliveryCharge('');
     setInsuranceCharge('');
-    setItems([{ id: '1', name: '', quantity: 1 }]);
+    setItems([{ id: '1', boxNumber: '1', name: '', quantity: 1 }]);
+    setEditingId(null);
+  };
+
+  const startEdit = (quote: SavedQuotation) => {
+    setEditingId(quote._id);
+    setSenderName(quote.sender_name || '');
+    setSenderPhone(quote.sender_phone || '');
+    setSenderAddress(quote.sender_address || '');
+    setCustomerName(quote.customer_name || '');
+    setCustomerPhone(quote.customer_phone || '');
+    setCustomerAddress(quote.customer_address || '');
+    setRoute(quote.route || '');
+    setActualWeight(String(quote.actual_weight_kg ?? ''));
+    setVolumetricWeight(String(quote.volumetric_weight_kg ?? ''));
+    setRatePerKg(String(quote.rate_per_kg ?? ''));
+    setNotes(quote.notes || '');
+    setPickupLocation(quote.pickup_location || '');
+    setDeliveryCharge(quote.delivery_charge ? String(quote.delivery_charge) : '');
+    setInsuranceCharge(quote.insurance_charge ? String(quote.insurance_charge) : '');
+    setItems(
+      (quote.items || []).length
+        ? quote.items.map((item, index) => ({
+            id: `${quote._id}-${index}`,
+            boxNumber: item.box_number || String(index + 1),
+            name: item.name,
+            quantity: item.quantity,
+          }))
+        : [{ id: '1', boxNumber: '1', name: '', quantity: 1 }]
+    );
+    setShowForm(true);
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -159,12 +191,11 @@ export default function QuotationsPage() {
       return;
     }
     if (!pickupLocation) {
-      toast({ variant: 'destructive', title: 'Pickup required', description: 'Choose inside Dubai or outside Dubai.' });
+      toast({ variant: 'destructive', title: 'Pickup required', description: 'Choose inside Dubai, outside Dubai, or drop off.' });
       return;
     }
 
-    setSubmitting(true);
-    const result = await apiClient.createQuotation({
+    const payload = {
       sender_name: senderName.trim(),
       sender_phone: senderPhone.trim(),
       sender_address: senderAddress.trim(),
@@ -175,16 +206,28 @@ export default function QuotationsPage() {
       actual_weight_kg: actual,
       volumetric_weight_kg: volumetric,
       rate_per_kg: rate,
-      items: validItems.map((item) => ({ name: item.name.trim(), quantity: item.quantity })),
+      items: validItems.map((item, index) => ({
+        box_number: item.boxNumber.trim() || String(index + 1),
+        name: item.name.trim(),
+        quantity: item.quantity,
+      })),
       pickup_location: pickupLocation,
       delivery_charge: delivery,
       insurance_charge: insurance,
       notes: notes.trim(),
-    });
+    };
+
+    setSubmitting(true);
+    const result = editingId
+      ? await apiClient.updateQuotation(editingId, payload)
+      : await apiClient.createQuotation(payload);
     setSubmitting(false);
 
     if (result.success) {
-      toast({ title: 'Quotation saved', description: 'Saved for the client on this page only.' });
+      toast({
+        title: editingId ? 'Quotation updated' : 'Quotation saved',
+        description: 'Saved for the client on this page only.',
+      });
       setShowForm(false);
       resetForm();
       loadQuotations();
@@ -212,7 +255,7 @@ export default function QuotationsPage() {
             Client quotations only. They stay on this page and are not used anywhere else.
           </p>
         </div>
-        <Button onClick={() => setShowForm(true)}>
+        <Button onClick={() => { resetForm(); setShowForm(true); }}>
           <PlusCircle className="mr-2 h-4 w-4" />
           New Quotation
         </Button>
@@ -221,7 +264,7 @@ export default function QuotationsPage() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>New manual quotation</CardTitle>
+            <CardTitle>{editingId ? 'Edit quotation' : 'New manual quotation'}</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -311,7 +354,7 @@ export default function QuotationsPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setItems([...items, { id: Date.now().toString(), name: '', quantity: 1 }])}
+                    onClick={() => setItems([...items, { id: Date.now().toString(), boxNumber: String(items.length + 1), name: '', quantity: 1 }])}
                   >
                     <PlusCircle className="mr-2 h-4 w-4" />
                     Add item
@@ -319,7 +362,20 @@ export default function QuotationsPage() {
                 </div>
                 {items.map((item, index) => (
                   <div key={item.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-                    <div className="md:col-span-6">
+                    <div className="md:col-span-1">
+                      <Label>S.No</Label>
+                      <Input value={String(index + 1)} readOnly />
+                    </div>
+                    <div className="md:col-span-2">
+                      <Label>Box number *</Label>
+                      <Input
+                        value={item.boxNumber}
+                        placeholder={String(index + 1)}
+                        onChange={(e) => setItems(items.map((row) => row.id === item.id ? { ...row, boxNumber: e.target.value } : row))}
+                        required
+                      />
+                    </div>
+                    <div className="md:col-span-5">
                       <Label>Item {index + 1} *</Label>
                       <Input
                         value={item.name}
@@ -328,7 +384,7 @@ export default function QuotationsPage() {
                         required
                       />
                     </div>
-                    <div className="md:col-span-3">
+                    <div className="md:col-span-2">
                       <Label>Quantity *</Label>
                       <Input
                         type="number"
@@ -338,7 +394,7 @@ export default function QuotationsPage() {
                         required
                       />
                     </div>
-                    <div className="md:col-span-3">
+                    <div className="md:col-span-2">
                       {items.length > 1 && (
                         <Button type="button" variant="outline" onClick={() => setItems(items.filter((row) => row.id !== item.id))}>
                           <Trash2 className="mr-2 h-4 w-4" />
@@ -355,13 +411,14 @@ export default function QuotationsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <Label>Pickup *</Label>
-                    <Select value={pickupLocation} onValueChange={(value) => setPickupLocation(value as 'INSIDE_DUBAI' | 'OUTSIDE_DUBAI')}>
+                    <Select value={pickupLocation} onValueChange={(value) => setPickupLocation(value as 'INSIDE_DUBAI' | 'OUTSIDE_DUBAI' | 'DROP_OFF')}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Inside or outside Dubai" />
+                        <SelectValue placeholder="Inside Dubai, outside Dubai, or drop off" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="INSIDE_DUBAI">Inside Dubai — 20.00 AED</SelectItem>
                         <SelectItem value="OUTSIDE_DUBAI">Outside Dubai — 25.71 AED</SelectItem>
+                        <SelectItem value="DROP_OFF">Drop off — 0.00 AED</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground mt-1">VAT 5% is added on the pickup charge only.</p>
@@ -395,7 +452,7 @@ export default function QuotationsPage() {
                   Cancel
                 </Button>
                 <Button type="submit" disabled={submitting}>
-                  {submitting ? 'Saving...' : 'Save quotation'}
+                  {submitting ? 'Saving...' : editingId ? 'Save changes' : 'Save quotation'}
                 </Button>
               </div>
             </form>
@@ -436,6 +493,10 @@ export default function QuotationsPage() {
                     <TableCell>{Number(quote.chargeable_weight_kg).toFixed(2)} kg</TableCell>
                     <TableCell>AED {money(Number(quote.total_amount ?? quote.shipping_amount))}</TableCell>
                     <TableCell className="text-right space-x-2">
+                      <Button size="sm" variant="outline" onClick={() => startEdit(quote)}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit
+                      </Button>
                       <Button size="sm" variant="outline" onClick={() => setPrintTarget(quote)}>
                         <Printer className="mr-2 h-4 w-4" />
                         Print
@@ -531,7 +592,7 @@ export default function QuotationsPage() {
                 <tbody>
                   <tr>
                     <td className="border border-gray-300 px-4 py-2">
-                      {printTarget.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0) || 1}
+                      {printTarget.items.map((item, index) => item.box_number || String(index + 1)).join(', ')}
                     </td>
                     <td className="border border-gray-300 px-4 py-2">
                       <div>
@@ -560,7 +621,7 @@ export default function QuotationsPage() {
                     </tr>
                     <tr>
                       <td className="border border-gray-300 px-4 py-2 text-left">
-                        Pickup Charge {printTarget.pickup_location === 'OUTSIDE_DUBAI' ? '(Outside Dubai)' : printTarget.pickup_location === 'INSIDE_DUBAI' ? '(Inside Dubai)' : ''}
+                        Pickup Charge {printTarget.pickup_location === 'OUTSIDE_DUBAI' ? '(Outside Dubai)' : printTarget.pickup_location === 'INSIDE_DUBAI' ? '(Inside Dubai)' : printTarget.pickup_location === 'DROP_OFF' ? '(Drop off)' : ''}
                       </td>
                       <td className="border border-gray-300 px-4 py-2 text-right">{Number(printTarget.pickup_charge || 0).toFixed(2)}</td>
                     </tr>
@@ -591,7 +652,27 @@ export default function QuotationsPage() {
               <div>
                 <h4 className="font-semibold mb-2">REMARKS:</h4>
                 <div className="space-y-1 text-sm">
-                  <p>ITEMS: {printTarget.items.map((item) => `${item.name} x${item.quantity}`).join(', ')}</p>
+                  <p>BOX#: {printTarget.items.map((item, index) => item.box_number || String(index + 1)).join(', ')}</p>
+                  <table className="w-full border-collapse border border-gray-300 mt-2">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="border border-gray-300 px-2 py-1 text-left">S.No</th>
+                        <th className="border border-gray-300 px-2 py-1 text-left">Box number</th>
+                        <th className="border border-gray-300 px-2 py-1 text-left">Item</th>
+                        <th className="border border-gray-300 px-2 py-1 text-right">Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {printTarget.items.map((item, index) => (
+                        <tr key={`${item.name}-${index}`}>
+                          <td className="border border-gray-300 px-2 py-1">{index + 1}</td>
+                          <td className="border border-gray-300 px-2 py-1">{item.box_number || index + 1}</td>
+                          <td className="border border-gray-300 px-2 py-1">{item.name}</td>
+                          <td className="border border-gray-300 px-2 py-1 text-right">{item.quantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                   {printTarget.notes ? <p>{printTarget.notes}</p> : null}
                 </div>
               </div>
